@@ -5,8 +5,8 @@
   <title>RU → VIP</title>
   <style>
     body {
-      width: 260px;
-      min-height: 150px;
+      width: 340px;
+      min-height: 280px;
       margin: 0;
       font-family: Arial, sans-serif;
       background: #ffffff;
@@ -35,8 +35,62 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 10px;
+      gap: 8px;
       padding: 15px;
+      width: 100%;
+    }
+
+    .filters {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 10px;
+      padding: 10px;
+      background: #f5f5f5;
+      border-radius: 8px;
+    }
+
+    select, input {
+      width: 100%;
+      padding: 6px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+
+    .checkbox-group {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      margin: 8px 0;
+    }
+
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .checkbox-label input[type="checkbox"] {
+      width: 14px;
+      height: 14px;
+      margin: 0;
+    }
+
+    .rating-slider {
+      width: 100%;
+      margin: 8px 0;
+    }
+
+    .rating-value {
+      text-align: center;
+      font-size: 12px;
+      font-weight: bold;
+      color: #ff6600;
+      margin-top: 4px;
     }
 
     button {
@@ -62,11 +116,21 @@
       background: #e65c00;
     }
 
+    /* Кнопка открыть на Кинопоиске */
+    #openOnKinopoisk {
+      background: #ff5722;
+      display: none;
+    }
+    #openOnKinopoisk:hover {
+      background: #e64a19;
+    }
+
     /* Сообщения */
     #message {
       margin-top: 10px;
       font-size: 13px;
       text-align: center;
+      min-height: 20px;
     }
     #message.error {
       color: #d32f2f;
@@ -79,10 +143,53 @@
 <body>
   <header>КиноПомощник</header>
   <main>
+    <div class="filters">
+      <select id="genreFilter">
+        <option value="">Все жанры</option>
+        <option value="anime">Аниме</option>
+        <option value="biography">Биографии</option>
+        <option value="action">Боевики</option>
+        <option value="western">Вестерны</option>
+        <option value="war">Военные</option>
+        <option value="mystery">Детективы</option>
+        <option value="children">Детские</option>
+        <option value="documentary">Документальные</option>
+        <option value="drama">Драмы</option>
+        <option value="game-show">Игровые шоу</option>
+        <option value="history">Исторические</option>
+        <option value="romance">Мелодрамы</option>
+        <option value="animation">Мультфильмы</option>
+        <option value="family">Семейные</option>
+        <option value="comedy">Комедии</option>
+        <option value="crime">Криминал</option>
+        <option value="horror">Ужасы</option>
+        <option value="sci-fi">Фантастика</option>
+        <option value="fantasy">Фэнтези</option>
+      </select>
+
+      <select id="typeFilter">
+        <option value="">Фильмы и сериалы</option>
+        <option value="films">Только фильмы</option>
+        <option value="series">Только сериалы</option>
+      </select>
+
+      <input type="number" id="yearFilter" placeholder="Год (например: 1998)" min="1900" max="2025">
+
+      <div class="checkbox-group">
+        <label class="checkbox-label">
+          <input type="checkbox" id="highRatedCheckbox"> Высокий рейтинг
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="releasedCheckbox"> Уже вышедшие
+        </label>
+      </div>
+    </div>
+
     <button id="kinopoiskFilm">🎬 Фильмы</button>
     <button id="kinopoiskSerial">📺 Сериалы</button>
     <button id="randomFilm">🎲 Случайный фильм</button>
     <button id="convert">▶ Смотреть</button>
+    <button id="openOnKinopoisk">🎭 Открыть на Кинопоиске</button>
     <div id="message"></div>
   </main>
   <script src="popup.js"></script>

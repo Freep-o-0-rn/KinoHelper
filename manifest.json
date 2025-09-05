@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Kinopoisk Switcher",
-  "version": "1.0",
+  "version": "1.2",
   "description": "Быстрое переключение Кинопоиска и быстрый доступ к фильмам и сериалам.",
   "action": {
     "default_popup": "popup.html",
