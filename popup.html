@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>RU → VIP</title>
+  <style>
+    body {
+      width: 260px;
+      min-height: 150px;
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #ffffff;
+      color: #333;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+    }
+
+    /* Шапка */
+    header {
+      width: 100%;
+      background: linear-gradient(90deg, #ff6600, #ff8533);
+      color: white;
+      text-align: center;
+      padding: 12px 0;
+      font-size: 16px;
+      font-weight: bold;
+      border-bottom: 2px solid #e65c00;
+    }
+
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 15px;
+    }
+
+    button {
+      width: 200px;
+      background: #1976d2;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+    button:hover {
+      background: #1565c0;
+    }
+
+    /* Кнопка Кинопоиска */
+    #kinopoisk {
+      background: #ff6600;
+    }
+    #kinopoisk:hover {
+      background: #e65c00;
+    }
+
+    /* Сообщения */
+    #message {
+      margin-top: 10px;
+      font-size: 13px;
+      text-align: center;
+    }
+    #message.error {
+      color: #d32f2f;
+    }
+    #message.success {
+      color: #388e3c;
+    }
+  </style>
+</head>
+<body>
+  <header>КиноПомощник</header>
+  <main>
+    <button id="kinopoiskFilm">🎬 Фильмы</button>
+    <button id="kinopoiskSerial">📺 Сериалы</button>
+    <button id="randomFilm">🎲 Случайный фильм</button>
+    <button id="convert">▶ Смотреть</button>
+    <div id="message"></div>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>
