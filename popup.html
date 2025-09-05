@@ -2,178 +2,284 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>RU → VIP</title>
+  <title>КиноПомощник</title>
   <style>
-    body {
-      width: 340px;
-      min-height: 280px;
+    :root {
+      --primary: #ff6600;
+      --primary-hover: #e65c00;
+      --secondary: #1976d2;
+      --secondary-hover: #1565c0;
+      --accent: #ff5722;
+      --accent-hover: #e64a19;
+      --success: #27ae60;
+      --error: #e74c3c;
+      --bg-light: #f8f9fa;
+      --border: #dfe6e9;
+      --text-dark: #2c3e50;
+    }
+
+    * {
+      box-sizing: border-box;
       margin: 0;
-      font-family: Arial, sans-serif;
+      padding: 0;
+    }
+
+    body {
+      width: 300px;
+      min-height: 220px;
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: #ffffff;
-      color: #333;
+      color: var(--text-dark);
       display: flex;
       flex-direction: column;
-      align-items: center;
-      justify-content: flex-start;
     }
 
     /* Шапка */
     header {
-      width: 100%;
-      background: linear-gradient(90deg, #ff6600, #ff8533);
+      background: linear-gradient(90deg, var(--primary), var(--primary-hover));
       color: white;
       text-align: center;
-      padding: 12px 0;
-      font-size: 16px;
-      font-weight: bold;
-      border-bottom: 2px solid #e65c00;
+      padding: 10px;
+      font-size: 14px;
+      font-weight: 600;
     }
 
+    /* Основной контент */
     main {
-      flex: 1;
+      padding: 12px;
       display: flex;
       flex-direction: column;
-      align-items: center;
-      justify-content: center;
       gap: 8px;
-      padding: 15px;
-      width: 100%;
+      flex: 1;
+    }
+
+    /* Фильтры - компактный аккордеон */
+    .filters-toggle {
+      background: var(--bg-light);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .filters-toggle::after {
+      content: '▼';
+      font-size: 10px;
+      transition: transform 0.2s;
+    }
+
+    .filters-toggle.active::after {
+      transform: rotate(180deg);
     }
 
     .filters {
-      width: 100%;
+      display: none;
+      background: var(--bg-light);
+      padding: 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      margin-bottom: 8px;
+    }
+
+    .filters.active {
       display: flex;
       flex-direction: column;
       gap: 6px;
-      margin-bottom: 10px;
-      padding: 10px;
-      background: #f5f5f5;
-      border-radius: 8px;
+    }
+
+    .filter-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
     }
 
     select, input {
       width: 100%;
       padding: 6px;
-      border: 1px solid #ddd;
+      border: 1px solid var(--border);
       border-radius: 4px;
-      font-size: 12px;
+      font-size: 11px;
+      background: white;
     }
 
     .checkbox-group {
-      display: flex;
-      flex-direction: column;
-      gap: 5px;
-      margin: 8px 0;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-top: 4px;
     }
 
     .checkbox-label {
       display: flex;
       align-items: center;
-      gap: 6px;
-      font-size: 12px;
+      gap: 4px;
+      font-size: 11px;
       cursor: pointer;
     }
 
     .checkbox-label input[type="checkbox"] {
-      width: 14px;
-      height: 14px;
+      width: 12px;
+      height: 12px;
       margin: 0;
     }
 
-    .rating-slider {
-      width: 100%;
-      margin: 8px 0;
+    /* Кнопки действий */
+    .action-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-bottom: 6px;
     }
 
-    .rating-value {
-      text-align: center;
-      font-size: 12px;
-      font-weight: bold;
-      color: #ff6600;
-      margin-top: 4px;
+    .main-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
     }
 
     button {
-      width: 200px;
-      background: #1976d2;
-      color: white;
+      padding: 8px 12px;
       border: none;
-      padding: 10px 15px;
-      border-radius: 8px;
-      font-size: 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
       cursor: pointer;
-      transition: 0.2s;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
     }
+
     button:hover {
-      background: #1565c0;
+      transform: translateY(-1px);
     }
 
-    /* Кнопка Кинопоиска */
-    #kinopoisk {
-      background: #ff6600;
-    }
-    #kinopoisk:hover {
-      background: #e65c00;
+    .btn-primary {
+      background: var(--primary);
+      color: white;
     }
 
-    /* Кнопка открыть на Кинопоиске */
-    #openOnKinopoisk {
-      background: #ff5722;
-      display: none;
+    .btn-primary:hover {
+      background: var(--primary-hover);
     }
-    #openOnKinopoisk:hover {
-      background: #e64a19;
+
+    .btn-secondary {
+      background: var(--secondary);
+      color: white;
+    }
+
+    .btn-secondary:hover {
+      background: var(--secondary-hover);
+    }
+
+    .btn-accent {
+      background: var(--accent);
+      color: white;
+    }
+
+    .btn-accent:hover {
+      background: var(--accent-hover);
+    }
+
+    .btn-convert {
+      background: linear-gradient(135deg, #00b09b, #96c93d);
+      color: white;
     }
 
     /* Сообщения */
     #message {
-      margin-top: 10px;
-      font-size: 13px;
+      padding: 8px;
+      border-radius: 4px;
+      font-size: 11px;
       text-align: center;
-      min-height: 20px;
+      min-height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 6px;
     }
+
     #message.error {
-      color: #d32f2f;
+      background: rgba(231, 76, 60, 0.1);
+      color: var(--error);
+      border: 1px solid rgba(231, 76, 60, 0.2);
     }
+
     #message.success {
-      color: #388e3c;
+      background: rgba(39, 174, 96, 0.1);
+      color: var(--success);
+      border: 1px solid rgba(39, 174, 96, 0.2);
+    }
+
+    #message.info {
+      background: rgba(52, 152, 219, 0.1);
+      color: var(--secondary);
+      border: 1px solid rgba(52, 152, 219, 0.2);
+    }
+
+    /* Компактные иконки */
+    .icon {
+      font-size: 12px;
+    }
+
+    /* Анимации */
+    .loading {
+      opacity: 0.7;
+      pointer-events: none;
     }
   </style>
 </head>
 <body>
-  <header>КиноПомощник</header>
+  <header>
+    <h1>🎬 КиноПомощник</h1>
+  </header>
+
   <main>
-    <div class="filters">
-      <select id="genreFilter">
-        <option value="">Все жанры</option>
-        <option value="anime">Аниме</option>
-        <option value="biography">Биографии</option>
-        <option value="action">Боевики</option>
-        <option value="western">Вестерны</option>
-        <option value="war">Военные</option>
-        <option value="mystery">Детективы</option>
-        <option value="children">Детские</option>
-        <option value="documentary">Документальные</option>
-        <option value="drama">Драмы</option>
-        <option value="game-show">Игровые шоу</option>
-        <option value="history">Исторические</option>
-        <option value="romance">Мелодрамы</option>
-        <option value="animation">Мультфильмы</option>
-        <option value="family">Семейные</option>
-        <option value="comedy">Комедии</option>
-        <option value="crime">Криминал</option>
-        <option value="horror">Ужасы</option>
-        <option value="sci-fi">Фантастика</option>
-        <option value="fantasy">Фэнтези</option>
-      </select>
+    <!-- Переключатель фильтров -->
+    <div class="filters-toggle" id="filtersToggle">
+      <span>Фильтры</span>
+    </div>
 
-      <select id="typeFilter">
-        <option value="">Фильмы и сериалы</option>
-        <option value="films">Только фильмы</option>
-        <option value="series">Только сериалы</option>
-      </select>
+    <!-- Скрытые фильтры -->
+    <div class="filters" id="filters">
+      <div class="filter-row">
+        <select id="genreFilter">
+          <option value="">Все жанры</option>
+          <option value="anime">Аниме</option>
+          <option value="biography">Биографии</option>
+          <option value="action">Боевики</option>
+          <option value="western">Вестерны</option>
+          <option value="war">Военные</option>
+          <option value="mystery">Детективы</option>
+          <option value="children">Детские</option>
+          <option value="documentary">Документальные</option>
+          <option value="drama">Драмы</option>
+          <option value="history">Исторические</option>
+          <option value="romance">Мелодрамы</option>
+          <option value="animation">Мультфильмы</option>
+          <option value="family">Семейные</option>
+          <option value="comedy">Комедии</option>
+          <option value="crime">Криминал</option>
+          <option value="horror">Ужасы</option>
+          <option value="sci-fi">Фантастика</option>
+          <option value="fantasy">Фэнтези</option>
+        </select>
 
-      <input type="number" id="yearFilter" placeholder="Год (например: 1998)" min="1900" max="2025">
+        <select id="typeFilter">
+          <option value="">Все типы</option>
+          <option value="films">Фильмы</option>
+          <option value="series">Сериалы</option>
+        </select>
+      </div>
+
+      <input type="number" id="yearFilter" placeholder="Год (напр: 2023)" min="1900" max="2025">
 
       <div class="checkbox-group">
         <label class="checkbox-label">
@@ -185,13 +291,33 @@
       </div>
     </div>
 
-    <button id="kinopoiskFilm">🎬 Фильмы</button>
-    <button id="kinopoiskSerial">📺 Сериалы</button>
-    <button id="randomFilm">🎲 Случайный фильм</button>
-    <button id="convert">▶ Смотреть</button>
-    <button id="openOnKinopoisk">🎭 Открыть на Кинопоиске</button>
-    <div id="message"></div>
+    <!-- Кнопки быстрого доступа -->
+    <div class="action-grid">
+      <button class="btn-primary" id="kinopoiskFilm">
+        <span class="icon">🎬</span> Фильмы
+      </button>
+      <button class="btn-primary" id="kinopoiskSerial">
+        <span class="icon">📺</span> Сериалы
+      </button>
+    </div>
+
+    <!-- Основные кнопки -->
+    <div class="main-buttons">
+      <button class="btn-secondary" id="randomFilm">
+        <span class="icon">🎲</span> Случайный
+      </button>
+      <button class="btn-convert" id="convert">
+        <span class="icon">▶</span> Смотреть
+      </button>
+      <button class="btn-accent" id="openOnKinopoisk" style="display: none;">
+        <span class="icon">🎭</span> На Кинопоиск
+      </button>
+    </div>
+
+    <div id="message" class="info">
+      Выберите фильтры и нажмите "Случайный"
+    </div>
   </main>
   <script src="popup.js"></script>
 </body>
-</html>
+</html>ь

@@ -4,6 +4,14 @@ const typeFilter = document.getElementById("typeFilter");
 const yearFilter = document.getElementById("yearFilter");
 const highRatedCheckbox = document.getElementById("highRatedCheckbox");
 const releasedCheckbox = document.getElementById("releasedCheckbox");
+const filtersToggle = document.getElementById("filtersToggle");
+const filters = document.getElementById("filters");
+
+// Переключатель фильтров
+filtersToggle.addEventListener('click', () => {
+  filters.classList.toggle('active');
+  filtersToggle.classList.toggle('active');
+});
 
 // Включить логирование
 const DEBUG = true;
@@ -14,7 +22,7 @@ function debugLog(...args) {
 }
 
 // Вывод сообщений
-function showMessage(text, type = "error") {
+function showMessage(text, type = "info") {
   messageBox.textContent = text;
   messageBox.className = type;
 }
@@ -24,41 +32,34 @@ function buildFilterUrl(baseType = '') {
   let url = 'https://www.kinopoisk.ru/lists/movies/';
   const params = [];
 
-  // Добавляем жанр (в формате /genre--anime/)
   const genre = genreFilter.value;
   if (genre) {
     url += `genre--${genre}/`;
   }
 
-  // Добавляем год (в формате /year--1998/)
   const year = yearFilter.value.trim();
   if (year) {
     url += `year--${year}/`;
   }
 
-  // Добавляем тип (фильмы/сериалы) как query параметр
   const type = typeFilter.value;
   if (type) {
     params.push(`b=${type}`);
   }
 
-  // Добавляем высокий рейтинг (если выбран)
   if (highRatedCheckbox.checked) {
     params.push('b=high_rated');
   }
 
-  // Добавляем "уже вышедшие" (если выбрано)
   if (releasedCheckbox.checked) {
     params.push('b=released');
   }
 
-  // Определяем базовый тип (фильм/сериал)
   let contentType = baseType;
   if (!contentType) {
     contentType = type === 'series' ? 'series' : 'film';
   }
 
-  // Добавляем query параметры если есть
   if (params.length > 0) {
     const separator = url.includes('?') ? '&' : '?';
     url += separator + params.join('&');
@@ -81,7 +82,6 @@ async function getMaxPage(contentType, filterUrl) {
     const parser = new DOMParser();
     const doc = parser.parseFromString(text, "text/html");
 
-    // Способ 1: Ищем все элементы пагинации и берем самый большой номер
     const paginationElements = doc.querySelectorAll('a[data-test-id="next-link"]');
     let maxPage = 1;
     let foundPages = false;
@@ -102,7 +102,6 @@ async function getMaxPage(contentType, filterUrl) {
       }
     }
 
-    // Способ 2: Ищем через ссылки с page=
     const pageLinks = doc.querySelectorAll('a[href*="page="]');
     if (pageLinks.length > 0) {
       pageLinks.forEach(link => {
@@ -123,24 +122,6 @@ async function getMaxPage(contentType, filterUrl) {
       }
     }
 
-    // Способ 3: Ищем в тексте страницы
-    const pageMatches = text.match(/page=(\d+)/g);
-    if (pageMatches) {
-      pageMatches.forEach(match => {
-        const pageNum = parseInt(match.split('=')[1]);
-        if (!isNaN(pageNum) && pageNum > maxPage) {
-          maxPage = pageNum;
-          foundPages = true;
-        }
-      });
-      
-      if (foundPages) {
-        debugLog(`Найдено страниц через анализ текста: ${maxPage}`);
-        return maxPage;
-      }
-    }
-
-    // Способ 4: Проверяем есть ли вообще фильмы на странице
     const filmCards = doc.querySelectorAll('.styles_root__ti07r, .selection-list-item, .styles_root__wBCe5');
     const alternativeCards = doc.querySelectorAll('a[href^="/film/"], a[href^="/series/"]');
     
@@ -149,7 +130,6 @@ async function getMaxPage(contentType, filterUrl) {
       return 1;
     }
 
-    // Если ничего не нашли
     throw new Error("Не удалось определить количество страниц");
     
   } catch (error) {
@@ -169,11 +149,9 @@ async function pickRandomMovie(contentType, page, filterUrl) {
     const parser = new DOMParser();
     const doc = parser.parseFromString(text, "text/html");
 
-    // Ищем все карточки фильмов
     const filmCards = doc.querySelectorAll('.styles_root__ti07r');
     
     if (!filmCards.length) {
-      // Альтернативный селектор
       const selector = contentType === 'series' ? 'a[href^="/series/"]' : 'a[href^="/film/"]';
       const alternativeCards = doc.querySelectorAll(selector);
       if (!alternativeCards.length) throw new Error("Фильмы/сериалы не найдены на странице");
@@ -188,10 +166,8 @@ async function pickRandomMovie(contentType, page, filterUrl) {
       };
     }
 
-    // Выбираем случайную карточку
     const randomCard = filmCards[Math.floor(Math.random() * filmCards.length)];
     
-    // Ищем ссылку внутри карточки
     const selector = contentType === 'series' ? 'a[href^="/series/"]' : 'a[href^="/film/"]';
     const linkElement = randomCard.querySelector(selector);
     if (!linkElement) throw new Error("Ссылка не найдена в карточке");
@@ -219,48 +195,42 @@ document.getElementById("convert").addEventListener("click", async () => {
 
   const url = tab.url;
 
-  // Определяем сайт и тип
   const isKinopoiskFilm = url.startsWith("https://www.kinopoisk.ru/film/");
   const isKinopoiskSeries = url.startsWith("https://www.kinopoisk.ru/series/");
   const isFlcksFilm = url.startsWith("https://flcksbr.top/film/");
   const isFlcksSeries = url.startsWith("https://flcksbr.top/series/");
 
   if (isKinopoiskFilm || isKinopoiskSeries) {
-    // Перенаправляем вкладку на VIP
     const newUrl = url.replace(".ru", ".vip");
     chrome.tabs.update(tab.id, { url: newUrl });
-    showMessage("Успех! Перенаправляем…", "success");
+    showMessage("Перенаправляем...", "success");
 
-    // Ждём загрузки страницы и обновляем сообщение с названием фильма/сериала
     const listener = async (tabId, changeInfo) => {
       if (tabId === tab.id && changeInfo.status === "complete") {
         chrome.tabs.onUpdated.removeListener(listener);
 
-        // Получаем title
         const [execResult] = await chrome.scripting.executeScript({
           target: { tabId: tab.id },
           func: () => document.title
         });
 
         const title = execResult.result || "Неизвестно";
-        showMessage(`Текущий ${url.includes("/film/") ? 'фильм' : 'сериал'}: "${title}" 🎬`, "success");
+        showMessage(`Открыт: "${title}"`, "success");
       }
     };
     chrome.tabs.onUpdated.addListener(listener);
 
   } else if (isFlcksFilm || isFlcksSeries) {
-    // Пользователь уже на flcksbr.top с фильмом/сериалом
     const [execResult] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: () => document.title
     });
 
     const title = execResult.result || "Неизвестно";
-    showMessage(`Фильм уже открыт: "${title}" 🎬`, "success");
+    showMessage(`Открыт: "${title}"`, "success");
 
   } else {
-    // Любой другой сайт
-    showMessage("Работает только на страницах фильмов/сериалов 🎬. Откройте вкладку с фильмом/сериалом на Кинопоиске и нажмите Смотреть", "error");
+    showMessage("Откройте страницу фильма на Кинопоиске", "error");
   }
 });
 
@@ -268,87 +238,81 @@ document.getElementById("convert").addEventListener("click", async () => {
 document.getElementById("kinopoiskFilm").addEventListener("click", () => {
   const { url } = buildFilterUrl('film');
   chrome.tabs.create({ url });
+  showMessage("Открываем фильмы...", "info");
 });
 
 // Кнопка открытия Кинопоиска (Сериалы) с фильтрами
 document.getElementById("kinopoiskSerial").addEventListener("click", () => {
   const { url } = buildFilterUrl('series');
   chrome.tabs.create({ url });
+  showMessage("Открываем сериалы...", "info");
 });
 
 // Кнопка "Случайный фильм" с фильтрами
 document.getElementById("randomFilm").addEventListener("click", async () => {
   const button = document.getElementById("randomFilm");
-  const originalText = button.textContent;
+  const originalHtml = button.innerHTML;
   
   try {
-    button.textContent = "🔄 Ищем...";
-    button.disabled = true;
-    
-    // Строим URL с фильтрами
-    const { url: filterUrl, contentType } = buildFilterUrl();
-    showMessage("Определяем количество страниц...", "success");
+    button.innerHTML = '<span class="icon">⏳</span> Поиск...';
+    button.classList.add('loading');
+    showMessage("Ищем...", "info");
 
-    // Получаем реальное количество страниц
+    const { url: filterUrl, contentType } = buildFilterUrl();
+    
     const maxPage = await getMaxPage(contentType, filterUrl);
     
     if (maxPage === 0) {
-      showMessage("По выбранным фильтрам не найдено ни одного фильма/сериала", "error");
+      showMessage("Ничего не найдено", "error");
       return;
     }
     
     const randomPage = Math.floor(Math.random() * maxPage) + 1;
-    showMessage(`Выбрана страница ${randomPage} из ${maxPage}...`, "success");
+    showMessage(`Страница ${randomPage}/${maxPage}`, "info");
 
     const { vipUrl, title } = await pickRandomMovie(contentType, randomPage, filterUrl);
 
-    // Открываем вкладку с фильмом/сериалом
     chrome.tabs.create({ url: vipUrl });
 
-    // Получаем информацию о фильтрах для сообщения
     const genreName = genreFilter.options[genreFilter.selectedIndex]?.text || 'Все жанры';
-    const typeName = typeFilter.value ? typeFilter.options[typeFilter.selectedIndex].text : 'Фильмы и сериалы';
-    const yearText = yearFilter.value ? ` ${yearFilter.value} года` : '';
-    const highRatedText = highRatedCheckbox.checked ? ', высокий рейтинг' : '';
-    const releasedText = releasedCheckbox.checked ? ', уже вышедшие' : '';
+    const typeName = typeFilter.value ? typeFilter.options[typeFilter.selectedIndex].text : 'Все типы';
+    const yearText = yearFilter.value ? ` ${yearFilter.value} г.` : '';
     
-    showMessage(`Случайный: "${title}" (${genreName}, ${typeName}${yearText}${highRatedText}${releasedText}) 🎬`, "success");
+    showMessage(`Найден: "${title}"`, "success");
     
   } catch (err) {
     debugLog("Ошибка:", err);
-    showMessage("Не удалось выбрать случайный фильм/сериал", "error");
+    showMessage("Ошибка поиска", "error");
   } finally {
-    button.textContent = originalText;
-    button.disabled = false;
+    button.innerHTML = originalHtml;
+    button.classList.remove('loading');
   }
 });
 
-// Кнопка "Открыть на Кинопоиске" (улучшенная версия)
+// Кнопка "Открыть на Кинопоиске"
 document.getElementById("openOnKinopoisk").addEventListener("click", async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab || !tab.url) {
-    showMessage("Не удалось получить информацию о вкладке", "error");
+    showMessage("Ошибка вкладки", "error");
     return;
   }
 
   const currentUrl = tab.url;
   
-  // Регулярное выражение для поиска ID фильма/сериала
   const filmIdRegex = /\/(film|series)\/(\d+)\//;
   const match = currentUrl.match(filmIdRegex);
   
   if (!match) {
-    showMessage("На этой странице нет ID фильма или сериала", "error");
+    showMessage("Не страница фильма", "error");
     return;
   }
 
-  const type = match[1]; // 'film' или 'series'
-  const id = match[2];   // числовой ID
+  const type = match[1];
+  const id = match[2];
   const kinopoiskUrl = `https://www.kinopoisk.ru/${type}/${id}/`;
 
-  // Открываем на Кинопоиске
   chrome.tabs.create({ url: kinopoiskUrl });
-  showMessage(`Открываем ${type === 'film' ? 'фильм' : 'сериал'} на Кинопоиске...`, "success");
+  showMessage("Открываем на КП...", "success");
 });
 
 // Функция для определения текущего фильма/сериала
@@ -358,29 +322,24 @@ async function showCurrentMovie() {
 
   const openButton = document.getElementById("openOnKinopoisk");
   
-  // Показываем/скрываем кнопку в зависимости от URL
   if (tab.url.includes('kinopoisk.') || tab.url.includes('flcksbr.top')) {
-    openButton.style.display = 'block';
+    openButton.style.display = 'flex';
   } else {
     openButton.style.display = 'none';
   }
 
-  // Определяем тип
   let type = null;
   if (tab.url.includes("/film/")) type = "film";
   else if (tab.url.includes("/series/")) type = "series";
 
   if (type) {
-    // Получаем название из <title>
     const [execResult] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: () => document.title
     });
 
     const title = execResult.result || "Неизвестно";
-    showMessage(`Текущий ${type === 'film' ? 'фильм' : 'сериал'}: "${title}" 🎬`, "success");
-  } else {
-    showMessage("На этой вкладке нет фильма/сериала", "error");
+    showMessage(`Текущий: "${title}"`, "success");
   }
 }
 
