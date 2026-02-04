@@ -2,665 +2,88 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>КиноПомощник</title>
+  <title>RU → VIP</title>
   <style>
-    :root {
-      --primary: #ff6b35;
-      --primary-hover: #f25c2a;
-      --secondary: #4361ee;
-      --secondary-hover: #3a56d4;
-      --accent: #7209b7;
-      --accent-hover: #5e0996;
-      --success: #06d6a0;
-      --error: #ef476f;
-      --warning: #ffd166;
-      --bg-light: #ffffff;
-      --bg-light-secondary: #f8f9fa;
-      --bg-dark: #2b2d42;
-      --bg-dark-secondary: #1a1b2e;
-      --text-light: #ffffff;
-      --text-dark: #2b2d42;
-      --text-muted: #6c757d;
-      --border: #e9ecef;
-      --border-hover: #dee2e6;
-      --border-radius: 10px;
-      --border-radius-sm: 6px;
-      --shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
-      --shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.1);
-      --transition: all 0.2s ease;
-    }
-
-    .dark-theme {
-      --primary: #ff9e6d;
-      --primary-hover: #ff8d55;
-      --secondary: #6f86ff;
-      --secondary-hover: #5d75f0;
-      --accent: #9d4edd;
-      --accent-hover: #8b3ec5;
-      --success: #4cc9f0;
-      --error: #f72585;
-      --warning: #ffea00;
-      --bg-light: #2b2d42;
-      --bg-light-secondary: #3a3d5c;
-      --bg-dark: #1a1b2e;
-      --bg-dark-secondary: #252847;
-      --text-light: #edf2f4;
-      --text-dark: #edf2f4;
-      --text-muted: #adb5bd;
-      --border: #444a5a;
-      --border-hover: #5a6278;
-    }
-
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-
     body {
-      width: 320px;
-      min-height: 220px;
+      width: 260px;
+      min-height: 150px;
       margin: 0;
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: var(--bg-light);
-      color: var(--text-dark);
+      font-family: Arial, sans-serif;
+      background: #ffffff;
+      color: #333;
       display: flex;
       flex-direction: column;
-      transition: var(--transition);
-      line-height: 1.4;
-      font-size: 13px;
+      align-items: center;
+      justify-content: flex-start;
     }
 
     /* Шапка */
     header {
-      background: linear-gradient(90deg, var(--primary), var(--primary-hover));
+      width: 100%;
+      background: linear-gradient(90deg, #ff6600, #ff8533);
       color: white;
       text-align: center;
-      padding: 12px 16px;
-      font-size: 14px;
-      font-weight: 600;
-      position: relative;
-      border-radius: var(--border-radius) var(--border-radius) 0 0;
+      padding: 12px 0;
+      font-size: 16px;
+      font-weight: bold;
+      border-bottom: 2px solid #e65c00;
     }
 
-    .theme-toggle {
-      position: absolute;
-      right: 12px;
-      top: 50%;
-      transform: translateY(-50%);
-      background: rgba(255, 255, 255, 0.2);
-      border: none;
-      border-radius: 50%;
-      width: 24px;
-      height: 24px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: white;
-      font-size: 12px;
-      transition: var(--transition);
-    }
-
-    .theme-toggle:hover {
-      background: rgba(255, 255, 255, 0.3);
-    }
-
-    /* Основной контент */
     main {
-      padding: 16px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
       flex: 1;
-    }
-
-    /* Переключатель фильтров */
-    .filters-toggle {
-      background: var(--bg-light);
-      border: 1px solid var(--border);
-      border-radius: var(--border-radius);
-      padding: 10px 12px;
-      font-size: 13px;
-      font-weight: 500;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      transition: var(--transition);
-    }
-
-    .filters-toggle:hover {
-      border-color: var(--primary);
-      box-shadow: var(--shadow);
-    }
-
-    .filters-toggle::after {
-      content: '▼';
-      font-size: 10px;
-      transition: transform 0.3s ease;
-    }
-
-    .filters-toggle.active::after {
-      transform: rotate(180deg);
-    }
-
-    /* Фильтры */
-    .filters {
-      display: none;
-      background: var(--bg-light);
-      padding: 16px;
-      border-radius: var(--border-radius);
-      border: 1px solid var(--border);
-      margin-bottom: 8px;
-      box-shadow: var(--shadow);
-      animation: slideDown 0.2s ease;
-    }
-
-    @keyframes slideDown {
-      from { 
-        opacity: 0; 
-        transform: translateY(-8px); 
-      }
-      to { 
-        opacity: 1; 
-        transform: translateY(0); 
-      }
-    }
-
-    .filters.active {
       display: flex;
       flex-direction: column;
-      gap: 12px;
-    }
-
-    .filter-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-    }
-
-    select, input {
-      width: 100%;
-      padding: 8px 10px;
-      border: 1px solid var(--border);
-      border-radius: var(--border-radius-sm);
-      font-size: 12px;
-      background: var(--bg-light);
-      color: var(--text-dark);
-      transition: var(--transition);
-      font-family: inherit;
-    }
-
-    select:focus, input:focus {
-      outline: none;
-      border-color: var(--primary);
-      box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.1);
-    }
-
-    .checkbox-group {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-top: 6px;
-    }
-
-    .checkbox-label {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 12px;
-      cursor: pointer;
-      transition: var(--transition);
-      padding: 6px 8px;
-      border-radius: var(--border-radius-sm);
-    }
-
-    .checkbox-label:hover {
-      background: var(--bg-light-secondary);
-    }
-
-    .checkbox-label input[type="checkbox"] {
-      width: 14px;
-      height: 14px;
-      margin: 0;
-      accent-color: var(--primary);
-    }
-
-    /* Кнопки управления фильтрами */
-    .filter-buttons {
-      display: flex;
-      justify-content: flex-end;
-      margin-top: 8px;
-    }
-
-    .btn-clear {
-      padding: 6px;
-      border: none;
-      border-radius: var(--border-radius-sm);
-      background: var(--bg-light-secondary);
-      color: var(--text-muted);
-      cursor: pointer;
-      transition: var(--transition);
-      font-size: 12px;
-      display: flex;
       align-items: center;
       justify-content: center;
-    }
-
-    .btn-clear:hover {
-      background: var(--error);
-      color: white;
-      transform: scale(1.1);
-    }
-
-    /* Сетка кнопок */
-    .action-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
       gap: 10px;
-      margin-bottom: 12px;
-    }
-
-    .main-buttons {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
+      padding: 15px;
     }
 
     button {
-      padding: 10px 14px;
+      width: 200px;
+      background: #1976d2;
+      color: white;
       border: none;
-      border-radius: var(--border-radius);
-      font-size: 13px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: var(--transition);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-    }
-
-    button:hover {
-      transform: translateY(-1px);
-      box-shadow: var(--shadow-hover);
-    }
-
-    .btn-primary {
-      background: var(--primary);
-      color: white;
-    }
-
-    .btn-primary:hover {
-      background: var(--primary-hover);
-    }
-
-    .btn-secondary {
-      background: var(--secondary);
-      color: white;
-    }
-
-    .btn-secondary:hover {
-      background: var(--secondary-hover);
-    }
-
-    .btn-accent {
-      background: var(--accent);
-      color: white;
-    }
-
-    .btn-accent:hover {
-      background: var(--accent-hover);
-    }
-
-    .btn-convert {
-      background: linear-gradient(135deg, var(--primary), var(--accent));
-      color: white;
-      font-weight: 600;
-    }
-
-    .btn-convert:hover {
-      background: linear-gradient(135deg, var(--primary-hover), var(--accent-hover));
-    }
-
-    /* Сообщения - УБРАНА СИНЯЯ ОКАНТОВКА */
-    #message {
-      padding: 10px 12px;
-      border-radius: var(--border-radius);
-      font-size: 12px;
-      text-align: center;
-      min-height: 40px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-top: 8px;
-      transition: var(--transition);
-      /* Убрана border-left */
-    }
-
-    #message.error {
-      background: rgba(239, 71, 111, 0.1);
-      color: var(--error);
-    }
-
-    #message.success {
-      background: rgba(6, 214, 160, 0.1);
-      color: var(--success);
-    }
-
-    #message.info {
-      background: rgba(67, 97, 238, 0.1);
-      color: var(--secondary);
-    }
-
-    #message.warning {
-      background: rgba(255, 209, 102, 0.1);
-      color: var(--warning);
-    }
-
-    /* Иконки */
-    .icon {
+      padding: 10px 15px;
+      border-radius: 8px;
       font-size: 14px;
-    }
-
-    /* Анимации */
-    .loading {
-      position: relative;
-      opacity: 0.8;
-      pointer-events: none;
-    }
-
-    .loading::after {
-      content: "";
-      position: absolute;
-      width: 14px;
-      height: 14px;
-      top: 50%;
-      right: 10px;
-      margin-top: -7px;
-      border: 2px solid rgba(255, 255, 255, 0.3);
-      border-radius: 50%;
-      border-top-color: white;
-      animation: spin 1s ease-in-out infinite;
-    }
-
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-
-    /* История */
-    .history {
-      margin-top: 12px;
-      border-top: 1px solid var(--border);
-      padding-top: 12px;
-      display: none;
-    }
-
-    .history.active {
-      display: block;
-    }
-
-    .history-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 8px;
-    }
-
-    .history-title {
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--text-muted);
-    }
-
-    .history-toggle {
-      background: none;
-      border: none;
-      color: var(--text-muted);
       cursor: pointer;
-      font-size: 11px;
-      padding: 4px 8px;
-      border-radius: 4px;
-      transition: var(--transition);
-      display: flex;
-      align-items: center;
-      gap: 4px;
+      transition: 0.2s;
+    }
+    button:hover {
+      background: #1565c0;
     }
 
-    .history-toggle:hover {
-      background: var(--bg-light-secondary);
-      color: var(--primary);
+    /* Кнопка Кинопоиска */
+    #kinopoisk {
+      background: #ff6600;
+    }
+    #kinopoisk:hover {
+      background: #e65c00;
     }
 
-    .history-items {
-      max-height: 150px;
-      overflow-y: auto;
-      transition: max-height 0.3s ease;
-    }
-
-    .history-items.collapsed {
-      max-height: 0;
-      overflow: hidden;
-    }
-
-    .history-item {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 6px 0;
-      font-size: 11px;
-      border-bottom: 1px solid var(--border);
-      transition: var(--transition);
-    }
-
-    .history-item:hover {
-      background: var(--bg-light-secondary);
-      border-radius: var(--border-radius-sm);
-      padding: 6px 8px;
-    }
-
-    .history-item:last-child {
-      border-bottom: none;
-    }
-
-    .history-item-title {
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      max-width: 200px;
-      cursor: pointer;
-    }
-
-    .history-item-title:hover {
-      color: var(--primary);
-    }
-
-    .history-item-actions {
-      display: flex;
-      gap: 6px;
-    }
-
-    .history-item-btn {
-      background: none;
-      border: none;
-      color: var(--text-muted);
-      cursor: pointer;
-      font-size: 11px;
-      padding: 2px;
-      border-radius: 3px;
-      transition: var(--transition);
-    }
-
-    .history-item-btn:hover {
-      background: var(--primary);
-      color: white;
-    }
-
-    /* Информация об авторе */
-    .author-info {
-      margin-top: 12px;
-      padding-top: 12px;
-      border-top: 1px solid var(--border);
-      font-size: 11px;
-      color: var(--text-muted);
+    /* Сообщения */
+    #message {
+      margin-top: 10px;
+      font-size: 13px;
       text-align: center;
-      line-height: 1.4;
     }
-
-    .author-name {
-      font-weight: 600;
-      color: var(--primary);
-      cursor: pointer;
-      transition: var(--transition);
-      display: inline-block;
-      padding: 2px 4px;
-      border-radius: 3px;
+    #message.error {
+      color: #d32f2f;
     }
-
-    .author-name:hover {
-      background: var(--bg-light-secondary);
-    }
-
-    .author-email {
-      font-size: 10px;
-      margin-top: 2px;
-      opacity: 0.8;
-    }
-
-    /* Подсказки */
-    .tooltip {
-      position: relative;
-    }
-
-    .tooltip:hover::after {
-      content: attr(data-tooltip);
-      position: absolute;
-      bottom: 100%;
-      left: 50%;
-      transform: translateX(-50%);
-      padding: 6px 10px;
-      background: var(--bg-dark);
-      color: var(--text-light);
-      font-size: 11px;
-      border-radius: 4px;
-      white-space: nowrap;
-      z-index: 1000;
-      margin-bottom: 6px;
+    #message.success {
+      color: #388e3c;
     }
   </style>
 </head>
 <body>
-  <header>
-    <h1>🎬 КиноПомощник</h1>
-    <button class="theme-toggle" id="themeToggle">🌙</button>
-  </header>
-
+  <header>КиноПомощник</header>
   <main>
-    <!-- Переключатель фильтров -->
-    <div class="filters-toggle tooltip" id="filtersToggle" data-tooltip="Показать/скрыть фильтры">
-      <span>Фильтры поиска</span>
-    </div>
-
-    <!-- Скрытые фильтры -->
-    <div class="filters" id="filters">
-      <div class="filter-row">
-        <select id="genreFilter">
-          <option value="">Все жанры</option>
-          <option value="anime">Аниме</option>
-          <option value="biography">Биографии</option>
-          <option value="action">Боевики</option>
-          <option value="western">Вестерны</option>
-          <option value="war">Военные</option>
-          <option value="mystery">Детективы</option>
-          <option value="children">Детские</option>
-          <option value="documentary">Документальные</option>
-          <option value="drama">Драмы</option>
-          <option value="history">Исторические</option>
-          <option value="romance">Мелодрамы</option>
-          <option value="animation">Мультфильмы</option>
-          <option value="family">Семейные</option>
-          <option value="comedy">Комедии</option>
-          <option value="crime">Криминал</option>
-          <option value="horror">Ужасы</option>
-          <option value="sci-fi">Фантастика</option>
-          <option value="fantasy">Фэнтези</option>
-        </select>
-
-        <select id="typeFilter">
-          <option value="">Все типы</option>
-          <option value="films">Фильмы</option>
-          <option value="series">Сериалы</option>
-        </select>
-      </div>
-
-      <input type="number" id="yearFilter" placeholder="Год (например: 2023)" min="1900" max="2025">
-
-      <div class="checkbox-group">
-        <label class="checkbox-label tooltip" data-tooltip="Фильмы с рейтингом выше 7">
-          <input type="checkbox" id="highRatedCheckbox"> Высокий рейтинг
-        </label>
-        <label class="checkbox-label tooltip" data-tooltip="Только уже вышедшие фильмы">
-          <input type="checkbox" id="releasedCheckbox"> Уже вышедшие
-        </label>
-		<label class="checkbox-label tooltip" data-tooltip="Популярные фильмы/сериалы">
-		  <input type="checkbox" id="popularCheckbox"> Популярные
-		</label>
-      </div>
-
-      <!-- Кнопка очистки фильтров (компактная) -->
-      <div class="filter-buttons">
-        <button class="btn-clear tooltip" id="clearFiltersBtn" data-tooltip="Очистить все фильтры">
-          🗑️
-        </button>
-      </div>
-    </div>
-
-    <!-- Кнопки быстрого доступа -->
-    <div class="action-grid">
-      <button class="btn-primary tooltip" id="kinopoiskFilm" data-tooltip="Открыть фильмы на Кинопоиске">
-        <span class="icon">🎬</span> Фильмы
-      </button>
-      <button class="btn-primary tooltip" id="kinopoiskSerial" data-tooltip="Открыть сериалы на Кинопоиске">
-        <span class="icon">📺</span> Сериалы
-      </button>
-    </div>
-
-    <!-- Основные кнопки -->
-    <div class="main-buttons">
-      <button class="btn-secondary tooltip" id="randomFilm" data-tooltip="Случайный фильм с выбранными фильтрами">
-        <span class="icon">🎲</span> Случайный
-      </button>
-      <button class="btn-convert tooltip" id="convert" data-tooltip="Перейти к просмотру текущего фильма">
-        <span class="icon">▶</span> Смотреть
-      </button>
-      <button class="btn-accent tooltip" id="openOnKinopoisk" style="display: none;" data-tooltip="Открыть на Кинопоиске">
-        <span class="icon">🎭</span> На Кинопоиск
-      </button>
-    </div>
-
-    <div id="message" class="info">
-      Выберите фильтры и нажмите "Случайный"
-    </div>
-
-    <!-- История просмотров -->
-    <div class="history" id="history">
-      <div class="history-header">
-        <div class="history-title">Недавно просмотренные</div>
-        <button class="history-toggle tooltip" id="historyToggle" data-tooltip="Скрыть/показать историю">
-          <span class="icon">▼</span> Скрыть
-        </button>
-      </div>
-      <div class="history-items" id="historyItems">
-        <!-- История будет загружаться здесь -->
-      </div>
-    </div>
-
-    <!-- Информация об авторе -->
-    <div class="author-info">
-      <div class="author-name tooltip" data-tooltip="Автор расширения">FreeP0rn</div>
-      <div class="author-email tooltip" data-tooltip="Написать отзыв или предложение">v99495368@gmail.com</div>
-    </div>
+    <button id="kinopoiskFilm">🎬 Фильмы</button>
+    <button id="kinopoiskSerial">📺 Сериалы</button>
+    <button id="randomFilm">🎲 Случайный фильм</button>
+    <button id="convert">▶ Смотреть</button>
+    <div id="message"></div>
   </main>
   <script src="popup.js"></script>
 </body>
