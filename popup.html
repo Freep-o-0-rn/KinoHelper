@@ -14,15 +14,20 @@
       --success: #06d6a0;
       --error: #ef476f;
       --warning: #ffd166;
-      --bg-light: #f8f9fa;
+      --bg-light: #ffffff;
+      --bg-light-secondary: #f8f9fa;
       --bg-dark: #2b2d42;
-      --text-light: #f8f9fa;
+      --bg-dark-secondary: #1a1b2e;
+      --text-light: #ffffff;
       --text-dark: #2b2d42;
       --text-muted: #6c757d;
-      --border: #dee2e6;
-      --border-radius: 12px;
-      --shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-      --transition: all 0.3s ease;
+      --border: #e9ecef;
+      --border-hover: #dee2e6;
+      --border-radius: 10px;
+      --border-radius-sm: 6px;
+      --shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+      --shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.1);
+      --transition: all 0.2s ease;
     }
 
     .dark-theme {
@@ -36,11 +41,14 @@
       --error: #f72585;
       --warning: #ffea00;
       --bg-light: #2b2d42;
+      --bg-light-secondary: #3a3d5c;
       --bg-dark: #1a1b2e;
+      --bg-dark-secondary: #252847;
       --text-light: #edf2f4;
       --text-dark: #edf2f4;
       --text-muted: #adb5bd;
       --border: #444a5a;
+      --border-hover: #5a6278;
     }
 
     * {
@@ -50,8 +58,8 @@
     }
 
     body {
-      width: 340px;
-      min-height: 240px;
+      width: 320px;
+      min-height: 220px;
       margin: 0;
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: var(--bg-light);
@@ -59,6 +67,8 @@
       display: flex;
       flex-direction: column;
       transition: var(--transition);
+      line-height: 1.4;
+      font-size: 13px;
     }
 
     /* Шапка */
@@ -68,10 +78,9 @@
       text-align: center;
       padding: 12px 16px;
       font-size: 14px;
-      font-weight: 700;
+      font-weight: 600;
       position: relative;
       border-radius: var(--border-radius) var(--border-radius) 0 0;
-      box-shadow: var(--shadow);
     }
 
     .theme-toggle {
@@ -90,6 +99,11 @@
       justify-content: center;
       color: white;
       font-size: 12px;
+      transition: var(--transition);
+    }
+
+    .theme-toggle:hover {
+      background: rgba(255, 255, 255, 0.3);
     }
 
     /* Основной контент */
@@ -101,24 +115,24 @@
       flex: 1;
     }
 
-    /* Фильтры - компактный аккордеон */
+    /* Переключатель фильтров */
     .filters-toggle {
       background: var(--bg-light);
       border: 1px solid var(--border);
       border-radius: var(--border-radius);
-      padding: 10px 14px;
+      padding: 10px 12px;
       font-size: 13px;
-      font-weight: 600;
+      font-weight: 500;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: space-between;
       transition: var(--transition);
-      box-shadow: var(--shadow);
     }
 
     .filters-toggle:hover {
-      background: rgba(0, 0, 0, 0.03);
+      border-color: var(--primary);
+      box-shadow: var(--shadow);
     }
 
     .filters-toggle::after {
@@ -131,26 +145,33 @@
       transform: rotate(180deg);
     }
 
+    /* Фильтры */
     .filters {
       display: none;
       background: var(--bg-light);
-      padding: 14px;
+      padding: 16px;
       border-radius: var(--border-radius);
       border: 1px solid var(--border);
       margin-bottom: 8px;
       box-shadow: var(--shadow);
-      animation: fadeIn 0.3s ease;
+      animation: slideDown 0.2s ease;
     }
 
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(-10px); }
-      to { opacity: 1; transform: translateY(0); }
+    @keyframes slideDown {
+      from { 
+        opacity: 0; 
+        transform: translateY(-8px); 
+      }
+      to { 
+        opacity: 1; 
+        transform: translateY(0); 
+      }
     }
 
     .filters.active {
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 12px;
     }
 
     .filter-row {
@@ -163,17 +184,18 @@
       width: 100%;
       padding: 8px 10px;
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: var(--border-radius-sm);
       font-size: 12px;
       background: var(--bg-light);
       color: var(--text-dark);
       transition: var(--transition);
+      font-family: inherit;
     }
 
     select:focus, input:focus {
       outline: none;
       border-color: var(--primary);
-      box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.2);
+      box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.1);
     }
 
     .checkbox-group {
@@ -190,25 +212,54 @@
       font-size: 12px;
       cursor: pointer;
       transition: var(--transition);
+      padding: 6px 8px;
+      border-radius: var(--border-radius-sm);
     }
 
     .checkbox-label:hover {
-      color: var(--primary);
+      background: var(--bg-light-secondary);
     }
 
     .checkbox-label input[type="checkbox"] {
-      width: 16px;
-      height: 16px;
+      width: 14px;
+      height: 14px;
       margin: 0;
       accent-color: var(--primary);
     }
 
-    /* Кнопки действий */
+    /* Кнопки управления фильтрами */
+    .filter-buttons {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 8px;
+    }
+
+    .btn-clear {
+      padding: 6px;
+      border: none;
+      border-radius: var(--border-radius-sm);
+      background: var(--bg-light-secondary);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: var(--transition);
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .btn-clear:hover {
+      background: var(--error);
+      color: white;
+      transform: scale(1.1);
+    }
+
+    /* Сетка кнопок */
     .action-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 10px;
-      margin-bottom: 10px;
+      margin-bottom: 12px;
     }
 
     .main-buttons {
@@ -222,23 +273,18 @@
       border: none;
       border-radius: var(--border-radius);
       font-size: 13px;
-      font-weight: 600;
+      font-weight: 500;
       cursor: pointer;
       transition: var(--transition);
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 6px;
-      box-shadow: var(--shadow);
     }
 
     button:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
-    }
-
-    button:active {
-      transform: translateY(0);
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-hover);
     }
 
     .btn-primary {
@@ -271,15 +317,16 @@
     .btn-convert {
       background: linear-gradient(135deg, var(--primary), var(--accent));
       color: white;
+      font-weight: 600;
     }
 
     .btn-convert:hover {
       background: linear-gradient(135deg, var(--primary-hover), var(--accent-hover));
     }
 
-    /* Сообщения */
+    /* Сообщения - УБРАНА СИНЯЯ ОКАНТОВКА */
     #message {
-      padding: 10px;
+      padding: 10px 12px;
       border-radius: var(--border-radius);
       font-size: 12px;
       text-align: center;
@@ -289,34 +336,30 @@
       justify-content: center;
       margin-top: 8px;
       transition: var(--transition);
-      box-shadow: var(--shadow);
+      /* Убрана border-left */
     }
 
     #message.error {
       background: rgba(239, 71, 111, 0.1);
       color: var(--error);
-      border: 1px solid rgba(239, 71, 111, 0.2);
     }
 
     #message.success {
       background: rgba(6, 214, 160, 0.1);
       color: var(--success);
-      border: 1px solid rgba(6, 214, 160, 0.2);
     }
 
     #message.info {
       background: rgba(67, 97, 238, 0.1);
       color: var(--secondary);
-      border: 1px solid rgba(67, 97, 238, 0.2);
     }
 
     #message.warning {
       background: rgba(255, 209, 102, 0.1);
       color: var(--warning);
-      border: 1px solid rgba(255, 209, 102, 0.2);
     }
 
-    /* Компактные иконки */
+    /* Иконки */
     .icon {
       font-size: 14px;
     }
@@ -331,11 +374,11 @@
     .loading::after {
       content: "";
       position: absolute;
-      width: 16px;
-      height: 16px;
+      width: 14px;
+      height: 14px;
       top: 50%;
       right: 10px;
-      margin-top: -8px;
+      margin-top: -7px;
       border: 2px solid rgba(255, 255, 255, 0.3);
       border-radius: 50%;
       border-top-color: white;
@@ -348,17 +391,57 @@
 
     /* История */
     .history {
-      margin-top: 10px;
+      margin-top: 12px;
       border-top: 1px solid var(--border);
-      padding-top: 10px;
+      padding-top: 12px;
       display: none;
+    }
+
+    .history.active {
+      display: block;
+    }
+
+    .history-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
     }
 
     .history-title {
       font-size: 12px;
       font-weight: 600;
-      margin-bottom: 8px;
       color: var(--text-muted);
+    }
+
+    .history-toggle {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 11px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      transition: var(--transition);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .history-toggle:hover {
+      background: var(--bg-light-secondary);
+      color: var(--primary);
+    }
+
+    .history-items {
+      max-height: 150px;
+      overflow-y: auto;
+      transition: max-height 0.3s ease;
+    }
+
+    .history-items.collapsed {
+      max-height: 0;
+      overflow: hidden;
     }
 
     .history-item {
@@ -368,6 +451,13 @@
       padding: 6px 0;
       font-size: 11px;
       border-bottom: 1px solid var(--border);
+      transition: var(--transition);
+    }
+
+    .history-item:hover {
+      background: var(--bg-light-secondary);
+      border-radius: var(--border-radius-sm);
+      padding: 6px 8px;
     }
 
     .history-item:last-child {
@@ -379,6 +469,11 @@
       overflow: hidden;
       text-overflow: ellipsis;
       max-width: 200px;
+      cursor: pointer;
+    }
+
+    .history-item-title:hover {
+      color: var(--primary);
     }
 
     .history-item-actions {
@@ -391,15 +486,46 @@
       border: none;
       color: var(--text-muted);
       cursor: pointer;
-      font-size: 12px;
+      font-size: 11px;
       padding: 2px;
-      box-shadow: none;
+      border-radius: 3px;
+      transition: var(--transition);
     }
 
     .history-item-btn:hover {
-      transform: none;
-      box-shadow: none;
+      background: var(--primary);
+      color: white;
+    }
+
+    /* Информация об авторе */
+    .author-info {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--text-muted);
+      text-align: center;
+      line-height: 1.4;
+    }
+
+    .author-name {
+      font-weight: 600;
       color: var(--primary);
+      cursor: pointer;
+      transition: var(--transition);
+      display: inline-block;
+      padding: 2px 4px;
+      border-radius: 3px;
+    }
+
+    .author-name:hover {
+      background: var(--bg-light-secondary);
+    }
+
+    .author-email {
+      font-size: 10px;
+      margin-top: 2px;
+      opacity: 0.8;
     }
 
     /* Подсказки */
@@ -419,8 +545,8 @@
       font-size: 11px;
       border-radius: 4px;
       white-space: nowrap;
-      z-index: 100;
-      margin-bottom: 5px;
+      z-index: 1000;
+      margin-bottom: 6px;
     }
   </style>
 </head>
@@ -477,6 +603,16 @@
         <label class="checkbox-label tooltip" data-tooltip="Только уже вышедшие фильмы">
           <input type="checkbox" id="releasedCheckbox"> Уже вышедшие
         </label>
+		<label class="checkbox-label tooltip" data-tooltip="Популярные фильмы/сериалы">
+		  <input type="checkbox" id="popularCheckbox"> Популярные
+		</label>
+      </div>
+
+      <!-- Кнопка очистки фильтров (компактная) -->
+      <div class="filter-buttons">
+        <button class="btn-clear tooltip" id="clearFiltersBtn" data-tooltip="Очистить все фильтры">
+          🗑️
+        </button>
       </div>
     </div>
 
@@ -509,8 +645,21 @@
 
     <!-- История просмотров -->
     <div class="history" id="history">
-      <div class="history-title">Недавно просмотренные</div>
-      <div id="historyItems"></div>
+      <div class="history-header">
+        <div class="history-title">Недавно просмотренные</div>
+        <button class="history-toggle tooltip" id="historyToggle" data-tooltip="Скрыть/показать историю">
+          <span class="icon">▼</span> Скрыть
+        </button>
+      </div>
+      <div class="history-items" id="historyItems">
+        <!-- История будет загружаться здесь -->
+      </div>
+    </div>
+
+    <!-- Информация об авторе -->
+    <div class="author-info">
+      <div class="author-name tooltip" data-tooltip="Автор расширения">FreeP0rn</div>
+      <div class="author-email tooltip" data-tooltip="Написать отзыв или предложение">v99495368@gmail.com</div>
     </div>
   </main>
   <script src="popup.js"></script>
