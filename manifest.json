@@ -1,11 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "КиноПомощник",
-  "version": "1.436",
-  "description": "Быстрый доступ к фильмам и сериалам с удобными фильтрами",
+  "name": "Kinopoisk Switcher",
+  "version": "1.0",
+  "description": "Быстрое переключение Кинопоиска и быстрый доступ к фильмам и сериалам.",
   "action": {
     "default_popup": "popup.html",
-    "default_title": "КиноПомощник"
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   },
   "icons": {
     "16": "icons/icon16.png",
@@ -15,14 +19,10 @@
   "permissions": [
     "tabs",
     "scripting",
-    "storage"
+    "activeTab"
   ],
   "host_permissions": [
     "https://www.kinopoisk.ru/*",
-    "https://www.kinopoisk.vip/*",
-    "https://flcksbr.top/*"
-  ],
-  "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'"
-  }
+    "https://www.kinopoisk.vip/*"
+  ]
 }
