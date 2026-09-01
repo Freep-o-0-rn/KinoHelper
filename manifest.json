@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "КиноПомощник",
-  "version": "1.436",
+  "version": "1.437",
   "description": "Быстрый доступ к фильмам и сериалам с удобными фильтрами",
   "action": {
     "default_popup": "popup.html",
