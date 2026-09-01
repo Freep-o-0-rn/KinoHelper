@@ -492,6 +492,11 @@ document.getElementById("convert").addEventListener("click", async () => {
             showMessage("Перенаправляем...", "info");
 
             const newUrl = url.replace(KINOPOISK_BASE, WATCH_BASE);
+
+            // Save history before navigation because the popup closes.
+            const historyTitle = tab.title || "Неизвестно";
+            addToHistory(historyTitle, newUrl);
+
             chrome.tabs.update(tab.id, { url: newUrl });
             
             const onTabUpdated = async (tabId, changeInfo) => {
@@ -510,8 +515,6 @@ document.getElementById("convert").addEventListener("click", async () => {
                             
                             const openButton = document.getElementById("openOnKinopoisk");
                             openButton.style.display = 'flex';
-                            
-                            addToHistory(title, newUrl);
                             
                         } catch (error) {
                             showMessage("Перенаправлено успешно", "success");
