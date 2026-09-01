@@ -3,6 +3,8 @@ name: Fix history once
 on:
   push:
     branches: [main]
+    paths:
+      - '.github/workflows/fix-history.yml'
 
 permissions:
   contents: write
@@ -16,38 +18,7 @@ jobs:
           ref: main
 
       - name: Patch popup history logic
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path("popup.js")
-          text = path.read_text(encoding="utf-8")
-
-          old = '''            const newUrl = url.replace(KINOPOISK_BASE, WATCH_BASE);
-            chrome.tabs.update(tab.id, { url: newUrl });'''
-
-          new = '''            const newUrl = url.replace(KINOPOISK_BASE, WATCH_BASE);
-
-            // Сохраняем в историю до навигации: popup закрывается при смене страницы.
-            const historyTitle = tab.title || "Неизвестно";
-            addToHistory(historyTitle, newUrl);
-
-            chrome.tabs.update(tab.id, { url: newUrl });'''
-
-          if old not in text:
-              raise SystemExit("Redirect block not found")
-
-          text = text.replace(old, new, 1)
-
-          delayed = '''                            addToHistory(title, newUrl);
-                            
-'''
-          if delayed not in text:
-              raise SystemExit("Delayed history block not found")
-
-          text = text.replace(delayed, "", 1)
-          path.write_text(text, encoding="utf-8")
-          PY
+        run: echo 'ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCnA9UGF0aCgicG9wdXAuanMiKQpzPXAucmVhZF90ZXh0KGVuY29kaW5nPSJ1dGYtOCIpCm9sZD0iICAgICAgICAgICAgY29uc3QgbmV3VXJsID0gdXJsLnJlcGxhY2UoS0lOT1BPSVNLX0JBU0UsIFdBVENIX0JBU0UpO1xuICAgICAgICAgICAgY2hyb21lLnRhYnMudXBkYXRlKHRhYi5pZCwgeyB1cmw6IG5ld1VybCB9KTsiCm5ldz0iICAgICAgICAgICAgY29uc3QgbmV3VXJsID0gdXJsLnJlcGxhY2UoS0lOT1BPSVNLX0JBU0UsIFdBVENIX0JBU0UpO1xuXG4gICAgICAgICAgICAvLyBTYXZlIGhpc3RvcnkgYmVmb3JlIG5hdmlnYXRpb24gYmVjYXVzZSB0aGUgcG9wdXAgY2xvc2VzLlxuICAgICAgICAgICAgY29uc3QgaGlzdG9yeVRpdGxlID0gdGFiLnRpdGxlIHx8IFwi0J3QtdC40LfQstC10YHRgtC90L5cIjtcbiAgICAgICAgICAgIGFkZFRvSGlzdG9yeShoaXN0b3J5VGl0bGUsIG5ld1VybCk7XG5cbiAgICAgICAgICAgIGNocm9tZS50YWJzLnVwZGF0ZSh0YWIuaWQsIHsgdXJsOiBuZXdVcmwgfSk7IgppZiBvbGQgbm90IGluIHM6IHJhaXNlIFN5c3RlbUV4aXQoInJlZGlyZWN0IGJsb2NrIG5vdCBmb3VuZCIpCnM9cy5yZXBsYWNlKG9sZCxuZXcsMSkKZGVsYXllZD0iICAgICAgICAgICAgICAgICAgICAgICAgICAgIGFkZFRvSGlzdG9yeSh0aXRsZSwgbmV3VXJsKTtcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICBcbiIKaWYgZGVsYXllZCBub3QgaW4gczogcmFpc2UgU3lzdGVtRXhpdCgiZGVsYXllZCBoaXN0b3J5IGJsb2NrIG5vdCBmb3VuZCIpCnM9cy5yZXBsYWNlKGRlbGF5ZWQsIiIsMSkKcC53cml0ZV90ZXh0KHMsZW5jb2Rpbmc9InV0Zi04IikK' | base64 -d | python3
 
       - name: Check JavaScript syntax
         run: node --check popup.js
