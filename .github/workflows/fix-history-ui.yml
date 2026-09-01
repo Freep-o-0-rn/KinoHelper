@@ -19,90 +19,21 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-
-          path = Path('popup.js')
-          text = path.read_text(encoding='utf-8')
-
-          text = text.replace(
-              'const historyItems = document.getElementById("historyItems");\nconst clearFiltersBtn = document.getElementById("clearFiltersBtn");',
-              'const historyItems = document.getElementById("historyItems");\nconst historyToggle = document.getElementById("historyToggle");\nconst clearFiltersBtn = document.getElementById("clearFiltersBtn");',
-              1
-          )
-
-          marker = "// Обработчики кнопок фильтров\nclearFiltersBtn.addEventListener('click', clearFilters);\n"
-          addition = """// Обработчики кнопок фильтров
-clearFiltersBtn.addEventListener('click', clearFilters);
-
-// Сворачивание/разворачивание истории
-function setHistoryCollapsed(collapsed) {
-    historyItems.classList.toggle('collapsed', collapsed);
-    historyToggle.innerHTML = collapsed
-        ? '<span class=\"icon\">▶</span> Показать'
-        : '<span class=\"icon\">▼</span> Скрыть';
-    historyToggle.setAttribute('aria-expanded', String(!collapsed));
-    localStorage.setItem('historyCollapsed', String(collapsed));
-}
-
-historyToggle.addEventListener('click', () => {
-    setHistoryCollapsed(!historyItems.classList.contains('collapsed'));
-});
-
-// Для этой компактной кнопки tooltip и общий hover только мешают:
-// tooltip расширяет popup, а translateY создаёт визуальное дёрганье.
-historyToggle.classList.remove('tooltip');
-historyToggle.removeAttribute('data-tooltip');
-historyToggle.style.transform = 'none';
-historyToggle.style.boxShadow = 'none';
-"""
-          if marker not in text:
-              raise SystemExit('Filter button marker not found')
-          text = text.replace(marker, addition, 1)
-
-          marker = """    // Загрузка истории
-    updateHistoryView();
-    
-    // Показать текущий фильм
-"""
-          addition = """    // Загрузка истории
-    updateHistoryView();
-    const isHistoryCollapsed = localStorage.getItem('historyCollapsed') === 'true';
-    setHistoryCollapsed(isHistoryCollapsed);
-    
-    // Показать текущий фильм
-"""
-          if marker not in text:
-              raise SystemExit('History init marker not found')
-          text = text.replace(marker, addition, 1)
-
-          marker = """            const historyItem = document.createElement('div');
-            historyItem.className = 'history-item';
-            historyItem.innerHTML = `
-"""
-          addition = """            const historyItem = document.createElement('div');
-            historyItem.className = 'history-item';
-            // Постоянный padding не даёт строке дёргаться при hover.
-            historyItem.style.padding = '6px 8px';
-            historyItem.innerHTML = `
-"""
-          if marker not in text:
-              raise SystemExit('History item marker not found')
-          text = text.replace(marker, addition, 1)
-
-          marker = """            historyItems.appendChild(historyItem);
-        });
-"""
-          addition = """            historyItem.querySelectorAll('.history-item-btn').forEach(btn => {
-                btn.style.transform = 'none';
-                btn.style.boxShadow = 'none';
-            });
-            historyItems.appendChild(historyItem);
-        });
-"""
-          if marker not in text:
-              raise SystemExit('History append marker not found')
-          text = text.replace(marker, addition, 1)
-
-          path.write_text(text, encoding='utf-8')
+          p = Path('popup.js')
+          s = p.read_text(encoding='utf-8')
+          old = 'const historyItems = document.getElementById("historyItems");\nconst clearFiltersBtn = document.getElementById("clearFiltersBtn");'
+          new = 'const historyItems = document.getElementById("historyItems");\nconst historyToggle = document.getElementById("historyToggle");\nconst clearFiltersBtn = document.getElementById("clearFiltersBtn");'
+          if old not in s: raise SystemExit('history const marker not found')
+          s = s.replace(old, new, 1)
+          old = "// Обработчики кнопок фильтров\nclearFiltersBtn.addEventListener('click', clearFilters);\n"
+          new = "// Обработчики кнопок фильтров\nclearFiltersBtn.addEventListener('click', clearFilters);\n\n// Сворачивание/разворачивание истории\nfunction setHistoryCollapsed(collapsed) {\n    historyItems.classList.toggle('collapsed', collapsed);\n    historyToggle.innerHTML = collapsed ? '<span class=\\\"icon\\\">▶</span> Показать' : '<span class=\\\"icon\\\">▼</span> Скрыть';\n    historyToggle.setAttribute('aria-expanded', String(!collapsed));\n    localStorage.setItem('historyCollapsed', String(collapsed));\n}\n\nhistoryToggle.addEventListener('click', () => {\n    setHistoryCollapsed(!historyItems.classList.contains('collapsed'));\n});\n\n// Не даём tooltip и hover-анимациям расширять/дёргать блок истории.\nhistoryToggle.classList.remove('tooltip');\nhistoryToggle.removeAttribute('data-tooltip');\nconst historyStyle = document.createElement('style');\nhistoryStyle.textContent = '.history-toggle:hover,.history-item-btn:hover{transform:none;box-shadow:none}.history-item,.history-item:hover{padding:6px 8px}.history-toggle.tooltip:hover::after{display:none}';\ndocument.head.appendChild(historyStyle);\n"
+          if old not in s: raise SystemExit('toggle insert marker not found')
+          s = s.replace(old, new, 1)
+          old = "    // Загрузка истории\n    updateHistoryView();\n    \n    // Показать текущий фильм\n"
+          new = "    // Загрузка истории\n    updateHistoryView();\n    const isHistoryCollapsed = localStorage.getItem('historyCollapsed') === 'true';\n    setHistoryCollapsed(isHistoryCollapsed);\n    \n    // Показать текущий фильм\n"
+          if old not in s: raise SystemExit('history init marker not found')
+          s = s.replace(old, new, 1)
+          p.write_text(s, encoding='utf-8')
           PY
 
       - name: Check JavaScript syntax
