@@ -16,6 +16,7 @@ const filters = document.getElementById("filters");
 const themeToggle = document.getElementById("themeToggle");
 const historySection = document.getElementById("history");
 const historyItems = document.getElementById("historyItems");
+const historyToggle = document.getElementById("historyToggle");
 const clearFiltersBtn = document.getElementById("clearFiltersBtn");
 
 // Принудительное открытие консоли для отладки
@@ -159,6 +160,25 @@ themeToggle.addEventListener('click', () => {
 // Обработчики кнопок фильтров
 clearFiltersBtn.addEventListener('click', clearFilters);
 
+// Сворачивание/разворачивание истории
+function setHistoryCollapsed(collapsed) {
+    historyItems.classList.toggle('collapsed', collapsed);
+    historyToggle.innerHTML = collapsed ? '<span class=\"icon\">▶</span> Показать' : '<span class=\"icon\">▼</span> Скрыть';
+    historyToggle.setAttribute('aria-expanded', String(!collapsed));
+    localStorage.setItem('historyCollapsed', String(collapsed));
+}
+
+historyToggle.addEventListener('click', () => {
+    setHistoryCollapsed(!historyItems.classList.contains('collapsed'));
+});
+
+// Не даём tooltip и hover-анимациям расширять/дёргать блок истории.
+historyToggle.classList.remove('tooltip');
+historyToggle.removeAttribute('data-tooltip');
+const historyStyle = document.createElement('style');
+historyStyle.textContent = '.history-toggle:hover,.history-item-btn:hover{transform:none;box-shadow:none}.history-item,.history-item:hover{padding:6px 8px}.history-toggle.tooltip:hover::after{display:none}';
+document.head.appendChild(historyStyle);
+
 // Загрузка сохраненной темы и фильтров
 document.addEventListener('DOMContentLoaded', () => {
     const isDark = localStorage.getItem('darkTheme') === 'true';
@@ -181,6 +201,8 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Загрузка истории
     updateHistoryView();
+    const isHistoryCollapsed = localStorage.getItem('historyCollapsed') === 'true';
+    setHistoryCollapsed(isHistoryCollapsed);
     
     // Показать текущий фильм
     showCurrentMovie();
