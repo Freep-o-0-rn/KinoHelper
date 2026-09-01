@@ -1,0 +1,119 @@
+name: Apply history UI fix
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Patch history UI
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('popup.js')
+          text = path.read_text(encoding='utf-8')
+
+          text = text.replace(
+              'const historyItems = document.getElementById("historyItems");\nconst clearFiltersBtn = document.getElementById("clearFiltersBtn");',
+              'const historyItems = document.getElementById("historyItems");\nconst historyToggle = document.getElementById("historyToggle");\nconst clearFiltersBtn = document.getElementById("clearFiltersBtn");',
+              1
+          )
+
+          marker = "// Обработчики кнопок фильтров\nclearFiltersBtn.addEventListener('click', clearFilters);\n"
+          addition = """// Обработчики кнопок фильтров
+clearFiltersBtn.addEventListener('click', clearFilters);
+
+// Сворачивание/разворачивание истории
+function setHistoryCollapsed(collapsed) {
+    historyItems.classList.toggle('collapsed', collapsed);
+    historyToggle.innerHTML = collapsed
+        ? '<span class=\"icon\">▶</span> Показать'
+        : '<span class=\"icon\">▼</span> Скрыть';
+    historyToggle.setAttribute('aria-expanded', String(!collapsed));
+    localStorage.setItem('historyCollapsed', String(collapsed));
+}
+
+historyToggle.addEventListener('click', () => {
+    setHistoryCollapsed(!historyItems.classList.contains('collapsed'));
+});
+
+// Для этой компактной кнопки tooltip и общий hover только мешают:
+// tooltip расширяет popup, а translateY создаёт визуальное дёрганье.
+historyToggle.classList.remove('tooltip');
+historyToggle.removeAttribute('data-tooltip');
+historyToggle.style.transform = 'none';
+historyToggle.style.boxShadow = 'none';
+"""
+          if marker not in text:
+              raise SystemExit('Filter button marker not found')
+          text = text.replace(marker, addition, 1)
+
+          marker = """    // Загрузка истории
+    updateHistoryView();
+    
+    // Показать текущий фильм
+"""
+          addition = """    // Загрузка истории
+    updateHistoryView();
+    const isHistoryCollapsed = localStorage.getItem('historyCollapsed') === 'true';
+    setHistoryCollapsed(isHistoryCollapsed);
+    
+    // Показать текущий фильм
+"""
+          if marker not in text:
+              raise SystemExit('History init marker not found')
+          text = text.replace(marker, addition, 1)
+
+          marker = """            const historyItem = document.createElement('div');
+            historyItem.className = 'history-item';
+            historyItem.innerHTML = `
+"""
+          addition = """            const historyItem = document.createElement('div');
+            historyItem.className = 'history-item';
+            // Постоянный padding не даёт строке дёргаться при hover.
+            historyItem.style.padding = '6px 8px';
+            historyItem.innerHTML = `
+"""
+          if marker not in text:
+              raise SystemExit('History item marker not found')
+          text = text.replace(marker, addition, 1)
+
+          marker = """            historyItems.appendChild(historyItem);
+        });
+"""
+          addition = """            historyItem.querySelectorAll('.history-item-btn').forEach(btn => {
+                btn.style.transform = 'none';
+                btn.style.boxShadow = 'none';
+            });
+            historyItems.appendChild(historyItem);
+        });
+"""
+          if marker not in text:
+              raise SystemExit('History append marker not found')
+          text = text.replace(marker, addition, 1)
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Check JavaScript syntax
+        run: node --check popup.js
+
+      - name: Commit patch and remove workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/fix-history-ui.yml
+          git add popup.js
+          git commit -m "Fix history toggle and hover jitter"
+          git push origin main
