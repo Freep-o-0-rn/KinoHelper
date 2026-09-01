@@ -3,15 +3,29 @@
  * The popup width must never depend on hover tooltips or animated controls.
  */
 
-html,
+html {
+  width: 320px;
+  min-width: 320px;
+  max-width: 320px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+  scroll-behavior: smooth;
+}
+
+/* Chromium: keep the popup scrollable, but do not let the root scrollbar
+   consume ~17px and change the popup width when content exceeds max height. */
+html::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
 body {
   width: 320px;
   min-width: 320px;
   max-width: 320px;
   overflow-x: hidden;
-}
-
-body {
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
