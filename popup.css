@@ -1,0 +1,152 @@
+/*
+ * UI stability overrides.
+ * The popup width must never depend on hover tooltips or animated controls.
+ */
+
+html,
+body {
+  width: 320px;
+  min-width: 320px;
+  max-width: 320px;
+  overflow-x: hidden;
+}
+
+body {
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+main,
+header,
+.action-grid,
+.main-buttons,
+.filters,
+.history,
+.history-header,
+.history-items {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Hover may change colour/shadow, but must never move or resize controls. */
+button:not(.theme-toggle):hover,
+.btn-clear:hover,
+.history-toggle:hover,
+.history-item-btn:hover {
+  transform: none;
+}
+
+/* Keep the theme button vertically centred despite the generic button hover rule. */
+.theme-toggle:hover {
+  transform: translateY(-50%);
+}
+
+.btn-clear:hover {
+  transform: none;
+}
+
+/* Smooth filter expansion/collapse without display:none layout jumps. */
+.filters {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 0;
+  opacity: 0;
+  visibility: hidden;
+  overflow: hidden;
+  padding: 0 16px;
+  margin-bottom: 0;
+  border-color: transparent;
+  box-shadow: none;
+  pointer-events: none;
+  animation: none;
+  transition:
+    max-height 0.28s ease,
+    opacity 0.18s ease,
+    padding 0.28s ease,
+    margin-bottom 0.28s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    visibility 0s linear 0.28s;
+}
+
+.filters.active {
+  display: flex;
+  max-height: 360px;
+  opacity: 1;
+  visibility: visible;
+  overflow: hidden;
+  padding: 16px;
+  margin-bottom: 8px;
+  border-color: var(--border);
+  box-shadow: var(--shadow);
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+
+/* History rows always keep exactly the same geometry on hover. */
+.history-items {
+  overflow-x: hidden;
+  opacity: 1;
+  transition: max-height 0.28s ease, opacity 0.18s ease;
+}
+
+.history-items.collapsed {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+}
+
+.history-item,
+.history-item:hover {
+  padding: 6px 8px;
+}
+
+.history-item {
+  min-width: 0;
+}
+
+.history-item-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+}
+
+.history-item-actions {
+  flex: 0 0 auto;
+}
+
+/*
+ * Tooltips are absolutely positioned, but Chromium popup sizing can still react
+ * to their overflow. Keep every tooltip inside the fixed 320 px viewport.
+ */
+.tooltip::after {
+  box-sizing: border-box;
+  max-width: 260px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* Left and right buttons anchor their tooltip inward instead of outside popup. */
+.action-grid .tooltip:first-child:hover::after {
+  left: 0;
+  right: auto;
+  transform: none;
+}
+
+.action-grid .tooltip:last-child:hover::after,
+.filter-buttons .tooltip:hover::after {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+
+/* Full-width controls stay centred and constrained. */
+.filters-toggle.tooltip:hover::after,
+.main-buttons .tooltip:hover::after {
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+}
