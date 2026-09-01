@@ -1,3 +1,8 @@
+// Домены сервисов
+const KINOPOISK_BASE = "https://www.kinopoisk.ru";
+const WATCH_BASE = "https://www.kinokino.vip";
+const FALLBACK_WATCH_BASE = "https://flcksbr.top";
+
 // Элементы DOM
 const messageBox = document.getElementById("message");
 const genreFilter = document.getElementById("genreFilter");
@@ -198,15 +203,15 @@ function showMessage(text, type = "info") {
 
 // Функция для построения URL с фильтрами
 function buildFilterUrl(baseType = '') {
-    let url = 'https://www.kinopoisk.ru/lists/movies/';
+    let url = `${KINOPOISK_BASE}/lists/movies/`;
     const params = [];
 
     // БАЗОВЫЙ URL ДЛЯ ПОПУЛЯРНЫХ
     if (popularCheckbox.checked) {
         if (baseType === 'series' || typeFilter.value === 'series') {
-            url = 'https://www.kinopoisk.ru/lists/movies/popular-series/';
+            url = `${KINOPOISK_BASE}/lists/movies/popular-series/`;
         } else {
-            url = 'https://www.kinopoisk.ru/lists/movies/popular-films/';
+            url = `${KINOPOISK_BASE}/lists/movies/popular-films/`;
         }
     }
 
@@ -411,7 +416,7 @@ function parseMaxPageFromDoc(doc, itemsPerPage = 50, contentType = "") {
 */
 
 /* Пример вызова getMaxPage (fetch-версия):
-getMaxPage('фильм', 'https://www.kinopoisk.ru/lists/movies/', 50)
+getMaxPage('фильм', `${KINOPOISK_BASE}/lists/movies/`, 50)
   .then(max => console.log('max', max))
   .catch(err => console.error(err));
 */
@@ -439,7 +444,7 @@ async function pickRandomMovie(contentType, page, filterUrl) {
             const title = randomAnchor.querySelector('img')?.alt || randomAnchor.textContent.trim() || "Неизвестно";
             
             return { 
-                vipUrl: "https://www.kinokino.vip" + filmPath, 
+                vipUrl: WATCH_BASE + filmPath, 
                 title: title 
             };
         }
@@ -456,7 +461,7 @@ async function pickRandomMovie(contentType, page, filterUrl) {
                      "Неизвестно";
 
         return { 
-            vipUrl: "https://www.kinokino.vip" + filmPath, 
+            vipUrl: WATCH_BASE + filmPath, 
             title: title.replace('Смотреть ', '').trim() 
         };
         
@@ -466,7 +471,7 @@ async function pickRandomMovie(contentType, page, filterUrl) {
     }
 }
 
-// Кнопка замены .ru → .vip / Проверка текущего фильма
+// Кнопка перехода с Кинопоиска на сайт просмотра / Проверка текущего фильма
 document.getElementById("convert").addEventListener("click", async () => {
     let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || !tab.url) return;
@@ -475,10 +480,10 @@ document.getElementById("convert").addEventListener("click", async () => {
     const button = document.getElementById("convert");
     const originalHtml = button.innerHTML;
 
-    const isKinopoiskFilm = url.startsWith("https://www.kinopoisk.ru/film/");
-    const isKinopoiskSeries = url.startsWith("https://www.kinopoisk.ru/series/");
-    const isFlcksFilm = url.startsWith("https://flcksbr.top/film/");
-    const isFlcksSeries = url.startsWith("https://flcksbr.top/series/");
+    const isKinopoiskFilm = url.startsWith(`${KINOPOISK_BASE}/film/`);
+    const isKinopoiskSeries = url.startsWith(`${KINOPOISK_BASE}/series/`);
+    const isFlcksFilm = url.startsWith(`${FALLBACK_WATCH_BASE}/film/`);
+    const isFlcksSeries = url.startsWith(`${FALLBACK_WATCH_BASE}/series/`);
 
     if (isKinopoiskFilm || isKinopoiskSeries) {
         try {
@@ -486,7 +491,7 @@ document.getElementById("convert").addEventListener("click", async () => {
             button.classList.add('loading');
             showMessage("Перенаправляем...", "info");
 
-            const newUrl = url.replace(".ru", ".vip");
+            const newUrl = url.replace(KINOPOISK_BASE, WATCH_BASE);
             chrome.tabs.update(tab.id, { url: newUrl });
             
             const onTabUpdated = async (tabId, changeInfo) => {
@@ -637,7 +642,7 @@ document.getElementById("openOnKinopoisk").addEventListener("click", async () =>
 
     const type = match[1];
     const id = match[2];
-    const kinopoiskUrl = `https://www.kinopoisk.ru/${type}/${id}/`;
+    const kinopoiskUrl = `${KINOPOISK_BASE}/${type}/${id}/`;
 
     chrome.tabs.create({ url: kinopoiskUrl });
     showMessage("Открываем на КП...", "success");
@@ -716,7 +721,7 @@ async function showCurrentMovie() {
         const openButton = document.getElementById("openOnKinopoisk");
         const url = tab.url;
         
-        if (url.includes('kinopoisk.vip') || url.includes('flcksbr.top')) {
+        if (url.startsWith(WATCH_BASE) || url.startsWith(FALLBACK_WATCH_BASE)) {
             openButton.style.display = 'flex';
             
             try {
@@ -734,7 +739,7 @@ async function showCurrentMovie() {
                 showMessage("Можно открыть на Кинопоиске", "info");
             }
             
-        } else if (url.includes('kinopoisk.ru') && (url.includes("/film/") || url.includes("/series/"))) {
+        } else if (url.startsWith(KINOPOISK_BASE) && (url.includes("/film/") || url.includes("/series/"))) {
             openButton.style.display = 'none';
             
             try {

@@ -19,7 +19,7 @@
   ],
   "host_permissions": [
     "https://www.kinopoisk.ru/*",
-    "https://www.kinopoisk.vip/*",
+    "https://www.kinokino.vip/*",
     "https://flcksbr.top/*"
   ],
   "content_security_policy": {

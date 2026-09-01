@@ -1,10 +1,14 @@
+// Домены сервисов
+const KINOPOISK_BASE = "https://www.kinopoisk.ru";
+const WATCH_BASE = "https://www.kinokino.vip";
+
 chrome.runtime.onInstalled.addListener(() => {
   console.log("Расширение RU→VIP установлено");
 });
 chrome.runtime.onMessage.addListener(async (msg, sender, sendResponse) => {
   if (msg.action === "getRandomFilm") {
     try {
-      const res = await fetch("https://www.kinopoisk.ru/lists/movies/");
+      const res = await fetch(`${KINOPOISK_BASE}/lists/movies/`);
       const text = await res.text();
       const parser = new DOMParser();
       const doc = parser.parseFromString(text, "text/html");
@@ -18,14 +22,14 @@ chrome.runtime.onMessage.addListener(async (msg, sender, sendResponse) => {
       }
 
       const randomPage = Math.floor(Math.random() * totalPages) + 1;
-      const pageRes = await fetch(`https://www.kinopoisk.ru/lists/movies/?page=${randomPage}`);
+      const pageRes = await fetch(`${KINOPOISK_BASE}/lists/movies/?page=${randomPage}`);
       const pageText = await pageRes.text();
       const pageDoc = parser.parseFromString(pageText, "text/html");
       const filmAnchors = Array.from(pageDoc.querySelectorAll('a[href^="/film/"]'));
       if (filmAnchors.length === 0) throw new Error("Фильмы не найдены");
 
       const randomAnchor = filmAnchors[Math.floor(Math.random() * filmAnchors.length)];
-      const vipUrl = "https://www.kinopoisk.vip" + randomAnchor.getAttribute("href");
+      const vipUrl = WATCH_BASE + randomAnchor.getAttribute("href");
 
       sendResponse({ url: vipUrl });
     } catch (err) {
@@ -36,5 +40,3 @@ chrome.runtime.onMessage.addListener(async (msg, sender, sendResponse) => {
     return true;
   }
 });
-
-
