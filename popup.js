@@ -439,7 +439,7 @@ async function pickRandomMovie(contentType, page, filterUrl) {
             const title = randomAnchor.querySelector('img')?.alt || randomAnchor.textContent.trim() || "Неизвестно";
             
             return { 
-                vipUrl: "https://www.kinopoisk.vip" + filmPath, 
+                vipUrl: "https://www.kinokino.vip" + filmPath, 
                 title: title 
             };
         }
@@ -456,7 +456,7 @@ async function pickRandomMovie(contentType, page, filterUrl) {
                      "Неизвестно";
 
         return { 
-            vipUrl: "https://www.kinopoisk.vip" + filmPath, 
+            vipUrl: "https://www.kinokino.vip" + filmPath, 
             title: title.replace('Смотреть ', '').trim() 
         };
         
