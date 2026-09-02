@@ -44,16 +44,18 @@
   }
 
   function isFilterPath(pathname) {
-    if (!pathname.startsWith('/lists/movies/')) return false;
+    return String(pathname || '').startsWith('/lists/movies/');
+  }
 
-    const tail = pathname.slice('/lists/movies/'.length);
-    const segments = tail.split('/').filter(Boolean);
-    if (!segments.length) return true;
+  function stripNonFilterParams(url) {
+    url.searchParams.delete('page');
+    url.searchParams.delete('ysclid');
 
-    return segments.every(segment => {
-      const separator = segment.indexOf('--');
-      return separator > 0 && separator < segment.length - 2;
+    [...url.searchParams.keys()].forEach(key => {
+      if (/^utm_/i.test(key)) url.searchParams.delete(key);
     });
+
+    return url;
   }
 
   function normalizeStateUrl(rawUrl, type) {
@@ -67,8 +69,7 @@
       url.protocol = 'https:';
       url.hostname = 'www.kinopoisk.ru';
       url.hash = '';
-      url.searchParams.delete('page');
-      return url.href;
+      return stripNonFilterParams(url).href;
     } catch {
       return fallback;
     }
@@ -87,12 +88,11 @@
       const url = new URL(cleaned, sourceUrl);
       if (!/^(?:www\.)?kinopoisk\.ru$/i.test(url.hostname)) return null;
       if (!isFilterPath(url.pathname)) return null;
-      if (url.searchParams.has('page')) return null;
 
       url.protocol = 'https:';
       url.hostname = 'www.kinopoisk.ru';
       url.hash = '';
-      return url.href;
+      return stripNonFilterParams(url).href;
     } catch {
       return null;
     }
@@ -112,17 +112,26 @@
     }
   }
 
-  function pathFilterMap(url) {
+  function filterStateMap(rawUrl) {
     const result = new Map();
 
     try {
-      const parsed = new URL(url);
-      const tail = parsed.pathname.slice('/lists/movies/'.length);
+      const url = new URL(rawUrl);
+      const tail = url.pathname.slice('/lists/movies/'.length);
 
-      tail.split('/').filter(Boolean).forEach(segment => {
+      tail.split('/').filter(Boolean).forEach((segment, index) => {
         const separator = segment.indexOf('--');
-        if (separator <= 0) return;
-        result.set(segment.slice(0, separator), segment.slice(separator + 2));
+        const key = separator > 0
+          ? `path:${segment.slice(0, separator)}`
+          : `path:${index}`;
+        result.set(key, segment);
+      });
+
+      const queryKeys = new Set([...url.searchParams.keys()]);
+      queryKeys.forEach(key => {
+        if (key === 'page' || key === 'ysclid' || /^utm_/i.test(key)) return;
+        const values = url.searchParams.getAll(key).slice().sort();
+        result.set(`query:${key}`, JSON.stringify(values));
       });
     } catch {
       // Ignore malformed URL.
@@ -131,9 +140,9 @@
     return result;
   }
 
-  function changedPathKeys(sourceUrl, targetUrl) {
-    const source = pathFilterMap(sourceUrl);
-    const target = pathFilterMap(targetUrl);
+  function changedFilterKeys(sourceUrl, targetUrl) {
+    const source = filterStateMap(sourceUrl);
+    const target = filterStateMap(targetUrl);
     const keys = new Set([...source.keys(), ...target.keys()]);
     return [...keys].filter(key => source.get(key) !== target.get(key));
   }
@@ -198,30 +207,103 @@
     return false;
   }
 
+  function elementDepth(element) {
+    let depth = 0;
+    let current = element;
+    while (current?.parentElement) {
+      depth += 1;
+      current = current.parentElement;
+    }
+    return depth;
+  }
+
+  function findExactTextElement(doc, text) {
+    let best = null;
+    let bestDepth = -1;
+
+    doc.querySelectorAll('div, span, button, label, p, h2, h3, h4').forEach(element => {
+      if (cleanLabel(element.textContent) !== text) return;
+      const depth = elementDepth(element);
+      if (depth > bestDepth) {
+        best = element;
+        bestDepth = depth;
+      }
+    });
+
+    return best;
+  }
+
+  function commonAncestor(elements) {
+    if (!elements.length) return null;
+    let current = elements[0];
+
+    while (current && !elements.every(element => current.contains(element))) {
+      current = current.parentElement;
+    }
+
+    return current;
+  }
+
+  function findSidebarRoot(doc) {
+    const anchors = ['Страны', 'Жанры', 'Годы']
+      .map(text => findExactTextElement(doc, text))
+      .filter(Boolean);
+
+    if (anchors.length < 2) {
+      const fallback = ['Все страны', 'Все жанры', 'Все годы']
+        .map(text => findExactTextElement(doc, text))
+        .filter(Boolean);
+      anchors.push(...fallback);
+    }
+
+    if (anchors.length < 2) return null;
+
+    let root = commonAncestor(anchors);
+    if (!root) return null;
+
+    // Ascend enough to include the quick-filter buttons above the dropdowns,
+    // but stop before the main movie list enters the container.
+    while (root.parentElement && root.parentElement !== doc.body) {
+      const parent = root.parentElement;
+      const movieLinks = parent.querySelectorAll('a[href^="/film/"], a[href^="/series/"]').length;
+      if (movieLinks > 2 || parent.querySelector('h1')) break;
+      root = parent;
+    }
+
+    return root;
+  }
+
   function extractCandidates(doc, sourceUrl) {
-    const candidates = [];
+    const sidebarRoot = findSidebarRoot(doc);
+    if (!sidebarRoot) {
+      throw new Error('Не удалось найти боковые фильтры Кинопоиска');
+    }
+
+    const sidebarCandidates = [];
+    const jsonCandidates = [];
     const seen = new Set();
 
-    const add = (rawUrl, rawLabel, selected = false, order = 0, groupHint = '') => {
+    const add = (bucket, rawUrl, rawLabel, selected = false, order = 0, groupHint = '', scope = 'sidebar') => {
       const label = cleanLabel(rawLabel);
       const url = normalizeCandidateUrl(rawUrl, sourceUrl);
       if (!url || ignoreCandidate(label, url)) return;
 
-      const key = `${label}\n${url}`;
+      const key = `${scope}\n${label}\n${url}`;
       if (seen.has(key)) return;
       seen.add(key);
 
-      candidates.push({
+      bucket.push({
         label,
         url,
         selected: Boolean(selected),
         order,
-        groupHint: cleanLabel(groupHint)
+        groupHint: cleanLabel(groupHint),
+        scope
       });
     };
 
     let order = 0;
-    doc.querySelectorAll('a[href], [data-href], [data-url]').forEach(element => {
+    sidebarRoot.querySelectorAll('a[href], [data-href], [data-url]').forEach(element => {
       const rawUrl = element.getAttribute('href') ||
         element.getAttribute('data-href') ||
         element.getAttribute('data-url');
@@ -232,17 +314,47 @@
         element.textContent
       );
 
-      add(rawUrl, label, isSelectedElement(element), order++, inferGroupHint(element, label));
+      add(
+        sidebarCandidates,
+        rawUrl,
+        label,
+        isSelectedElement(element),
+        order++,
+        inferGroupHint(element, label),
+        'sidebar'
+      );
     });
 
-    // Closed dropdowns can be serialized into page JSON. Walk the JSON tree
-    // and discover generic URL+label pairs without knowing filter names.
+    // Native selects are uncommon on Kinopoisk, but support them generically.
+    sidebarRoot.querySelectorAll('select').forEach(select => {
+      const groupHint = cleanLabel(
+        select.getAttribute('aria-label') ||
+        select.closest('label')?.querySelector('span')?.textContent ||
+        ''
+      );
+
+      [...select.options].forEach(option => {
+        add(
+          sidebarCandidates,
+          option.value,
+          option.textContent,
+          option.selected,
+          order++,
+          groupHint,
+          'sidebar'
+        );
+      });
+    });
+
+    // Closed Kinopoisk dropdowns are often serialized in page JSON. We inspect
+    // URL+label pairs generically, but later keep only groups whose reset label
+    // is actually visible in the sidebar (for example "Все страны").
     const jsonScripts = doc.querySelectorAll('script[type="application/json"], script#__NEXT_DATA__');
     let jsonOrder = 100000;
     let visited = 0;
 
     const walk = (node, depth = 0) => {
-      if (visited > 80000 || depth > 18 || node == null) return;
+      if (visited > 100000 || depth > 20 || node == null) return;
       visited += 1;
 
       if (Array.isArray(node)) {
@@ -257,10 +369,13 @@
 
       if (typeof rawUrl === 'string' && typeof rawLabel === 'string') {
         add(
+          jsonCandidates,
           rawUrl,
           rawLabel,
           Boolean(node.selected || node.active || node.isSelected),
-          jsonOrder++
+          jsonOrder++,
+          '',
+          'json'
         );
       }
 
@@ -274,11 +389,15 @@
       try {
         walk(JSON.parse(text));
       } catch {
-        // DOM candidates remain available.
+        // DOM sidebar candidates remain available.
       }
     });
 
-    return candidates.sort((a, b) => a.order - b.order);
+    return {
+      sidebarCandidates: sidebarCandidates.sort((a, b) => a.order - b.order),
+      jsonCandidates: jsonCandidates.sort((a, b) => a.order - b.order),
+      sidebarText: cleanLabel(sidebarRoot.textContent)
+    };
   }
 
   function humanizeKey(key) {
@@ -289,33 +408,53 @@
 
   function buildModel(doc, sourceUrl, contentType) {
     const normalizedSourceUrl = normalizeStateUrl(sourceUrl, contentType);
-    const candidates = extractCandidates(doc, normalizedSourceUrl);
+    const { sidebarCandidates, jsonCandidates, sidebarText } = extractCandidates(doc, normalizedSourceUrl);
     const groupMap = new Map();
     const actions = [];
 
-    candidates.forEach(candidate => {
-      const pathChanges = changedPathKeys(normalizedSourceUrl, candidate.url);
+    const addGroupOption = (groupKey, candidate) => {
+      if (!groupMap.has(groupKey)) {
+        groupMap.set(groupKey, {
+          key: groupKey,
+          title: candidate.groupHint || '',
+          order: candidate.order,
+          options: []
+        });
+      }
 
-      if (pathChanges.length === 1) {
-        const groupKey = pathChanges[0];
+      const group = groupMap.get(groupKey);
+      if (!group.title && candidate.groupHint) group.title = candidate.groupHint;
+      group.order = Math.min(group.order, candidate.order);
+      group.options.push(candidate);
+    };
 
-        if (!groupMap.has(groupKey)) {
-          groupMap.set(groupKey, {
-            key: groupKey,
-            title: candidate.groupHint || '',
-            order: candidate.order,
-            options: []
-          });
-        }
+    sidebarCandidates.forEach(candidate => {
+      const changes = changedFilterKeys(normalizedSourceUrl, candidate.url);
 
-        const group = groupMap.get(groupKey);
-        if (!group.title && candidate.groupHint) group.title = candidate.groupHint;
-        group.order = Math.min(group.order, candidate.order);
-        group.options.push(candidate);
+      // Quick filters on Kinopoisk are represented by repeated ?b= values.
+      // Keep them as buttons exactly as they appear in the sidebar.
+      if (changes.length === 1 && changes[0] === 'query:b') {
+        actions.push(candidate);
         return;
       }
 
-      actions.push(candidate);
+      if (changes.length === 1) {
+        addGroupOption(changes[0], candidate);
+        return;
+      }
+
+      // A sidebar link that changes several parameters is still a valid
+      // quick action. Main-content links are not in sidebarCandidates at all.
+      if (changes.length > 0) actions.push(candidate);
+    });
+
+    // JSON may contain the options of closed dropdowns. Never create quick
+    // actions from JSON because that is what previously pulled in central-page
+    // modes, counters and unrelated links.
+    jsonCandidates.forEach(candidate => {
+      const changes = changedFilterKeys(normalizedSourceUrl, candidate.url);
+      if (changes.length !== 1 || changes[0] === 'query:b') return;
+      addGroupOption(changes[0], candidate);
     });
 
     const pathGroups = [...groupMap.values()]
@@ -328,13 +467,22 @@
 
         const options = [...optionMap.values()];
         const resetOption = options.find(option => /^Все\s+/i.test(option.label));
-        let title = group.title;
+        const hasSidebarOption = options.some(option => option.scope === 'sidebar');
 
-        if (!title && resetOption) title = resetOption.label.replace(/^Все\s+/i, '');
-        if (!title) title = humanizeKey(group.key);
+        // Closed-dropdown data is trusted only if its reset value is visibly
+        // present in the actual Kinopoisk sidebar. This removes unrelated
+        // "Все мультфильмы" / support / central-list data.
+        const resetVisible = Boolean(resetOption && sidebarText.includes(resetOption.label));
+        if (!hasSidebarOption && !resetVisible) return null;
+
+        let title = group.title;
+        if (resetOption) title = resetOption.label.replace(/^Все\s+/i, '');
+        if (!title) title = humanizeKey(group.key.replace(/^query:|^path:/, ''));
+        title = title.charAt(0).toUpperCase() + title.slice(1);
 
         return { ...group, title, options };
       })
+      .filter(Boolean)
       .filter(group => group.options.length)
       .sort((a, b) => a.order - b.order);
 
@@ -348,10 +496,10 @@
       .filter(action => !pathGroups.some(group =>
         group.options.some(option => option.label === action.label && option.url === action.url)
       ))
-      .slice(0, 40);
+      .slice(0, 20);
 
     if (!pathGroups.length && !uniqueActions.length) {
-      throw new Error('Не удалось распознать фильтры Кинопоиска');
+      throw new Error('Не удалось распознать боковые фильтры Кинопоиска');
     }
 
     return {
@@ -361,10 +509,6 @@
       pathGroups,
       actions: uniqueActions
     };
-  }
-
-  function delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   function isKinopoiskListsUrl(rawUrl) {
@@ -377,50 +521,100 @@
     }
   }
 
-  async function readKinopoiskPageInTab(sourceUrl) {
-    const tab = await chrome.tabs.create({ url: sourceUrl, active: false });
-    if (!tab?.id) throw new Error('Не удалось создать служебную вкладку');
+  async function fetchKinopoiskDirect(sourceUrl) {
+    const response = await fetch(sourceUrl, {
+      cache: 'no-store',
+      credentials: 'include',
+      redirect: 'follow'
+    });
 
-    const tabId = tab.id;
-    const deadline = Date.now() + 20000;
-    let lastUrl = sourceUrl;
+    if (!response.ok) {
+      throw new Error(`Кинопоиск вернул HTTP ${response.status}`);
+    }
 
-    try {
-      while (Date.now() < deadline) {
-        const currentTab = await chrome.tabs.get(tabId);
-        lastUrl = currentTab.url || currentTab.pendingUrl || lastUrl;
+    const finalUrl = response.url || sourceUrl;
+    if (!isKinopoiskListsUrl(finalUrl)) {
+      throw new Error('Кинопоиск перенаправил запрос на другую страницу');
+    }
 
-        if (currentTab.status === 'complete' && isKinopoiskListsUrl(lastUrl)) {
-          await delay(900);
-          const results = await chrome.scripting.executeScript({
-            target: { tabId },
-            func: () => ({
-              html: document.documentElement?.outerHTML || '',
-              url: location.href
-            })
-          });
+    return {
+      html: await response.text(),
+      url: finalUrl
+    };
+  }
 
-          const page = results?.[0]?.result;
-          if (!page?.html) throw new Error('Не удалось прочитать страницу Кинопоиска');
-          if (!isKinopoiskListsUrl(page.url)) throw new Error('Кинопоиск открыл неожиданную страницу');
-          return page;
+  async function fetchKinopoiskThroughOpenTab(sourceUrl) {
+    const tabs = await chrome.tabs.query({
+      url: ['https://www.kinopoisk.ru/*', 'https://kinopoisk.ru/*']
+    });
+
+    const candidates = tabs.filter(tab => Number.isInteger(tab.id) && !tab.discarded);
+    let lastError = null;
+
+    for (const tab of candidates) {
+      try {
+        const results = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: async targetUrl => {
+            const response = await fetch(targetUrl, {
+              cache: 'no-store',
+              credentials: 'include',
+              redirect: 'follow'
+            });
+
+            return {
+              ok: response.ok,
+              status: response.status,
+              url: response.url,
+              html: await response.text()
+            };
+          },
+          args: [sourceUrl]
+        });
+
+        const page = results?.[0]?.result;
+        if (!page?.ok) {
+          throw new Error(`HTTP ${page?.status || 'unknown'}`);
+        }
+        if (!page.html || !isKinopoiskListsUrl(page.url)) {
+          throw new Error('Кинопоиск вернул неожиданную страницу');
         }
 
-        await delay(250);
+        return { html: page.html, url: page.url };
+      } catch (error) {
+        lastError = error;
       }
+    }
 
-      if (/passport\.yandex\.ru/i.test(lastUrl)) {
-        throw new Error('Кинопоиск запросил авторизацию через Яндекс ID');
-      }
+    throw new Error(
+      candidates.length
+        ? `Не удалось использовать открытую вкладку Кинопоиска: ${lastError?.message || 'ошибка'}`
+        : 'Нет открытой вкладки Кинопоиска для резервной загрузки'
+    );
+  }
 
-      throw new Error('Тайм-аут загрузки фильтров Кинопоиска');
-    } finally {
-      try { await chrome.tabs.remove(tabId); } catch {}
+  async function readKinopoiskPage(sourceUrl) {
+    let directError = null;
+
+    try {
+      return await fetchKinopoiskDirect(sourceUrl);
+    } catch (error) {
+      directError = error;
+    }
+
+    try {
+      return await fetchKinopoiskThroughOpenTab(sourceUrl);
+    } catch (tabError) {
+      throw new Error(
+        `Не удалось загрузить Кинопоиск без открытия новой вкладки. ` +
+        `Прямой запрос: ${directError?.message || 'ошибка'}. ` +
+        `Резервный запрос: ${tabError.message}`
+      );
     }
   }
 
   async function fetchModel(sourceUrl, contentType) {
-    const page = await readKinopoiskPageInTab(sourceUrl);
+    const page = await readKinopoiskPage(sourceUrl);
     const doc = new DOMParser().parseFromString(page.html, 'text/html');
 
     if (!doc.querySelector('h1') && !doc.body?.textContent?.includes('Кинопоиск')) {
@@ -785,6 +979,6 @@
   window.KinoFilterEngine = {
     create,
     cleanLabel,
-    readPage: readKinopoiskPageInTab
+    readPage: readKinopoiskPage
   };
 })();
