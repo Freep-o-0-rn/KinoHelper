@@ -185,50 +185,12 @@ async function scrapeFilterPage(tabId) {
     func: async () => {
       const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
       const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-      const visible = element => {
-        if (!(element instanceof Element)) return false;
-        const style = getComputedStyle(element);
-        const rect = element.getBoundingClientRect();
-        return style.display !== 'none' && style.visibility !== 'hidden' &&
-          Number(style.opacity || 1) !== 0 && rect.width > 0 && rect.height > 0;
-      };
 
       const targets = [
         { key: 'country', title: 'Страны', resetLabel: 'Все страны' },
         { key: 'genre', title: 'Жанры', resetLabel: 'Все жанры' },
         { key: 'year', title: 'Годы', resetLabel: 'Все годы' }
       ];
-
-      const exactVisible = text => [...document.querySelectorAll('div, span, button, label, p, a')]
-        .filter(node => visible(node) && clean(node.textContent) === text)
-        .sort((a, b) => a.querySelectorAll('*').length - b.querySelectorAll('*').length)[0] || null;
-
-      const clickableFor = target => {
-        const reset = exactVisible(target.resetLabel);
-        if (reset) {
-          const clickable = reset.closest(
-            'button, [role="button"], [role="combobox"], [aria-haspopup], [tabindex]'
-          );
-          if (clickable) return clickable;
-          let current = reset.parentElement;
-          for (let depth = 0; current && depth < 5; depth += 1, current = current.parentElement) {
-            if (visible(current) && current.getBoundingClientRect().width > 120) return current;
-          }
-        }
-
-        const heading = exactVisible(target.title);
-        let root = heading?.parentElement || null;
-        for (let depth = 0; root && depth < 6; depth += 1, root = root.parentElement) {
-          const candidate = [...root.querySelectorAll(
-            'button, [role="button"], [role="combobox"], [aria-haspopup], [tabindex]'
-          )].filter(visible).find(node => {
-            const text = clean(node.textContent);
-            return text && text !== target.title && text.length < 80;
-          });
-          if (candidate) return candidate;
-        }
-        return null;
-      };
 
       const resetUrlFor = key => {
         const url = new URL(location.href);
@@ -243,156 +205,264 @@ async function scrapeFilterPage(tabId) {
         return url.href;
       };
 
-      const findStringDeep = (value, predicate, depth = 0, seen = new Set()) => {
-        if (depth > 5 || value == null) return null;
-        if (typeof value === 'string') return predicate(value) ? value : null;
-        if (typeof value !== 'object' && typeof value !== 'function') return null;
-        if (seen.has(value)) return null;
-        seen.add(value);
-        let keys;
-        try { keys = Object.keys(value).slice(0, 80); } catch { return null; }
-        for (const key of keys) {
-          let child;
-          try { child = value[key]; } catch { continue; }
-          const found = findStringDeep(child, predicate, depth + 1, seen);
-          if (found) return found;
-        }
-        return null;
+      const buildUrlFromValue = (target, value) => {
+        if (value == null || value === '') return null;
+        const raw = String(value).trim();
+        if (!raw || raw.length > 80) return null;
+
+        if (target.key === 'country' && !/^\d+$/.test(raw)) return null;
+        if (target.key === 'genre' && !/^[a-z0-9_-]+$/i.test(raw)) return null;
+        if (target.key === 'year' && !/^\d{4}(?:[-_]\d{4})?$/.test(raw)) return null;
+
+        const url = new URL(resetUrlFor(target.key));
+        const segments = url.pathname
+          .slice('/lists/movies/'.length)
+          .split('/')
+          .filter(Boolean)
+          .filter(segment => !segment.startsWith(`${target.key}--`));
+        segments.push(`${target.key}--${raw}`);
+        url.pathname = `/lists/movies/${segments.join('/')}/`;
+        return url.href;
       };
 
-      const optionUrlFromNode = (node, target) => {
-        const candidates = [node, node.closest?.('a'), node.querySelector?.('a')].filter(Boolean);
-        for (const element of candidates) {
-          const attrs = [
-            element.getAttribute?.('href'),
-            element.getAttribute?.('data-href'),
-            element.getAttribute?.('data-url'),
-            element.getAttribute?.('data-link')
-          ].filter(Boolean);
-          for (const raw of attrs) {
-            try {
-              const url = new URL(raw, location.href);
-              if (url.pathname.startsWith('/lists/movies/') && url.pathname.includes(`${target.key}--`)) {
-                return url.href;
-              }
-            } catch {}
-          }
+      const normalizeFilterUrl = (raw, target) => {
+        if (typeof raw !== 'string' || !raw) return null;
+        const cleaned = raw
+          .replace(/\\u002F/gi, '/')
+          .replace(/\\\//g, '/')
+          .replace(/&amp;/g, '&');
+        try {
+          const url = new URL(cleaned, location.href);
+          if (!/^(?:www\.)?kinopoisk\.ru$/i.test(url.hostname)) return null;
+          if (!url.pathname.startsWith('/lists/movies/')) return null;
+          if (!url.pathname.includes(`${target.key}--`)) return null;
+          url.protocol = 'https:';
+          url.hostname = 'www.kinopoisk.ru';
+          url.hash = '';
+          url.searchParams.delete('page');
+          return url.href;
+        } catch {
+          return null;
         }
+      };
 
-        // React props often keep the destination even when the visible option is a div/li.
-        for (const owner of candidates) {
-          for (const propName of Object.getOwnPropertyNames(owner)) {
-            if (!propName.startsWith('__reactProps$') && !propName.startsWith('__reactFiber$')) continue;
-            let root;
-            try { root = owner[propName]; } catch { continue; }
-            const raw = findStringDeep(root, text =>
-              text.includes('/lists/movies/') && text.includes(`${target.key}--`)
-            );
-            if (raw) {
-              try { return new URL(raw, location.href).href; } catch {}
+      const reactRoots = (...nodes) => {
+        const roots = [];
+        const seen = new Set();
+        for (const node of nodes.filter(Boolean)) {
+          let current = node;
+          for (let up = 0; current && up < 3; up += 1, current = current.parentElement) {
+            for (const propName of Object.getOwnPropertyNames(current)) {
+              if (!propName.startsWith('__reactProps$') && !propName.startsWith('__reactFiber$')) continue;
+              let value;
+              try { value = current[propName]; } catch { continue; }
+              if (value && !seen.has(value)) {
+                seen.add(value);
+                roots.push(value);
+              }
             }
           }
         }
+        return roots;
+      };
 
-        const rawValue = node.getAttribute?.('data-value') ||
-          node.getAttribute?.('data-id') || node.getAttribute?.('value');
-        if (rawValue && /^[\w-]+$/u.test(rawValue)) {
-          const url = new URL(resetUrlFor(target.key));
-          const segments = url.pathname
-            .slice('/lists/movies/'.length)
-            .split('/')
-            .filter(Boolean)
-            .filter(segment => !segment.startsWith(`${target.key}--`));
-          segments.push(`${target.key}--${rawValue}`);
-          url.pathname = `/lists/movies/${segments.join('/')}/`;
-          return url.href;
+      const findDirectUrl = (root, target, maxDepth = 9) => {
+        const seen = new Set();
+        let visited = 0;
+        const walk = (value, depth) => {
+          if (value == null || depth > maxDepth || visited > 30000) return null;
+          visited += 1;
+          if (typeof value === 'string') return normalizeFilterUrl(value, target);
+          if (typeof value !== 'object' && typeof value !== 'function') return null;
+          if (seen.has(value)) return null;
+          seen.add(value);
+          let keys;
+          try { keys = Object.keys(value).slice(0, 120); } catch { return null; }
+          for (const key of keys) {
+            let child;
+            try { child = value[key]; } catch { continue; }
+            const found = walk(child, depth + 1);
+            if (found) return found;
+          }
+          return null;
+        };
+        return walk(root, 0);
+      };
+
+      const valueScore = (key, value, target) => {
+        const name = String(key || '').toLowerCase();
+        const raw = String(value ?? '').trim();
+        if (!raw) return -1;
+
+        if (target.key === 'country') {
+          if (!/^\d+$/.test(raw)) return -1;
+          if (name === 'countryid' || name === 'country_id') return 120;
+          if (name === 'value') return 110;
+          if (name === 'id') return 90;
+          if (name.includes('country')) return 80;
+          return -1;
         }
+
+        if (target.key === 'genre') {
+          if (!/^[a-z0-9_-]+$/i.test(raw)) return -1;
+          if (name === 'slug') return 120;
+          if (name === 'value') return 110;
+          if (name === 'genre') return 105;
+          if (name === 'genreid' || name === 'genre_id') return 100;
+          if (name === 'code') return 90;
+          return -1;
+        }
+
+        if (target.key === 'year') {
+          if (!/^\d{4}(?:[-_]\d{4})?$/.test(raw)) return -1;
+          if (name === 'year') return 120;
+          if (name === 'value') return 110;
+          if (name === 'id') return 80;
+          return -1;
+        }
+        return -1;
+      };
+
+      const findValueNearLabel = (roots, label, target) => {
+        let best = null;
+        const seen = new Set();
+        let visited = 0;
+
+        const walk = (value, depth) => {
+          if (value == null || depth > 10 || visited > 50000) return;
+          visited += 1;
+          if (typeof value !== 'object' && typeof value !== 'function') return;
+          if (seen.has(value)) return;
+          seen.add(value);
+
+          let keys;
+          try { keys = Object.keys(value).slice(0, 140); } catch { return; }
+          const entries = [];
+          for (const key of keys) {
+            let child;
+            try { child = value[key]; } catch { continue; }
+            entries.push([key, child]);
+          }
+
+          const hasLabel = entries.some(([, child]) =>
+            typeof child === 'string' && clean(child) === label
+          );
+
+          if (hasLabel) {
+            for (const [key, child] of entries) {
+              if (typeof child !== 'string' && typeof child !== 'number') continue;
+              const score = valueScore(key, child, target);
+              if (score >= 0 && (!best || score > best.score)) {
+                best = { score, value: String(child) };
+              }
+            }
+            const direct = findDirectUrl(value, target, 4);
+            if (direct) best = { score: 1000, url: direct };
+          }
+
+          for (const [, child] of entries) {
+            if (child && (typeof child === 'object' || typeof child === 'function')) {
+              walk(child, depth + 1);
+            }
+          }
+        };
+
+        roots.forEach(root => walk(root, 0));
+        return best;
+      };
+
+      const resolveOptionUrl = (option, menu, trigger, target, label) => {
+        if (label === target.resetLabel) return resetUrlFor(target.key);
+
+        const roots = reactRoots(option, menu, trigger);
+        for (const root of roots) {
+          const direct = findDirectUrl(root, target);
+          if (direct) return direct;
+        }
+
+        const matched = findValueNearLabel(roots, label, target);
+        if (matched?.url) return matched.url;
+        if (matched?.value) return buildUrlFromValue(target, matched.value);
         return null;
       };
 
-      const menuFor = (trigger, target) => {
-        const controlledId = trigger.getAttribute?.('aria-controls');
-        if (controlledId) {
-          const controlled = document.getElementById(controlledId);
-          if (controlled && visible(controlled)) return controlled;
-        }
-
-        const listboxes = [...document.querySelectorAll('[role="listbox"], [role="menu"], ul')]
-          .filter(visible)
-          .filter(node => clean(node.textContent).includes(target.resetLabel));
-        if (listboxes.length) {
-          return listboxes.sort((a, b) => a.getBoundingClientRect().height - b.getBoundingClientRect().height)[0];
-        }
-
-        const reset = exactVisible(target.resetLabel);
-        if (!reset) return null;
-        let current = reset.parentElement;
-        for (let depth = 0; current && depth < 7; depth += 1, current = current.parentElement) {
-          if (!visible(current)) continue;
-          const rect = current.getBoundingClientRect();
-          const optionCount = current.querySelectorAll(
-            '[role="option"], [role="menuitem"], li, a, button, [data-value], [data-id]'
-          ).length;
-          if (rect.height >= 70 && optionCount >= 2) return current;
+      const waitForListbox = async trigger => {
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+          const controlledId = trigger.getAttribute('aria-controls');
+          const byId = controlledId ? document.getElementById(controlledId) : null;
+          const byLabel = document.querySelector(
+            `[role="listbox"][aria-label="${CSS.escape(trigger.getAttribute('aria-label') || '')}"]`
+          );
+          const listbox = byId || byLabel;
+          if (listbox && listbox.querySelector('[role="option"]')) return listbox;
+          await delay(100);
         }
         return null;
-      };
-
-      const collectMenuOptions = (menu, target) => {
-        const nodes = [...menu.querySelectorAll(
-          '[role="option"], [role="menuitem"], li, a, button, [data-value], [data-id]'
-        )].filter(visible);
-        const result = new Map();
-
-        for (const node of nodes) {
-          const label = clean(node.getAttribute?.('aria-label') || node.getAttribute?.('title') || node.textContent);
-          if (!label || label === target.resetLabel || label.length > 70) continue;
-          // Ignore wrapper nodes containing several visible option rows.
-          const childRows = [...node.querySelectorAll('[role="option"], [role="menuitem"], li')]
-            .filter(child => child !== node && visible(child));
-          if (childRows.length > 1) continue;
-
-          const url = optionUrlFromNode(node, target);
-          if (!url) continue;
-          result.set(label, { label, url });
-        }
-        return [...result.values()];
       };
 
       const groups = {};
+      const diagnostics = {};
+
       for (const target of targets) {
-        const trigger = clickableFor(target);
-        if (!trigger) continue;
-        let opened = false;
+        const trigger = document.querySelector(
+          `button[role="combobox"][aria-label="${CSS.escape(target.title)}"]`
+        );
+
+        if (!trigger) {
+          diagnostics[target.key] = { error: 'combobox not found' };
+          continue;
+        }
+
+        let openedByUs = false;
         try {
-          trigger.click();
-          opened = true;
-          await delay(250);
-
-          let menu = null;
-          for (let attempt = 0; attempt < 12 && !menu; attempt += 1) {
-            menu = menuFor(trigger, target);
-            if (!menu) await delay(100);
+          if (trigger.getAttribute('aria-expanded') !== 'true') {
+            trigger.click();
+            openedByUs = true;
           }
-          if (!menu) continue;
 
-          const options = collectMenuOptions(menu, target);
+          const listbox = await waitForListbox(trigger);
+          if (!listbox) {
+            diagnostics[target.key] = { error: 'listbox not found' };
+            continue;
+          }
+
+          const optionNodes = [...listbox.querySelectorAll('[role="option"]')];
+          const options = [];
+          const unresolved = [];
+
+          for (const option of optionNodes) {
+            const label = clean(option.getAttribute('aria-label') || option.textContent);
+            if (!label || label.length > 80) continue;
+            const url = resolveOptionUrl(option, listbox, trigger, target, label);
+            if (!url) {
+              unresolved.push(label);
+              continue;
+            }
+            options.push({
+              label,
+              url,
+              selected: option.getAttribute('aria-selected') === 'true'
+            });
+          }
+
+          diagnostics[target.key] = {
+            total: optionNodes.length,
+            resolved: options.length,
+            unresolved: unresolved.slice(0, 12)
+          };
+
           if (options.length) {
             groups[target.key] = {
               key: `path:${target.key}`,
               title: target.title,
               resetLabel: target.resetLabel,
               resetUrl: resetUrlFor(target.key),
-              options
+              options: options.filter(option => option.label !== target.resetLabel)
             };
           }
         } finally {
-          if (opened) {
+          if (openedByUs && trigger.getAttribute('aria-expanded') === 'true') {
             try { trigger.click(); } catch {}
-            await delay(80);
-            document.dispatchEvent(new KeyboardEvent('keydown', {
-              key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true
-            }));
             await delay(80);
           }
         }
@@ -401,13 +471,15 @@ async function scrapeFilterPage(tabId) {
       return {
         html: document.documentElement.outerHTML,
         url: location.href,
-        groups
+        groups,
+        diagnostics
       };
     }
   });
 
   const page = results?.[0]?.result;
   if (!page?.html || !page?.url) throw new Error('Не удалось прочитать DOM Кинопоиска');
+  console.log('[KinoHelper filters] listbox scrape:', page.diagnostics || {});
   return page;
 }
 
