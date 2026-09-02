@@ -3,8 +3,10 @@
 
   const KINOPOISK_BASE = 'https://www.kinopoisk.ru';
   const STATE_KEY = 'kinopoiskDynamicFilterStateV2';
-  const CACHE_KEY = 'kinopoiskDynamicFilterCacheV5';
-  const PAGE_CACHE_KEY = 'kinopoiskFilterUrlCacheV4';
+  // Новые ключи не дают старому общему каталогу перекрыть раздельные модели
+  // для films/series после обновления расширения.
+  const CACHE_KEY = 'kinopoiskDynamicFilterCacheV6';
+  const PAGE_CACHE_KEY = 'kinopoiskFilterUrlCacheV5';
   const FILTER_CATALOG_KEY = 'kinopoiskFilterCatalogV2';
   const LEGACY_CACHE_KEYS = ['kinopoiskDynamicFilterCacheV3', 'kinopoiskDynamicFilterCacheV2'];
   const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -143,6 +145,66 @@
       remaining.splice(index, 1);
     }
     return true;
+  }
+
+  function multisetSubtract(values, valuesToRemove) {
+    const result = [...values];
+    valuesToRemove.forEach(value => {
+      const index = result.indexOf(value);
+      if (index >= 0) result.splice(index, 1);
+    });
+    return result;
+  }
+
+  function urlsEqualExceptQueryKey(left, right, key) {
+    try {
+      const leftUrl = new URL(left);
+      const rightUrl = new URL(right);
+      leftUrl.searchParams.delete(key);
+      rightUrl.searchParams.delete(key);
+      return urlsEqual(leftUrl.href, rightUrl.href);
+    } catch {
+      return false;
+    }
+  }
+
+  function queryToggleDescriptor(sourceUrl, targetUrl, key) {
+    if (!urlsEqualExceptQueryKey(sourceUrl, targetUrl, key)) return null;
+
+    const sourceValues = queryValues(sourceUrl, key);
+    const targetValues = queryValues(targetUrl, key);
+    const added = multisetSubtract(targetValues, sourceValues);
+    const removed = multisetSubtract(sourceValues, targetValues);
+
+    // A quick-filter link must only add or remove values. Replacements remain
+    // on the old page-refresh path because their meaning is not a toggle.
+    if ((!added.length && !removed.length) || (added.length && removed.length)) {
+      return null;
+    }
+
+    return {
+      key,
+      values: added.length ? added : removed
+    };
+  }
+
+  function toggleQueryValues(rawUrl, descriptor) {
+    const url = new URL(rawUrl);
+    const currentValues = url.searchParams.getAll(descriptor.key);
+    const wasActive = multisetContains(currentValues, descriptor.values);
+    const nextValues = wasActive
+      ? multisetSubtract(currentValues, descriptor.values)
+      : [...currentValues, ...descriptor.values];
+
+    url.searchParams.delete(descriptor.key);
+    nextValues.forEach(value => url.searchParams.append(descriptor.key, value));
+    url.searchParams.delete('page');
+    url.hash = '';
+
+    return {
+      url: stripNonFilterParams(url).href,
+      active: !wasActive
+    };
   }
 
   // Kinopoisk's active quick-filter chip normally links to the URL that
@@ -604,6 +666,31 @@
     } catch {
       return sourceUrl;
     }
+  }
+
+  function applyGroupOption(sourceUrl, templateUrl, groupKey) {
+    if (String(groupKey || '').startsWith('path:')) {
+      return applyCatalogOption(sourceUrl, templateUrl, groupKey);
+    }
+
+    if (String(groupKey || '').startsWith('query:')) {
+      try {
+        const key = String(groupKey).slice('query:'.length);
+        const source = new URL(sourceUrl);
+        const template = new URL(templateUrl);
+        source.searchParams.delete(key);
+        template.searchParams.getAll(key).forEach(value => {
+          source.searchParams.append(key, value);
+        });
+        source.searchParams.delete('page');
+        source.hash = '';
+        return stripNonFilterParams(source).href;
+      } catch {
+        return templateUrl;
+      }
+    }
+
+    return templateUrl;
   }
 
   function enrichModelWithCatalog(model, catalog) {
@@ -1438,7 +1525,12 @@
         select.addEventListener('change', () => {
           const node = select.options[select.selectedIndex];
           if (!node?.value) return;
-          void applyUrl(node.value, { groupKey: group.key, label: node.textContent });
+          const targetUrl = applyGroupOption(
+            activeTypeState().sourceUrl,
+            node.value,
+            group.key
+          );
+          void applyUrl(targetUrl, { groupKey: group.key, label: node.textContent });
         });
 
         wrapper.append(caption, select);
@@ -1455,11 +1547,36 @@
           button.className = 'kp-filter-chip';
           button.textContent = action.label;
 
-          if (action.selected || urlsEqual(action.url, activeTypeState().sourceUrl)) {
+          const quickToggle = queryToggleDescriptor(model.sourceUrl, action.url, 'b');
+
+          if (
+            quickToggle
+              ? multisetContains(
+                  queryValues(activeTypeState().sourceUrl, quickToggle.key),
+                  quickToggle.values
+                )
+              : action.selected || urlsEqual(action.url, activeTypeState().sourceUrl)
+          ) {
             button.classList.add('active');
           }
 
-          button.addEventListener('click', () => void applyUrl(action.url));
+          button.addEventListener('click', () => {
+            if (updating) return;
+
+            if (!quickToggle) {
+              void applyUrl(action.url);
+              return;
+            }
+
+            // Kinopoisk encodes these chips as repeated b= values. They can be
+            // toggled locally: no service tab, network request or DOM rebuild.
+            const next = toggleQueryValues(activeTypeState().sourceUrl, quickToggle);
+            activeTypeState().sourceUrl = normalizeStateUrl(next.url, state.contentType);
+            saveState();
+            button.classList.toggle('active', next.active);
+            retryElement.style.display = 'none';
+            setStatus();
+          });
           block.appendChild(button);
         });
 
@@ -1546,6 +1663,7 @@
       const type = state.contentType;
       const typeState = activeTypeState();
       const cacheEntry = await cachedPageModel(type, typeState.sourceUrl);
+      const typeCacheEntry = cacheEntry?.model ? null : await cachedModel(type);
       contentTypeElement.value = type;
 
       // Любая уже сохранённая комбинация показывается сразу.
@@ -1560,6 +1678,20 @@
           }
           return;
         }
+      }
+
+      // Quick chips only change repeated b= values. Reuse the last complete
+      // model for the same path so reopening the popup does not create a
+      // service tab merely to redraw the same controls.
+      if (
+        !force &&
+        typeCacheEntry?.model &&
+        urlsEqualExceptQueryKey(typeCacheEntry.sourceUrl, typeState.sourceUrl, 'b')
+      ) {
+        render(typeCacheEntry.model);
+        retryElement.style.display = 'none';
+        setStatus();
+        return;
       }
 
       setUpdating(

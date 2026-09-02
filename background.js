@@ -225,6 +225,74 @@ async function scrapeFilterPage(tabId) {
         return url.href;
       };
 
+      const readSsrFilterGroups = () => {
+        const groups = {};
+        const marker = 'window.Ya.__ssr_initial_data = ';
+
+        for (const script of document.scripts) {
+          const text = script.textContent || '';
+          const markerIndex = text.indexOf(marker);
+          if (markerIndex < 0) continue;
+
+          const rawJson = text
+            .slice(markerIndex + marker.length)
+            .trim()
+            .replace(/;\s*$/, '');
+
+          let initialData;
+          try {
+            initialData = JSON.parse(rawJson);
+          } catch {
+            continue;
+          }
+
+          const apolloState = initialData?.apolloState;
+          if (!apolloState || typeof apolloState !== 'object') continue;
+
+          for (const target of targets) {
+            const filter = apolloState[`SingleSelectFilter:${target.key}`];
+            if (!filter || typeof filter !== 'object') continue;
+
+            const lists = Object.entries(filter)
+              .filter(([key, value]) =>
+                key.startsWith('values(') && Array.isArray(value?.items)
+              )
+              .map(([, value]) => value.items)
+              .sort((left, right) => right.length - left.length);
+
+            const items = lists[0] || [];
+            const optionMap = new Map();
+
+            for (const item of items) {
+              if (!item || item.selectable === false) continue;
+
+              const label = clean(
+                item.name?.russian ||
+                item.label ||
+                item.title ||
+                item.text
+              );
+              const url = buildUrlFromValue(target, item.value);
+
+              if (!label || label.length > 80 || !url) continue;
+              optionMap.set(String(item.value), { label, url });
+            }
+
+            if (!optionMap.size) continue;
+
+            groups[target.key] = {
+              key: `path:${target.key}`,
+              title: clean(filter.name?.russian) || target.title,
+              resetLabel: clean(filter.hint?.russian) || target.resetLabel,
+              resetUrl: resetUrlFor(target.key),
+              options: [...optionMap.values()]
+            };
+          }
+        }
+
+        return groups;
+      };
+
       const normalizeFilterUrl = (raw, target) => {
         if (typeof raw !== 'string' || !raw) return null;
         const cleaned = raw
@@ -400,10 +468,22 @@ async function scrapeFilterPage(tabId) {
         return null;
       };
 
-      const groups = {};
+      // Кинопоиск хранит полный каталог закрытых dropdown в SSR Apollo cache.
+      // Он формируется отдельно для текущего URL (?b=films / ?b=series),
+      // поэтому не смешиваем варианты фильмов и сериалов. DOM-разбор ниже
+      // остаётся резервом на случай изменения структуры initial data.
+      const groups = readSsrFilterGroups();
       const diagnostics = {};
 
       for (const target of targets) {
+        if (groups[target.key]?.options?.length) {
+          diagnostics[target.key] = {
+            source: 'ssr',
+            resolved: groups[target.key].options.length
+          };
+          continue;
+        }
+
         const trigger = document.querySelector(
           `button[role="combobox"][aria-label="${CSS.escape(target.title)}"]`
         );
@@ -446,6 +526,7 @@ async function scrapeFilterPage(tabId) {
           }
 
           diagnostics[target.key] = {
+            source: 'dom',
             total: optionNodes.length,
             resolved: options.length,
             unresolved: unresolved.slice(0, 12)
