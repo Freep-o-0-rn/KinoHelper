@@ -1,0 +1,136 @@
+/* Dynamic Kinopoisk filters. Kept separate from popup.css so watch UI stays untouched. */
+
+.filters.active {
+  max-height: 410px;
+}
+
+/* Legacy hardcoded controls remain in DOM for backward compatibility with
+   popup.js, but are no longer user-visible or used by Random. */
+.filters > .filter-row,
+.filters > #yearFilter,
+.filters > .checkbox-group {
+  display: none !important;
+}
+
+.kp-filter-type,
+.kp-filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.kp-filter-caption {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.dynamic-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 230px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 1px;
+  scrollbar-width: none;
+  transition: opacity .18s ease;
+}
+
+.dynamic-filters::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.filters.is-updating .dynamic-filters,
+.filters.is-updating .kp-filter-type {
+  opacity: .55;
+  pointer-events: none;
+}
+
+.filter-status {
+  display: none;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  text-align: center;
+  font-size: 10px;
+}
+
+.filter-status.visible {
+  display: flex;
+}
+
+.filter-status.loading {
+  background: rgba(67, 97, 238, .10);
+  color: var(--secondary);
+}
+
+.filter-status.error {
+  background: rgba(239, 71, 111, .10);
+  color: var(--error);
+}
+
+.filter-status.warning {
+  background: rgba(255, 209, 102, .12);
+  color: var(--warning);
+}
+
+.kp-filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.kp-filter-chip {
+  min-height: 28px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  color: var(--text);
+  font-size: 10px;
+  line-height: 1.2;
+  transition: border-color .18s ease, background-color .18s ease, color .18s ease;
+}
+
+.kp-filter-chip:hover {
+  transform: none;
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.kp-filter-chip.active {
+  border-color: var(--primary);
+  background: rgba(255, 107, 53, .10);
+  color: var(--primary);
+}
+
+.kp-filter-empty {
+  padding: 10px 4px;
+  color: var(--text-muted);
+  text-align: center;
+  font-size: 10px;
+}
+
+.filter-buttons {
+  gap: 7px;
+}
+
+.btn-retry {
+  min-height: 32px;
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  background: rgba(67, 97, 238, .10);
+  color: var(--secondary);
+  font-size: 11px;
+  transition: background-color .18s ease, color .18s ease;
+}
+
+.btn-retry:hover {
+  transform: none;
+  background: var(--secondary);
+  color: #fff;
+}
