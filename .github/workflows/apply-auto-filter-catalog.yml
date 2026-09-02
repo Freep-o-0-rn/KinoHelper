@@ -1,0 +1,28 @@
+name: Apply automatic filter catalog bootstrap
+on:
+  push:
+    paths:
+      - '.github/scripts/patch-auto-filter-catalog.py'
+      - '.github/workflows/apply-auto-filter-catalog.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply patch
+        run: python .github/scripts/patch-auto-filter-catalog.py
+      - name: Validate
+        run: |
+          node --check filters.js
+          python -m json.tool manifest.json > /dev/null
+      - name: Commit
+        run: |
+          git config user.name "Vi"
+          git config user.email "Pornoenot@gmail.com"
+          git add filters.js
+          git commit -m "Bootstrap dropdown filters automatically" || true
+          git rm .github/scripts/patch-auto-filter-catalog.py .github/workflows/apply-auto-filter-catalog.yml
+          git commit -m "Remove temporary catalog patch files" || true
+          git push
