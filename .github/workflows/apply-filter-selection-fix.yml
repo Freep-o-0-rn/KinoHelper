@@ -1,0 +1,42 @@
+name: Apply filter selection fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-filter-selection-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Apply selection patch
+        run: python3 _patch_filter_selection.py
+
+      - name: Validate
+        run: |
+          node --check filters.js
+          node --check filters-ui.js
+          node --check popup.js
+          node --check background.js
+          python3 -m json.tool manifest.json > /dev/null
+          grep -q "isActiveQueryToggle" filters.js
+          grep -q "model.sourceUrl = requestedUrl" filters.js
+          grep -q "kinopoiskDynamicFilterCacheV4" filters.js
+          grep -q "chrome.storage.local.get(CACHE_KEY)" filters.js
+
+      - name: Commit
+        run: |
+          git config user.name "Vi"
+          git config user.email "Pornoenot@gmail.com"
+          git rm .github/workflows/apply-filter-selection-fix.yml _patch_filter_selection.py
+          git add filters.js
+          git commit -m "Fix quick filter state and random URL"
+          git push origin main
