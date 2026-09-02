@@ -3,7 +3,7 @@
 
   const KINOPOISK_BASE = 'https://www.kinopoisk.ru';
   const STATE_KEY = 'kinopoiskDynamicFilterStateV2';
-  const CACHE_KEY = 'kinopoiskDynamicFilterCacheV2';
+  const CACHE_KEY = 'kinopoiskDynamicFilterCacheV3';
   const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
   const TYPES = {
