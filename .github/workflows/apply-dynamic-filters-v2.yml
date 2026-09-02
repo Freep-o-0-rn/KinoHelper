@@ -1,0 +1,378 @@
+name: Apply dynamic random filters v2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-dynamic-filters-v2.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Patch popup
+        run: |
+          cat > /tmp/patch_filters.py <<'PY'
+          from pathlib import Path
+
+          html_path = Path('popup.html')
+          html = html_path.read_text(encoding='utf-8')
+          html = html.replace('<span>Фильтры поиска</span>', '<span>Фильтры случайного выбора</span>', 1)
+
+          start = html.index('            <div class="filters" id="filters">')
+          end = html.index('\n\n            <div class="action-grid">', start)
+          block = '''            <div class="filters" id="filters">
+              <label class="kp-filter-type" for="contentTypeFilter">
+                <span class="kp-filter-caption">Тип</span>
+                <select id="contentTypeFilter" aria-label="Тип случайного выбора">
+                  <option value="all">Все</option>
+                  <option value="films">Фильмы</option>
+                  <option value="series">Сериалы</option>
+                </select>
+              </label>
+
+              <div class="filter-status" id="filterStatus" role="status" aria-live="polite"></div>
+              <div class="dynamic-filters" id="dynamicFilters"></div>
+
+              <div class="filter-buttons">
+                <button class="btn-retry" id="retryFiltersBtn" type="button" style="display: none;">↻ Повторить</button>
+                <button class="btn-clear" id="clearFiltersBtn" type="button" title="Очистить фильтры">🗑️ Очистить фильтры</button>
+              </div>
+            </div>'''
+          html = html[:start] + block + html[end:]
+
+          if '<script src="filters.js"></script>' not in html:
+              html = html.replace(
+                  '  <script src="popup.js"></script>',
+                  '  <script src="filters.js"></script>\n  <script src="popup.js"></script>',
+                  1
+              )
+          html_path.write_text(html, encoding='utf-8')
+
+          css_path = Path('popup.css')
+          css = css_path.read_text(encoding='utf-8')
+          css = css.replace('  max-height: 360px;\n  padding: 16px;', '  max-height: 410px;\n  padding: 16px;', 1)
+
+          if '/* Динамические фильтры Кинопоиска */' not in css:
+              css += r'''
+
+          /* Динамические фильтры Кинопоиска */
+          .kp-filter-type,
+          .kp-filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+          }
+
+          .kp-filter-caption {
+            color: var(--text-muted);
+            font-size: 10px;
+            font-weight: 600;
+          }
+
+          .dynamic-filters {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            max-height: 230px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding-right: 1px;
+            scrollbar-width: none;
+            transition: opacity .18s ease;
+          }
+
+          .dynamic-filters::-webkit-scrollbar { width: 0; height: 0; }
+
+          .filters.is-updating .dynamic-filters,
+          .filters.is-updating .kp-filter-type {
+            opacity: .55;
+            pointer-events: none;
+          }
+
+          .filter-status {
+            display: none;
+            min-height: 28px;
+            align-items: center;
+            justify-content: center;
+            padding: 6px 8px;
+            border-radius: var(--radius-sm);
+            text-align: center;
+            font-size: 10px;
+          }
+
+          .filter-status.visible { display: flex; }
+          .filter-status.loading { background: rgba(67,97,238,.10); color: var(--secondary); }
+          .filter-status.error { background: rgba(239,71,111,.10); color: var(--error); }
+          .filter-status.warning { background: rgba(255,209,102,.12); color: var(--warning); }
+
+          .kp-filter-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+          }
+
+          .kp-filter-chip {
+            min-height: 28px;
+            padding: 5px 8px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            background: var(--bg-secondary);
+            color: var(--text);
+            font-size: 10px;
+            line-height: 1.2;
+            transition: border-color .18s ease, background-color .18s ease, color .18s ease;
+          }
+
+          .kp-filter-chip:hover {
+            transform: none;
+            border-color: var(--primary);
+            color: var(--primary);
+          }
+
+          .kp-filter-chip.active {
+            border-color: var(--primary);
+            background: rgba(255,107,53,.10);
+            color: var(--primary);
+          }
+
+          .kp-filter-empty {
+            padding: 10px 4px;
+            color: var(--text-muted);
+            text-align: center;
+            font-size: 10px;
+          }
+
+          .filter-buttons { gap: 7px; }
+
+          .btn-retry {
+            min-height: 32px;
+            padding: 7px 10px;
+            border-radius: var(--radius);
+            background: rgba(67,97,238,.10);
+            color: var(--secondary);
+            font-size: 11px;
+            transition: background-color .18s ease, color .18s ease;
+          }
+
+          .btn-retry:hover {
+            transform: none;
+            background: var(--secondary);
+            color: #fff;
+          }
+          '''
+          css_path.write_text(css, encoding='utf-8')
+
+          js_path = Path('popup.js')
+          js = js_path.read_text(encoding='utf-8')
+
+          dom_start = js.index('// Элементы DOM')
+          dom_end = js.index('\n\nconst systemThemeQuery', dom_start)
+          dom = '''// Элементы DOM
+const messageBox = document.getElementById('message');
+const filtersToggle = document.getElementById('filtersToggle');
+const filters = document.getElementById('filters');
+const contentTypeFilter = document.getElementById('contentTypeFilter');
+const dynamicFilters = document.getElementById('dynamicFilters');
+const filterStatus = document.getElementById('filterStatus');
+const clearFiltersBtn = document.getElementById('clearFiltersBtn');
+const retryFiltersBtn = document.getElementById('retryFiltersBtn');
+const historySection = document.getElementById('history');
+const historyItems = document.getElementById('historyItems');
+const historyToggle = document.getElementById('historyToggle');
+const settingsButton = document.getElementById('settingsButton');
+const backToMainButton = document.getElementById('backToMain');
+const themeSelect = document.getElementById('themeSelect');
+const historyMaxItemsSelect = document.getElementById('historyMaxItems');
+const historyMaxAgeSelect = document.getElementById('historyMaxAge');
+const excludeHistoryCheckbox = document.getElementById('excludeHistoryFromRandom');
+const clearHistoryButton = document.getElementById('clearHistoryBtn');
+const clearHistoryConfirm = document.getElementById('clearHistoryConfirm');
+const confirmClearHistoryButton = document.getElementById('confirmClearHistory');
+const cancelClearHistoryButton = document.getElementById('cancelClearHistory');'''
+          js = js[:dom_start] + dom + js[dom_end:]
+
+          if 'let randomFilterEngine = null;' not in js:
+              js = js.replace(
+                  'let currentSettings = null;\n',
+                  'let currentSettings = null;\nlet randomFilterEngine = null;\n',
+                  1
+              )
+
+          filter_start = js.index('// Сохранение фильтров')
+          filter_end = js.index('async function getMaxPage', filter_start)
+          wrappers = '''// Динамические фильтры Кинопоиска
+async function initializeDynamicFilters() {
+    randomFilterEngine = window.KinoFilterEngine.create({
+        filtersElement: filters,
+        contentTypeElement: contentTypeFilter,
+        dynamicElement: dynamicFilters,
+        statusElement: filterStatus,
+        retryElement: retryFiltersBtn,
+        legacyStorageKey: FILTERS_KEY,
+        debug: debugLog
+    });
+    await randomFilterEngine.initialize();
+}
+
+function clearFilters() {
+    return randomFilterEngine?.clear();
+}
+
+function showFilterState() {
+    return randomFilterEngine?.showState() || {};
+}
+
+function buildFilterUrl() {
+    return randomFilterEngine?.buildUrl() || {
+        url: `${KINOPOISK_BASE}/lists/movies/`,
+        contentType: 'all'
+    };
+}
+
+'''
+          js = js[:filter_start] + wrappers + js[filter_end:]
+
+          pick_start = js.index('async function pickRandomMovie')
+          show_start = js.index('async function showCurrentMovie', pick_start)
+          picker = '''async function pickRandomMovie(contentType, page, filterUrl) {
+    const pageUrl = new URL(filterUrl);
+    if (page > 1) pageUrl.searchParams.set('page', String(page));
+
+    const res = await fetch(pageUrl.href);
+    if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+
+    const text = await res.text();
+    const doc = new DOMParser().parseFromString(text, 'text/html');
+    const selector = contentType === 'series'
+        ? 'a[href^="/series/"]'
+        : contentType === 'film'
+            ? 'a[href^="/film/"]'
+            : 'a[href^="/film/"], a[href^="/series/"]';
+
+    const candidates = new Map();
+    doc.querySelectorAll(selector).forEach(anchor => {
+        const href = anchor.getAttribute('href');
+        if (!href) return;
+
+        let parsed;
+        try { parsed = new URL(href, KINOPOISK_BASE); } catch { return; }
+
+        const match = parsed.pathname.match(/^\/(film|series)\/(\d+)(?:\/|$)/);
+        if (!match) return;
+        if (contentType === 'film' && match[1] !== 'film') return;
+        if (contentType === 'series' && match[1] !== 'series') return;
+
+        const key = `${match[1]}:${match[2]}`;
+        if (candidates.has(key)) return;
+
+        const card = anchor.closest('[class*="styles_root"], article, li, [data-test-id*="item"]');
+        const rawTitle = anchor.querySelector('img')?.alt ||
+            card?.querySelector('h3, h2, [class*="name"], [class*="title"]')?.textContent ||
+            anchor.textContent ||
+            'Неизвестно';
+        const title = String(rawTitle)
+            .replace(/\s+/g, ' ')
+            .replace(/^Смотреть\s+/i, '')
+            .trim();
+
+        candidates.set(key, {
+            vipUrl: `${WATCH_BASE}${parsed.pathname}`,
+            title: title || 'Неизвестно'
+        });
+    });
+
+    const list = [...candidates.values()];
+    if (!list.length) throw new Error('Фильмы/сериалы не найдены на странице');
+    return list[Math.floor(Math.random() * list.length)];
+}
+
+'''
+          js = js[:pick_start] + picker + js[show_start:]
+
+          old_clear = "clearFiltersBtn.addEventListener('click', clearFilters);"
+          new_clear = '''contentTypeFilter.addEventListener('change', () => {
+    void randomFilterEngine?.changeType(contentTypeFilter.value);
+});
+
+clearFiltersBtn.addEventListener('click', () => {
+    void clearFilters();
+});
+
+retryFiltersBtn.addEventListener('click', () => {
+    void randomFilterEngine?.retry();
+});'''
+          if old_clear not in js:
+              raise SystemExit('clear filter listener not found')
+          js = js.replace(old_clear, new_clear, 1)
+
+          handlers_start = js.index("document.getElementById('kinopoiskFilm').addEventListener")
+          handlers_end = js.index("\ndocument.getElementById('randomFilm').addEventListener", handlers_start)
+          replacement = '''document.getElementById('kinopoiskFilm').addEventListener('click', () => {
+    const url = randomFilterEngine?.getBaseUrl('films') || `${KINOPOISK_BASE}/lists/movies/?b=films`;
+    chrome.tabs.create({ url });
+    showMessage('Открываем фильмы...', 'info');
+});
+
+document.getElementById('kinopoiskSerial').addEventListener('click', () => {
+    const url = randomFilterEngine?.getBaseUrl('series') || `${KINOPOISK_BASE}/lists/movies/?b=series`;
+    chrome.tabs.create({ url });
+    showMessage('Открываем сериалы...', 'info');
+});
+'''
+          js = js[:handlers_start] + replacement + js[handlers_end:]
+
+          old_startup = '''    const savedFilters = loadFiltersFromStorage();
+    applySavedFilters(savedFilters);
+    setupFilterListeners();
+'''
+          new_startup = '''    void initializeDynamicFilters().catch(error => {
+        debugLog('Ошибка инициализации фильтров:', error);
+        filterStatus.textContent = 'Не удалось загрузить фильтры Кинопоиска';
+        filterStatus.className = 'filter-status visible error';
+        retryFiltersBtn.style.display = 'inline-flex';
+    });
+'''
+          if old_startup not in js:
+              raise SystemExit('startup filter block not found')
+          js = js.replace(old_startup, new_startup, 1)
+
+          js_path.write_text(js, encoding='utf-8')
+          PY
+          python3 /tmp/patch_filters.py
+
+      - name: Validate extension
+        run: |
+          node --check filters.js
+          node --check popup.js
+          python3 -m json.tool manifest.json > /dev/null
+          grep -q '"version": "1.502"' manifest.json
+          grep -q 'vadim.reizer@ya.ru' popup.html
+          grep -q 'id="contentTypeFilter"' popup.html
+          grep -q 'id="dynamicFilters"' popup.html
+          grep -q 'Фильтры случайного выбора' popup.html
+          grep -q '<script src="filters.js"></script>' popup.html
+          ! grep -q 'id="genreFilter"' popup.html
+          ! grep -q 'const genreFilter' popup.js
+          ! grep -q 'const yearFilter' popup.js
+          ! grep -q 'const highRatedCheckbox' popup.js
+          grep -q 'Контекстная кнопка: Кинопоиск' popup.js
+          grep -q "startWatchSessionForTab(tab.id, tab.url, watchUrl)" popup.js
+          grep -q "await endWatchSession(tab.id)" popup.js
+          grep -q "contentType: 'all'" popup.js
+
+      - name: Commit changes
+        run: |
+          git config user.name "Vi"
+          git config user.email "Pornoenot@gmail.com"
+          git rm -f .github/workflows/apply-dynamic-filters.yml .github/workflows/apply-dynamic-filters-v2.yml
+          git add popup.html popup.css popup.js filters.js
+          git commit -m "Replace hardcoded random filters with Kinopoisk parser"
+          git push origin main
