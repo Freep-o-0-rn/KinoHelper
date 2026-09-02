@@ -1,0 +1,151 @@
+name: Fix filter page loading
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-filter-page-loading.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Patch filter loading
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('filters.js')
+          js = path.read_text(encoding='utf-8')
+          start = js.index('  async function fetchModel(sourceUrl, contentType) {')
+          end = js.index('\n\n  function create(options)', start)
+
+          replacement = r'''  function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  function isKinopoiskListsUrl(rawUrl) {
+    try {
+      const url = new URL(rawUrl);
+      return /^(?:www\.)?kinopoisk\.ru$/i.test(url.hostname) &&
+        url.pathname.startsWith('/lists/movies/');
+    } catch {
+      return false;
+    }
+  }
+
+  async function readKinopoiskPageInTab(sourceUrl) {
+    const tab = await chrome.tabs.create({
+      url: sourceUrl,
+      active: false
+    });
+
+    if (!tab?.id) {
+      throw new Error('Не удалось создать служебную вкладку Кинопоиска');
+    }
+
+    const tabId = tab.id;
+    const deadline = Date.now() + 20000;
+    let lastUrl = sourceUrl;
+
+    try {
+      while (Date.now() < deadline) {
+        let currentTab;
+
+        try {
+          currentTab = await chrome.tabs.get(tabId);
+        } catch {
+          throw new Error('Служебная вкладка Кинопоиска была закрыта');
+        }
+
+        lastUrl = currentTab.url || currentTab.pendingUrl || lastUrl;
+
+        if (currentTab.status === 'complete' && isKinopoiskListsUrl(lastUrl)) {
+          // Даём React/Next.js закончить гидрацию фильтров после load.
+          await delay(900);
+
+          const results = await chrome.scripting.executeScript({
+            target: { tabId },
+            func: () => ({
+              html: document.documentElement?.outerHTML || '',
+              url: location.href,
+              title: document.title
+            })
+          });
+
+          const page = results?.[0]?.result;
+          if (!page?.html) {
+            throw new Error('Не удалось прочитать страницу Кинопоиска');
+          }
+
+          if (!isKinopoiskListsUrl(page.url)) {
+            throw new Error('Кинопоиск открыл неожиданную страницу');
+          }
+
+          return page;
+        }
+
+        await delay(250);
+      }
+
+      if (/passport\.yandex\.ru/i.test(lastUrl)) {
+        throw new Error('Кинопоиск запросил авторизацию через Яндекс ID');
+      }
+
+      throw new Error('Кинопоиск не загрузил страницу фильтров за 20 секунд');
+    } finally {
+      try {
+        await chrome.tabs.remove(tabId);
+      } catch {
+        // Вкладка могла быть закрыта пользователем или браузером.
+      }
+    }
+  }
+
+  async function fetchModel(sourceUrl, contentType) {
+    // Не используем fetch из chrome-extension://: Кинопоиск может перенаправлять
+    // такой запрос на sso.passport.yandex.ru, после чего браузер блокирует CORS.
+    // Загружаем страницу как обычную браузерную вкладку с пользовательскими
+    // cookies, читаем фактический DOM и сразу закрываем служебную вкладку.
+    const page = await readKinopoiskPageInTab(sourceUrl);
+    const doc = new DOMParser().parseFromString(page.html, 'text/html');
+
+    if (!doc.querySelector('h1') && !doc.body?.textContent?.includes('Кинопоиск')) {
+      throw new Error('Получена некорректная страница Кинопоиска');
+    }
+
+    return buildModel(doc, page.url || sourceUrl, contentType);
+  }'''
+
+          js = js[:start] + replacement + js[end:]
+          path.write_text(js, encoding='utf-8')
+          PY
+
+      - name: Validate
+        run: |
+          node --check filters.js
+          node --check filters-ui.js
+          node --check popup.js
+          node --check background.js
+          python3 -m json.tool manifest.json > /dev/null
+          grep -q "chrome.tabs.create" filters.js
+          grep -q "chrome.scripting.executeScript" filters.js
+          grep -q "Кинопоиск запросил авторизацию" filters.js
+          ! grep -q "credentials: 'omit'" filters.js
+          grep -q '"version": "1.502"' manifest.json
+
+      - name: Commit
+        run: |
+          git config user.name "Vi"
+          git config user.email "Pornoenot@gmail.com"
+          git rm .github/workflows/fix-filter-page-loading.yml
+          git add filters.js
+          git commit -m "Load Kinopoisk filters through inactive tab"
+          git push origin main
