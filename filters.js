@@ -5,7 +5,7 @@
   const STATE_KEY = 'kinopoiskDynamicFilterStateV2';
   const CACHE_KEY = 'kinopoiskDynamicFilterCacheV4';
   const PAGE_CACHE_KEY = 'kinopoiskFilterUrlCacheV1';
-  const FILTER_CATALOG_KEY = 'kinopoiskFilterCatalogV1';
+  const FILTER_CATALOG_KEY = 'kinopoiskFilterCatalogV2';
   const LEGACY_CACHE_KEYS = ['kinopoiskDynamicFilterCacheV3', 'kinopoiskDynamicFilterCacheV2'];
   const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
   const PAGE_CACHE_MAX_ENTRIES = 40;
