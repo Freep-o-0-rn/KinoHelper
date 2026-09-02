@@ -122,16 +122,41 @@
     );
   }
 
+  async function readKinopoiskDocument(url) {
+    const readPage = window.KinoFilterEngine?.readPage;
+    if (typeof readPage !== 'function') {
+      throw new Error('Модуль чтения Кинопоиска недоступен');
+    }
+
+    const page = await readPage(url);
+    return {
+      page,
+      doc: new DOMParser().parseFromString(page.html, 'text/html')
+    };
+  }
+
+  async function getMaxPageViaTab(contentType, filterUrl) {
+    const { doc } = await readKinopoiskDocument(filterUrl);
+
+    if (typeof window.parseMaxPageFromDoc === 'function') {
+      return window.parseMaxPageFromDoc(doc, 50, contentType);
+    }
+
+    let maxPage = 1;
+    doc.querySelectorAll('a[href]').forEach(link => {
+      const href = link.getAttribute('href') || '';
+      const match = href.match(/[?&]page=(\d+)/i) || href.match(/\/page\/(\d+)/i);
+      if (match) maxPage = Math.max(maxPage, Number(match[1]));
+    });
+    return maxPage;
+  }
+
   async function pickRandomMovie(contentType, page, filterUrl) {
     const pageUrl = new URL(filterUrl);
     if (page > 1) pageUrl.searchParams.set('page', String(page));
     else pageUrl.searchParams.delete('page');
 
-    const response = await fetch(pageUrl.href);
-    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-
-    const html = await response.text();
-    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const { doc } = await readKinopoiskDocument(pageUrl.href);
     const scope = doc.querySelector('main') || doc;
     const selector = contentType === 'series'
       ? 'a[href^="/series/"]'
@@ -211,11 +236,7 @@
 
       showMessage('Ищем с текущими фильтрами...', 'info');
 
-      if (typeof window.getMaxPage !== 'function') {
-        throw new Error('Не удалось определить количество страниц');
-      }
-
-      const maxPage = await window.getMaxPage(contentType, filterUrl);
+      const maxPage = await getMaxPageViaTab(contentType, filterUrl);
       if (!maxPage) throw new Error('Ничего не найдено с такими фильтрами');
 
       let lastError = null;
