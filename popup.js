@@ -3,232 +3,305 @@ const KINOPOISK_BASE = "https://www.kinopoisk.ru";
 const WATCH_BASE = "https://www.kinokino.vip";
 const FALLBACK_WATCH_BASE = "https://flcksbr.top";
 
+const SETTINGS_KEY = 'kinoHelperSettings';
+const HISTORY_KEY = 'kinopoiskHistory';
+const FILTERS_KEY = 'kinopoiskFilters';
+const HISTORY_COLLAPSED_KEY = 'historyCollapsed';
+
+const DEFAULT_SETTINGS = {
+    theme: 'system',
+    historyMaxItems: 20,
+    historyMaxAgeDays: 30,
+    excludeHistoryFromRandom: true,
+    historyRulesActivated: true
+};
+
 // Элементы DOM
-const messageBox = document.getElementById("message");
-const genreFilter = document.getElementById("genreFilter");
-const typeFilter = document.getElementById("typeFilter");
-const yearFilter = document.getElementById("yearFilter");
-const highRatedCheckbox = document.getElementById("highRatedCheckbox");
-const releasedCheckbox = document.getElementById("releasedCheckbox");
-const popularCheckbox = document.getElementById("popularCheckbox");
-const filtersToggle = document.getElementById("filtersToggle");
-const filters = document.getElementById("filters");
-const themeToggle = document.getElementById("themeToggle");
-const historySection = document.getElementById("history");
-const historyItems = document.getElementById("historyItems");
-const historyToggle = document.getElementById("historyToggle");
-const clearFiltersBtn = document.getElementById("clearFiltersBtn");
+const messageBox = document.getElementById('message');
+const genreFilter = document.getElementById('genreFilter');
+const typeFilter = document.getElementById('typeFilter');
+const yearFilter = document.getElementById('yearFilter');
+const highRatedCheckbox = document.getElementById('highRatedCheckbox');
+const releasedCheckbox = document.getElementById('releasedCheckbox');
+const popularCheckbox = document.getElementById('popularCheckbox');
+const filtersToggle = document.getElementById('filtersToggle');
+const filters = document.getElementById('filters');
+const historySection = document.getElementById('history');
+const historyItems = document.getElementById('historyItems');
+const historyToggle = document.getElementById('historyToggle');
+const clearFiltersBtn = document.getElementById('clearFiltersBtn');
+const settingsButton = document.getElementById('settingsButton');
+const backToMainButton = document.getElementById('backToMain');
+const themeSelect = document.getElementById('themeSelect');
+const historyMaxItemsSelect = document.getElementById('historyMaxItems');
+const historyMaxAgeSelect = document.getElementById('historyMaxAge');
+const excludeHistoryCheckbox = document.getElementById('excludeHistoryFromRandom');
+const clearHistoryButton = document.getElementById('clearHistoryBtn');
+const clearHistoryConfirm = document.getElementById('clearHistoryConfirm');
+const confirmClearHistoryButton = document.getElementById('confirmClearHistory');
+const cancelClearHistoryButton = document.getElementById('cancelClearHistory');
 
-// Принудительное открытие консоли для отладки
-setTimeout(() => {
-  console.log("=== Kinopoisk Extension Debug ===");
-  console.log("Для просмотра логов откройте консоль разработчика");
-  console.log("Нажмите F12 или Ctrl+Shift+I");
-}, 1000);
+const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+let currentSettings = null;
 
-// Сохранение фильтров в localStorage
-function saveFiltersToStorage() {
+const DEBUG = true;
+function debugLog(...args) {
+    if (DEBUG) console.log('[KinoHelper]', ...args);
+}
+
+function safeParse(json, fallback) {
     try {
-        const filters = {
-            genre: genreFilter.value,
-            type: typeFilter.value,
-            year: yearFilter.value,
-            highRated: highRatedCheckbox.checked,
-            released: releasedCheckbox.checked,
-			popular: popularCheckbox.checked,
-            savedAt: new Date().toLocaleString()
+        return JSON.parse(json);
+    } catch {
+        return fallback;
+    }
+}
+
+function getHistory() {
+    const history = safeParse(localStorage.getItem(HISTORY_KEY) || '[]', []);
+    return Array.isArray(history) ? history : [];
+}
+
+function saveHistory(history) {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+}
+
+function normalizeLimit(value) {
+    return value === 'unlimited' || value === null ? null : Number(value);
+}
+
+function loadSettings() {
+    const saved = safeParse(localStorage.getItem(SETTINGS_KEY) || 'null', null);
+    if (saved) {
+        return {
+            ...DEFAULT_SETTINGS,
+            ...saved,
+            historyMaxItems: saved.historyMaxItems === null ? null : Number(saved.historyMaxItems ?? DEFAULT_SETTINGS.historyMaxItems),
+            historyMaxAgeDays: saved.historyMaxAgeDays === null ? null : Number(saved.historyMaxAgeDays ?? DEFAULT_SETTINGS.historyMaxAgeDays)
         };
-        
-        localStorage.setItem('kinopoiskFilters', JSON.stringify(filters));
-        debugLog('Фильтры сохранены:', filters);
-        
-    } catch (error) {
-        debugLog('Ошибка сохранения фильтров:', error);
-        showMessage("Ошибка сохранения фильтров", "error");
     }
+
+    // Сохраняем старую историю при первом обновлении до версии с настройками.
+    // Ограничения начнут применяться после того, как пользователь изменит
+    // хотя бы одну настройку хранения истории.
+    const hasExistingHistory = getHistory().length > 0;
+    const legacyDarkTheme = localStorage.getItem('darkTheme');
+    const settings = {
+        ...DEFAULT_SETTINGS,
+        theme: legacyDarkTheme === 'true' ? 'dark' : legacyDarkTheme === 'false' ? 'light' : 'system',
+        historyRulesActivated: !hasExistingHistory
+    };
+
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    return settings;
 }
 
-// Загрузка фильтров из localStorage
+function saveSettings() {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(currentSettings));
+}
+
+function applyTheme() {
+    const useDark = currentSettings.theme === 'dark' ||
+        (currentSettings.theme === 'system' && systemThemeQuery.matches);
+    document.body.classList.toggle('dark-theme', useDark);
+}
+
+function syncSettingsControls() {
+    themeSelect.value = currentSettings.theme;
+    historyMaxItemsSelect.value = currentSettings.historyMaxItems === null ? 'unlimited' : String(currentSettings.historyMaxItems);
+    historyMaxAgeSelect.value = currentSettings.historyMaxAgeDays === null ? 'unlimited' : String(currentSettings.historyMaxAgeDays);
+    excludeHistoryCheckbox.checked = currentSettings.excludeHistoryFromRandom;
+}
+
+function pruneHistory(history) {
+    if (!currentSettings.historyRulesActivated) return history;
+
+    let result = [...history];
+
+    if (currentSettings.historyMaxAgeDays !== null) {
+        const cutoff = Date.now() - currentSettings.historyMaxAgeDays * 24 * 60 * 60 * 1000;
+        result = result.filter(item => !item.timestamp || item.timestamp >= cutoff);
+    }
+
+    if (currentSettings.historyMaxItems !== null) {
+        result = result.slice(0, currentSettings.historyMaxItems);
+    }
+
+    return result;
+}
+
+function applyHistoryRules() {
+    if (!currentSettings.historyRulesActivated) return;
+    const history = getHistory();
+    const pruned = pruneHistory(history);
+    if (pruned.length !== history.length) saveHistory(pruned);
+}
+
+function historyContains(url) {
+    return getHistory().some(item => item.url === url);
+}
+
+function addToHistory(title, url) {
+    let history = getHistory();
+    history = history.filter(item => item.url !== url);
+    history.unshift({ title, url, timestamp: Date.now() });
+    history = pruneHistory(history);
+    saveHistory(history);
+    updateHistoryView();
+}
+
+function removeFromHistory(url) {
+    const history = getHistory().filter(item => item.url !== url);
+    saveHistory(history);
+    updateHistoryView();
+}
+
+function clearHistory() {
+    localStorage.removeItem(HISTORY_KEY);
+    updateHistoryView();
+}
+
+function setHistoryCollapsed(collapsed) {
+    historyItems.classList.toggle('collapsed', collapsed);
+    historyToggle.innerHTML = collapsed
+        ? '<span class="icon">▶</span> Показать'
+        : '<span class="icon">▼</span> Скрыть';
+    historyToggle.setAttribute('aria-expanded', String(!collapsed));
+    localStorage.setItem(HISTORY_COLLAPSED_KEY, String(collapsed));
+}
+
+function updateHistoryView() {
+    const history = getHistory();
+
+    if (!history.length) {
+        historySection.style.display = 'none';
+        historyItems.innerHTML = '';
+        return;
+    }
+
+    historySection.style.display = 'block';
+    historyItems.innerHTML = '';
+
+    history.forEach(item => {
+        const historyItem = document.createElement('div');
+        historyItem.className = 'history-item';
+
+        const title = document.createElement('div');
+        title.className = 'history-item-title';
+        title.textContent = item.title || 'Неизвестно';
+        title.title = item.title || 'Неизвестно';
+        title.addEventListener('click', () => chrome.tabs.create({ url: item.url }));
+
+        const actions = document.createElement('div');
+        actions.className = 'history-item-actions';
+
+        const openButton = document.createElement('button');
+        openButton.className = 'history-item-btn';
+        openButton.type = 'button';
+        openButton.textContent = '▶';
+        openButton.title = 'Открыть';
+        openButton.addEventListener('click', () => chrome.tabs.create({ url: item.url }));
+
+        const removeButton = document.createElement('button');
+        removeButton.className = 'history-item-btn';
+        removeButton.type = 'button';
+        removeButton.textContent = '✕';
+        removeButton.title = 'Удалить';
+        removeButton.addEventListener('click', () => removeFromHistory(item.url));
+
+        actions.append(openButton, removeButton);
+        historyItem.append(title, actions);
+        historyItems.appendChild(historyItem);
+    });
+}
+
+function showMessage(text, type = 'info') {
+    messageBox.textContent = text;
+    messageBox.className = type;
+}
+
+function openSettings() {
+    document.body.classList.add('settings-open');
+    clearHistoryConfirm.classList.remove('visible');
+}
+
+function closeSettings() {
+    document.body.classList.remove('settings-open');
+    clearHistoryConfirm.classList.remove('visible');
+}
+
+// Сохранение фильтров
+function saveFiltersToStorage() {
+    const state = {
+        genre: genreFilter.value,
+        type: typeFilter.value,
+        year: yearFilter.value,
+        highRated: highRatedCheckbox.checked,
+        released: releasedCheckbox.checked,
+        popular: popularCheckbox.checked,
+        savedAt: new Date().toLocaleString()
+    };
+    localStorage.setItem(FILTERS_KEY, JSON.stringify(state));
+}
+
 function loadFiltersFromStorage() {
-    try {
-        const savedFilters = localStorage.getItem('kinopoiskFilters');
-        if (savedFilters) {
-            const filters = JSON.parse(savedFilters);
-            debugLog('Фильтры загружены:', filters);
-            return filters;
-        }
-    } catch (error) {
-        debugLog('Ошибка загрузки фильтров:', error);
-    }
-    return null;
+    return safeParse(localStorage.getItem(FILTERS_KEY) || 'null', null);
 }
 
-// Применение сохраненных фильтров к UI
-function applySavedFilters(filters) {
-    debugLog("Применяем сохраненные фильтры:", filters);
-    
-    if (filters.genre) genreFilter.value = filters.genre;
-    if (filters.type) typeFilter.value = filters.type;
-    if (filters.year) yearFilter.value = filters.year;
-    highRatedCheckbox.checked = filters.highRated || false;
-    releasedCheckbox.checked = filters.released || false;
-	popularCheckbox.checked = filters.popular || false;
-    
-    showFilterState();
+function applySavedFilters(saved) {
+    if (!saved) return;
+    if (saved.genre) genreFilter.value = saved.genre;
+    if (saved.type) typeFilter.value = saved.type;
+    if (saved.year) yearFilter.value = saved.year;
+    highRatedCheckbox.checked = Boolean(saved.highRated);
+    releasedCheckbox.checked = Boolean(saved.released);
+    popularCheckbox.checked = Boolean(saved.popular);
 }
 
-// Очистка фильтров
 function clearFilters() {
     genreFilter.value = '';
     typeFilter.value = '';
     yearFilter.value = '';
     highRatedCheckbox.checked = false;
     releasedCheckbox.checked = false;
-	popularCheckbox.checked = false;
-    
-    localStorage.removeItem('kinopoiskFilters');
-    debugLog("Все фильтры очищены");
-    showMessage("Фильтры очищены", "info");
+    popularCheckbox.checked = false;
+    localStorage.removeItem(FILTERS_KEY);
+    showMessage('Фильтры очищены', 'info');
 }
 
-// Функция для отображения текущего состояния фильтров
-function showFilterState() {
-  const state = {
-    genre: genreFilter.value || 'Все жанры',
-    type: typeFilter.value || 'Все типы',
-    year: yearFilter.value || 'Любой год',
-    highRated: highRatedCheckbox.checked ? 'Да' : 'Нет',
-    released: releasedCheckbox.checked ? 'Да' : 'Нет'
-  };
-  
-  debugLog("=== ТЕКУЩИЕ ФИЛЬТРЫ ===");
-  debugLog("Жанр:", state.genre);
-  debugLog("Тип:", state.type);
-  debugLog("Год:", state.year);
-  debugLog("Высокий рейтинг:", state.highRated);
-  debugLog("Уже вышедшие:", state.released);
-  
-  return state;
-}
-
-// Настройка слушателей изменений фильтров
-function setupFilterListeners() {
-    const filterElements = [genreFilter, typeFilter, yearFilter, highRatedCheckbox, releasedCheckbox, popularCheckbox];
-    
-    filterElements.forEach(element => {
-        if (element.tagName === 'SELECT' || element.tagName === 'INPUT') {
-            element.addEventListener('change', () => {
-                debugLog("Изменен фильтр, автосохранение:", element.id);
-                saveFiltersToStorage(); // ← Автоматическое сохранение при изменении
-            });
-        }
-    });
-    
-    // Для текстового поля года - сохранение с задержкой
-    yearFilter.addEventListener('input', debounce(() => {
-        saveFiltersToStorage(); // ← Автосохранение с debounce
-    }, 1000));
-}
-
-// Добавлена функция debounce для оптимизации
 function debounce(func, wait) {
     let timeout;
-    return function executedFunction(...args) {
-        const later = () => {
-            clearTimeout(timeout);
-            func(...args);
-        };
+    return (...args) => {
         clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
+        timeout = setTimeout(() => func(...args), wait);
     };
 }
 
-// Переключатель фильтров
-filtersToggle.addEventListener('click', () => {
-    filters.classList.toggle('active');
-    filtersToggle.classList.toggle('active');
-});
-
-// Переключение темы
-themeToggle.addEventListener('click', () => {
-    document.body.classList.toggle('dark-theme');
-    const isDark = document.body.classList.contains('dark-theme');
-    themeToggle.textContent = isDark ? '☀️' : '🌙';
-    localStorage.setItem('darkTheme', isDark);
-});
-
-// Обработчики кнопок фильтров
-clearFiltersBtn.addEventListener('click', clearFilters);
-
-// Сворачивание/разворачивание истории
-function setHistoryCollapsed(collapsed) {
-    historyItems.classList.toggle('collapsed', collapsed);
-    historyToggle.innerHTML = collapsed ? '<span class=\"icon\">▶</span> Показать' : '<span class=\"icon\">▼</span> Скрыть';
-    historyToggle.setAttribute('aria-expanded', String(!collapsed));
-    localStorage.setItem('historyCollapsed', String(collapsed));
+function setupFilterListeners() {
+    [genreFilter, typeFilter, highRatedCheckbox, releasedCheckbox, popularCheckbox].forEach(element => {
+        element.addEventListener('change', saveFiltersToStorage);
+    });
+    yearFilter.addEventListener('change', saveFiltersToStorage);
+    yearFilter.addEventListener('input', debounce(saveFiltersToStorage, 700));
 }
 
-historyToggle.addEventListener('click', () => {
-    setHistoryCollapsed(!historyItems.classList.contains('collapsed'));
-});
-
-// Не даём tooltip и hover-анимациям расширять/дёргать блок истории.
-historyToggle.classList.remove('tooltip');
-historyToggle.removeAttribute('data-tooltip');
-const historyStyle = document.createElement('style');
-historyStyle.textContent = '.history-toggle:hover,.history-item-btn:hover{transform:none;box-shadow:none}.history-item,.history-item:hover{padding:6px 8px}.history-toggle.tooltip:hover::after{display:none}';
-document.head.appendChild(historyStyle);
-
-// Загрузка сохраненной темы и фильтров
-document.addEventListener('DOMContentLoaded', () => {
-    const isDark = localStorage.getItem('darkTheme') === 'true';
-    if (isDark) {
-        document.body.classList.add('dark-theme');
-        themeToggle.textContent = '☀️';
-    }
-    
-    // Загрузка и применение фильтров
-    const savedFilters = loadFiltersFromStorage();
-    if (savedFilters) {
-        applySavedFilters(savedFilters);
-        showMessage("Фильтры восстановлены", "success");
-    } else {
-        showMessage("Выберите фильтры и нажмите 'Случайный'", "info");
-    }
-    
-    // Настройка слушателей
-    setupFilterListeners();
-    
-    // Загрузка истории
-    updateHistoryView();
-    const isHistoryCollapsed = localStorage.getItem('historyCollapsed') === 'true';
-    setHistoryCollapsed(isHistoryCollapsed);
-    
-    // Показать текущий фильм
-    showCurrentMovie();
-});
-
-// Включить логирование
-const DEBUG = true;
-function debugLog(...args) {
-    if (DEBUG) {
-        console.log('[Kinopoisk Extension]', ...args);
-    }
+function showFilterState() {
+    const state = {
+        genre: genreFilter.value || 'Все жанры',
+        type: typeFilter.value || 'Все типы',
+        year: yearFilter.value || 'Любой год',
+        highRated: highRatedCheckbox.checked ? 'Да' : 'Нет',
+        released: releasedCheckbox.checked ? 'Да' : 'Нет',
+        popular: popularCheckbox.checked ? 'Да' : 'Нет'
+    };
+    debugLog('Текущие фильтры:', state);
+    return state;
 }
 
-// Вывод сообщений
-function showMessage(text, type = "info") {
-    messageBox.textContent = text;
-    messageBox.className = type;
-}
-
-
-// Функция для построения URL с фильтрами
 function buildFilterUrl(baseType = '') {
     let url = `${KINOPOISK_BASE}/lists/movies/`;
     const params = [];
 
-    // БАЗОВЫЙ URL ДЛЯ ПОПУЛЯРНЫХ
     if (popularCheckbox.checked) {
         if (baseType === 'series' || typeFilter.value === 'series') {
             url = `${KINOPOISK_BASE}/lists/movies/popular-series/`;
@@ -237,557 +310,369 @@ function buildFilterUrl(baseType = '') {
         }
     }
 
-    const genre = genreFilter.value;
-    if (genre) {
-        url += `genre--${genre}/`;
-    }
-
+    if (genreFilter.value) url += `genre--${genreFilter.value}/`;
     const year = yearFilter.value.trim();
-    if (year) {
-        url += `year--${year}/`;
-    }
+    if (year) url += `year--${year}/`;
 
-    // ДЛЯ ПОПУЛЯРНЫХ НЕ ДОБАВЛЯЕМ ПАРАМЕТРЫ ТИПА (b=films/series)
     if (!popularCheckbox.checked) {
         if (baseType === 'series') {
-            params.push('type=series');
-            params.push('b=series');
+            params.push('type=series', 'b=series');
         } else if (baseType === 'film') {
             params.push('b=films');
         }
 
-        const type = typeFilter.value;
-        if (type && !baseType) {
-            params.push(`b=${type}`);
-        }
+        if (typeFilter.value && !baseType) params.push(`b=${typeFilter.value}`);
     }
 
-    // ЭТИ ПАРАМЕТРЫ РАБОТАЮТ ДЛЯ ВСЕХ
-    if (highRatedCheckbox.checked) {
-        params.push('b=high_rated');
-    }
-
-    if (releasedCheckbox.checked) {
-        params.push('b=released');
-    }
+    if (highRatedCheckbox.checked) params.push('b=high_rated');
+    if (releasedCheckbox.checked) params.push('b=released');
 
     let contentType = baseType;
-    if (!contentType) {
-        contentType = typeFilter.value === 'series' ? 'series' : 'film';
-    }
+    if (!contentType) contentType = typeFilter.value === 'series' ? 'series' : 'film';
 
-    if (params.length > 0) {
-        const separator = url.includes('?') ? '&' : '?';
-        url += separator + params.join('&');
-    }
-
+    if (params.length) url += `${url.includes('?') ? '&' : '?'}${params.join('&')}`;
     return { url, contentType };
 }
-/**
- * Универсальная функция: пытается определить максимальный номер страницы
- * 1) через "last" ссылку (если есть)
- * 2) через числа в пагинации (теги <a>, <button>, <span>, <li>)
- * 3) через параметры href (?page= или /page/...)
- * 4) как fallback — по общей фразе "Все 960 948 фильмов" и itemsPerPage
- *
- * Внимание: если сайт рендерит пагинацию динамически на клиенте (JS),
- * лучше выполнять parseMaxPageFromDoc прямо в контексте страницы (см. пример ниже).
- */
+
 async function getMaxPage(contentType, filterUrl, itemsPerPage = 50) {
-  try {
-    debugLog("Загружаем страницу для определения количества страниц:", filterUrl);
     const res = await fetch(filterUrl);
     if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
 
     const text = await res.text();
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(text, "text/html");
-
-    const max = parseMaxPageFromDoc(doc, itemsPerPage, contentType);
-    debugLog("Определённое максимальное число страниц:", max);
-    return max;
-  } catch (error) {
-    debugLog("Ошибка при получении количества страниц:", error);
-    // В зависимости от логики приложения — можно возвращать 1 вместо броска
-    throw new Error(`Ошибка при определении количества страниц: ${error.message}`);
-  }
+    const doc = new DOMParser().parseFromString(text, 'text/html');
+    return parseMaxPageFromDoc(doc, itemsPerPage, contentType);
 }
 
-/** Парсер, который можно запускать и в content script (тогда doc = document). */
-function parseMaxPageFromDoc(doc, itemsPerPage = 50, contentType = "") {
-  const debug = window.debugLog || (() => {});
-
-  function numberFromStr(s) {
-    if (!s) return null;
-    const digits = s.replace(/\D/g, "");
-    return digits ? parseInt(digits, 10) : null;
-  }
-
-  // 1) Попытка найти "последнюю" ссылку
-  const lastSelectors = [
-    'a[rel="last"]',
-    'a[data-test-id$="last-link"]',
-    'a[data-test-id*="last"]',
-    'a[aria-label*="last"]',
-    'a[title*="Последн"]',
-    'a[href*="page="][rel="nofollow"]'
-  ];
-  for (const sel of lastSelectors) {
-    const node = doc.querySelector(sel);
-    if (node) {
-      const href = node.getAttribute('href') || node.textContent || "";
-      let m = href.match(/[?&]page=(\d+)/i) || href.match(/\/page\/(\d+)/i) || href.match(/\/p\/(\d+)/i);
-      if (m) {
-        const p = numberFromStr(m[1]);
-        if (p && p > 0) {
-          debug(`Найден последний селектор ${sel} -> ${p}`);
-          return Math.max(1, p);
-        }
-      }
-      const textNum = numberFromStr(node.textContent);
-      if (textNum && textNum > 0) {
-        debug(`Найден номер в тексте last-link ${textNum}`);
-        return Math.max(1, textNum);
-      }
+function parseMaxPageFromDoc(doc, itemsPerPage = 50, contentType = '') {
+    function numberFromStr(value) {
+        if (!value) return null;
+        const digits = value.replace(/\D/g, '');
+        return digits ? parseInt(digits, 10) : null;
     }
-  }
 
-  // 2) Все <a> с числовым текстом
-  const numericFromAnchors = [];
-  Array.from(doc.querySelectorAll('a')).forEach(a => {
-    const t = a.textContent.trim();
-    if (/^\d+$/.test(t)) numericFromAnchors.push(parseInt(t, 10));
-  });
-  if (numericFromAnchors.length) {
-    const max = Math.max(...numericFromAnchors);
-    debug("Найдены числа в <a> пагинации, max =", max);
-    return Math.max(1, max);
-  }
+    const lastSelectors = [
+        'a[rel="last"]',
+        'a[data-test-id$="last-link"]',
+        'a[data-test-id*="last"]',
+        'a[aria-label*="last"]',
+        'a[title*="Последн"]',
+        'a[href*="page="][rel="nofollow"]'
+    ];
 
-  // 3) Поиск номеров в href
-  const pageNums = [];
-  Array.from(doc.querySelectorAll('a[href]')).forEach(a => {
-    const href = a.getAttribute('href');
-    let m = href && (href.match(/[?&]page=(\d+)/i) || href.match(/\/page\/(\d+)/i) || href.match(/\/p\/(\d+)/i));
-    if (m) {
-      const n = numberFromStr(m[1]);
-      if (n) pageNums.push(n);
+    for (const selector of lastSelectors) {
+        const node = doc.querySelector(selector);
+        if (!node) continue;
+        const source = node.getAttribute('href') || node.textContent || '';
+        const match = source.match(/[?&]page=(\d+)/i) || source.match(/\/page\/(\d+)/i) || source.match(/\/p\/(\d+)/i);
+        if (match) return Math.max(1, Number(match[1]));
+        const textNumber = numberFromStr(node.textContent);
+        if (textNumber) return Math.max(1, textNumber);
     }
-  });
-  if (pageNums.length) {
-    const max = Math.max(...pageNums);
-    debug("Найдены номера страниц в href, max =", max);
-    return Math.max(1, max);
-  }
 
-  // 4) Иногда пагинация — числа в <button>, <span>, <li>
-  const numericOther = [];
-  Array.from(doc.querySelectorAll('button, span, li')).forEach(n => {
-    const t = n.textContent.trim();
-    if (/^\d+$/.test(t)) numericOther.push(parseInt(t, 10));
-  });
-  if (numericOther.length) {
-    const max = Math.max(...numericOther);
-    debug("Найдены числа в button/span/li, max =", max);
-    return Math.max(1, max);
-  }
+    const hrefPages = [];
+    doc.querySelectorAll('a[href]').forEach(link => {
+        const href = link.getAttribute('href') || '';
+        const match = href.match(/[?&]page=(\d+)/i) || href.match(/\/page\/(\d+)/i) || href.match(/\/p\/(\d+)/i);
+        if (match) hrefPages.push(Number(match[1]));
+    });
+    if (hrefPages.length) return Math.max(1, ...hrefPages);
 
-  // 5) fallback: искать общее количество элементов в тексте
-  const bodyText = (doc.body && doc.body.textContent) || "";
-  const typeWords = contentType ? contentType : 'фильм';
-  const totalRegex = new RegExp(`Все\\s+([\\d\\s\\u00A0]+)\\s+(?:${typeWords}|фильм(?:ов)?|сериал(?:ов)?|видео)`, 'i');
-  let tm = bodyText.match(totalRegex);
-  
-  if (tm) {
-    const total = numberFromStr(tm[1]);
-    if (total && itemsPerPage > 0) {
-      // ПРОВЕРЯЕМ, ЕСТЬ ЛИ НА СТРАНИЦЕ ПАГИНАЦИЯ
-      const hasPagination = doc.querySelector('.pagination, [data-test-id="pagination"], .styles_pagination') !== null;
-      
-      // ЕСЛИ ЭТО ПОПУЛЯРНЫЕ ФИЛЬМЫ И ПАГИНАЦИИ НЕТ - ВОЗВРАЩАЕМ 1 СТРАНИЦУ
-      if (!hasPagination && bodyText.includes('популяр')) {
-        debug("Популярные фильмы без пагинации - возвращаем 1 страницу");
-        return 1;
-      }
-      
-      const pages = Math.max(1, Math.ceil(total / itemsPerPage));
-      debug(`Найдено общее количество элементов: ${total} -> pages = ${pages} (itemsPerPage=${itemsPerPage})`);
-      return pages;
+    const paginationNumbers = [];
+    doc.querySelectorAll('.pagination a, [data-test-id="pagination"] a, [class*="pagination"] a').forEach(node => {
+        const text = node.textContent.trim();
+        if (/^\d+$/.test(text)) paginationNumbers.push(Number(text));
+    });
+    if (paginationNumbers.length) return Math.max(1, ...paginationNumbers);
+
+    const bodyText = doc.body?.textContent || '';
+    const typeWords = contentType || 'фильм';
+    const totalRegex = new RegExp(`Все\\s+([\\d\\s\\u00A0]+)\\s+(?:${typeWords}|фильм(?:ов)?|сериал(?:ов)?|видео)`, 'i');
+    const totalMatch = bodyText.match(totalRegex);
+    if (totalMatch) {
+        const total = numberFromStr(totalMatch[1]);
+        if (total && itemsPerPage > 0) return Math.max(1, Math.ceil(total / itemsPerPage));
     }
-  }
 
-  // 6) Дополнительная проверка для популярных фильмов
-  if (bodyText.includes('популяр') || (doc.querySelector('h1') && doc.querySelector('h1').textContent.includes('популяр'))) {
-    // Проверяем наличие пагинации для популярных
-    const paginationExists = doc.querySelector('.pagination, [data-test-id="pagination"], a[href*="page="]') !== null;
-    if (!paginationExists) {
-      debug("Популярные фильмы без пагинации - возвращаем 1 страницу");
-      return 1;
-    }
-  }
-
-  // 7) Если всё не помогло — возвращаем 1
-  debug("Не удалось определить пагинацию — возвращаем 1");
-  return 1;
+    return 1;
 }
 
-/* Пример использования в content script (лучше для динамически рендерящихся страниц):
-   // В content script:
-   const max = parseMaxPageFromDoc(document, 50, 'фильм');
-   console.log('max page (in-page):', max);
-*/
-
-/* Пример вызова getMaxPage (fetch-версия):
-getMaxPage('фильм', `${KINOPOISK_BASE}/lists/movies/`, 50)
-  .then(max => console.log('max', max))
-  .catch(err => console.error(err));
-*/
-
-// Функция для выбора случайного фильма/сериала на странице с фильтрами
 async function pickRandomMovie(contentType, page, filterUrl) {
     const separator = filterUrl.includes('?') ? '&' : '?';
     const pageUrl = page > 1 ? `${filterUrl}${separator}page=${page}` : filterUrl;
+    const res = await fetch(pageUrl);
+    if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
 
-    try {
-        const res = await fetch(pageUrl);
-        const text = await res.text();
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(text, "text/html");
+    const text = await res.text();
+    const doc = new DOMParser().parseFromString(text, 'text/html');
+    const selector = contentType === 'series' ? 'a[href^="/series/"]' : 'a[href^="/film/"]';
+    const filmCards = doc.querySelectorAll('.styles_root__ti07r');
 
-        const filmCards = doc.querySelectorAll('.styles_root__ti07r');
-        
-        if (!filmCards.length) {
-            const selector = contentType === 'series' ? 'a[href^="/series/"]' : 'a[href^="/film/"]';
-            const alternativeCards = doc.querySelectorAll(selector);
-            if (!alternativeCards.length) throw new Error("Фильмы/сериалы не найдены на странице");
-            
-            const randomAnchor = alternativeCards[Math.floor(Math.random() * alternativeCards.length)];
-            const filmPath = randomAnchor.getAttribute("href");
-            const title = randomAnchor.querySelector('img')?.alt || randomAnchor.textContent.trim() || "Неизвестно";
-            
-            return { 
-                vipUrl: WATCH_BASE + filmPath, 
-                title: title 
-            };
-        }
+    if (filmCards.length) {
+        const candidates = Array.from(filmCards)
+            .map(card => {
+                const link = card.querySelector(selector);
+                if (!link) return null;
+                return {
+                    vipUrl: WATCH_BASE + link.getAttribute('href'),
+                    title: (link.querySelector('img')?.alt || card.querySelector('h3')?.textContent || 'Неизвестно')
+                        .replace('Смотреть ', '')
+                        .trim()
+                };
+            })
+            .filter(Boolean);
 
-        const randomCard = filmCards[Math.floor(Math.random() * filmCards.length)];
-        
-        const selector = contentType === 'series' ? 'a[href^="/series/"]' : 'a[href^="/film/"]';
-        const linkElement = randomCard.querySelector(selector);
-        if (!linkElement) throw new Error("Ссылка не найдена в карточке");
-
-        const filmPath = linkElement.getAttribute("href");
-        const title = linkElement.querySelector('img')?.alt || 
-                     randomCard.querySelector('h3')?.textContent || 
-                     "Неизвестно";
-
-        return { 
-            vipUrl: WATCH_BASE + filmPath, 
-            title: title.replace('Смотреть ', '').trim() 
-        };
-        
-    } catch (error) {
-        debugLog("Ошибка в pickRandomMovie:", error);
-        throw error;
+        if (candidates.length) return candidates[Math.floor(Math.random() * candidates.length)];
     }
+
+    const anchors = Array.from(doc.querySelectorAll(selector));
+    if (!anchors.length) throw new Error('Фильмы/сериалы не найдены на странице');
+
+    const anchor = anchors[Math.floor(Math.random() * anchors.length)];
+    return {
+        vipUrl: WATCH_BASE + anchor.getAttribute('href'),
+        title: anchor.querySelector('img')?.alt || anchor.textContent.trim() || 'Неизвестно'
+    };
 }
 
-// Кнопка перехода с Кинопоиска на сайт просмотра / Проверка текущего фильма
-document.getElementById("convert").addEventListener("click", async () => {
-    let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab || !tab.url) return;
-
-    const url = tab.url;
-    const button = document.getElementById("convert");
-    const originalHtml = button.innerHTML;
-
-    const isKinopoiskFilm = url.startsWith(`${KINOPOISK_BASE}/film/`);
-    const isKinopoiskSeries = url.startsWith(`${KINOPOISK_BASE}/series/`);
-    const isFlcksFilm = url.startsWith(`${FALLBACK_WATCH_BASE}/film/`);
-    const isFlcksSeries = url.startsWith(`${FALLBACK_WATCH_BASE}/series/`);
-
-    if (isKinopoiskFilm || isKinopoiskSeries) {
-        try {
-            button.innerHTML = '<span class="icon">⏳</span>...';
-            button.classList.add('loading');
-            showMessage("Перенаправляем...", "info");
-
-            const newUrl = url.replace(KINOPOISK_BASE, WATCH_BASE);
-
-            // Save history before navigation because the popup closes.
-            const historyTitle = tab.title || "Неизвестно";
-            addToHistory(historyTitle, newUrl);
-
-            chrome.tabs.update(tab.id, { url: newUrl });
-            
-            const onTabUpdated = async (tabId, changeInfo) => {
-                if (tabId === tab.id && changeInfo.status === "complete") {
-                    chrome.tabs.onUpdated.removeListener(onTabUpdated);
-                    
-                    setTimeout(async () => {
-                        try {
-                            const [execResult] = await chrome.scripting.executeScript({
-                                target: { tabId: tab.id },
-                                func: () => document.title
-                            });
-
-                            const title = execResult.result || "Неизвестно";
-                            showMessage(`Открыт: "${title}"`, "success");
-                            
-                            const openButton = document.getElementById("openOnKinopoisk");
-                            openButton.style.display = 'flex';
-                            
-                        } catch (error) {
-                            showMessage("Перенаправлено успешно", "success");
-                        }
-                        
-                        button.innerHTML = originalHtml;
-                        button.classList.remove('loading');
-                    }, 500);
-                }
-            };
-            
-            chrome.tabs.onUpdated.addListener(onTabUpdated);
-            
-            setTimeout(() => {
-                chrome.tabs.onUpdated.removeListener(onTabUpdated);
-                button.innerHTML = originalHtml;
-                button.classList.remove('loading');
-                showMessage("Перенаправлено", "success");
-            }, 5000);
-
-        } catch (error) {
-            button.innerHTML = originalHtml;
-            button.classList.remove('loading');
-            showMessage("Ошибка перенаправления", "error");
-        }
-
-    } else if (isFlcksFilm || isFlcksSeries) {
-        try {
-            const [execResult] = await chrome.scripting.executeScript({
-                target: { tabId: tab.id },
-                func: () => document.title
-            });
-
-            const title = execResult.result || "Неизвестно";
-            showMessage(`Открыт: "${title}"`, "success");
-            
-            addToHistory(title, url);
-            
-        } catch (error) {
-            showMessage("Уже открыт", "success");
-        }
-
-    } else {
-        showMessage("Откройте страницу фильма на Кинопоиске", "error");
-    }
-});
-
-// Кнопка открытия Кинопоиска (Фильмы) с фильтрами
-document.getElementById("kinopoiskFilm").addEventListener("click", () => {
-    const { url } = buildFilterUrl('film');
-    chrome.tabs.create({ url });
-    showMessage("Открываем фильмы...", "info");
-});
-
-// Кнопка открытия Кинопоиска (Сериалы) с фильтрами
-document.getElementById("kinopoiskSerial").addEventListener("click", () => {
-    const { url } = buildFilterUrl('series');
-    chrome.tabs.create({ url });
-    showMessage("Открываем сериалы...", "info");
-});
-
-// Кнопка "Случайный фильм" с фильтрами
-document.getElementById("randomFilm").addEventListener("click", async () => {
-  const button = document.getElementById("randomFilm");
-  const originalHtml = button.innerHTML;
-  
-  try {
-    button.innerHTML = '<span class="icon">⏳</span> Поиск...';
-    button.classList.add('loading');
-    
-    const filterState = showFilterState();
-    showMessage("Ищем с текущими фильтрами...", "info");
-
-    const { url: filterUrl, contentType } = buildFilterUrl();
-    debugLog("Собранный URL:", filterUrl);
-    
-    const maxPage = await getMaxPage(contentType, filterUrl);
-    debugLog("Определено максимальное количество страниц:", maxPage);
-    
-    if (maxPage === 0) {
-      showMessage("Ничего не найдено с такими фильтрами", "error");
-      return;
-    }
-    
-    const randomPage = Math.floor(Math.random() * maxPage) + 1;
-    showMessage(`Ищем на странице ${randomPage}/${maxPage}...`, "info");
-    debugLog("Выбрана случайная страница:", randomPage);
-
-    const { vipUrl, title } = await pickRandomMovie(contentType, randomPage, filterUrl);
-
-    chrome.tabs.create({ url: vipUrl });
-
-    const genreName = genreFilter.options[genreFilter.selectedIndex]?.text || 'Все жанры';
-    const typeName = typeFilter.value ? typeFilter.options[typeFilter.selectedIndex].text : 'Все типы';
-    const yearText = yearFilter.value ? ` ${yearFilter.value} г.` : '';
-    
-    showMessage(`Найден: "${title}"`, "success");
-    debugLog("Найден фильм:", title, "URL:", vipUrl);
-    
-    addToHistory(title, vipUrl);
-    
-  } catch (err) {
-    debugLog("Ошибка в randomFilm:", err);
-    showMessage("Ошибка поиска: " + err.message, "error");
-  } finally {
-    button.innerHTML = originalHtml;
-    button.classList.remove('loading');
-  }
-});
-
-// Кнопка "Открыть на Кинопоиске"
-document.getElementById("openOnKinopoisk").addEventListener("click", async () => {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab || !tab.url) {
-        showMessage("Ошибка вкладки", "error");
-        return;
-    }
-
-    const currentUrl = tab.url;
-    
-    const filmIdRegex = /\/(film|series)\/(\d+)\//;
-    const match = currentUrl.match(filmIdRegex);
-    
-    if (!match) {
-        showMessage("Не страница фильма", "error");
-        return;
-    }
-
-    const type = match[1];
-    const id = match[2];
-    const kinopoiskUrl = `${KINOPOISK_BASE}/${type}/${id}/`;
-
-    chrome.tabs.create({ url: kinopoiskUrl });
-    showMessage("Открываем на КП...", "success");
-});
-
-// Функции для работы с историей
-function addToHistory(title, url) {
-    let history = JSON.parse(localStorage.getItem('kinopoiskHistory') || '[]');
-    
-    history = history.filter(item => item.url !== url);
-    history.unshift({ title, url, timestamp: Date.now() });
-    history = history.slice(0, 5);
-    
-    localStorage.setItem('kinopoiskHistory', JSON.stringify(history));
-    updateHistoryView();
-}
-
-function updateHistoryView() {
-    const history = JSON.parse(localStorage.getItem('kinopoiskHistory') || '[]');
-    
-    if (history.length > 0) {
-        historySection.style.display = 'block';
-        historyItems.innerHTML = '';
-        
-        history.forEach(item => {
-            const historyItem = document.createElement('div');
-            historyItem.className = 'history-item';
-            historyItem.innerHTML = `
-                <div class="history-item-title" title="${item.title}" data-url="${item.url}">${item.title}</div>
-                <div class="history-item-actions">
-                    <button class="history-item-btn tooltip" data-tooltip="Открыть" data-url="${item.url}">▶</button>
-                    <button class="history-item-btn tooltip" data-tooltip="Удалить" data-url="${item.url}">✕</button>
-                </div>
-            `;
-            historyItems.appendChild(historyItem);
-        });
-        
-        document.querySelectorAll('.history-item-btn[data-tooltip="Открыть"]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                chrome.tabs.create({ url: btn.dataset.url });
-            });
-        });
-        
-        document.querySelectorAll('.history-item-btn[data-tooltip="Удалить"]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                removeFromHistory(btn.dataset.url);
-            });
-        });
-        
-        document.querySelectorAll('.history-item-title').forEach(titleEl => {
-            titleEl.addEventListener('click', () => {
-                chrome.tabs.create({ url: titleEl.dataset.url });
-            });
-        });
-    } else {
-        historySection.style.display = 'none';
-    }
-}
-
-function removeFromHistory(url) {
-    let history = JSON.parse(localStorage.getItem('kinopoiskHistory') || '[]');
-    history = history.filter(item => item.url !== url);
-    localStorage.setItem('kinopoiskHistory', JSON.stringify(history));
-    updateHistoryView();
-}
-
-// Функция для определения текущего фильма/сериала
 async function showCurrentMovie() {
     try {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (!tab || !tab.url) {
-            showMessage("Выберите фильтры и нажмите 'Случайный'", "info");
+        if (!tab?.url) {
+            showMessage("Выберите фильтры и нажмите 'Случайный'", 'info');
             return;
         }
 
-        const openButton = document.getElementById("openOnKinopoisk");
+        const openButton = document.getElementById('openOnKinopoisk');
         const url = tab.url;
-        
+
         if (url.startsWith(WATCH_BASE) || url.startsWith(FALLBACK_WATCH_BASE)) {
             openButton.style.display = 'flex';
-            
             try {
-                const [execResult] = await chrome.scripting.executeScript({
+                const [result] = await chrome.scripting.executeScript({
                     target: { tabId: tab.id },
                     func: () => document.title
                 });
-
-                const title = execResult.result || "Неизвестно";
-                let type = "фильм";
-                if (url.includes("/series/")) type = "сериал";
-                
-                showMessage(`Текущий ${type}: "${title}"`, "success");
-            } catch (error) {
-                showMessage("Можно открыть на Кинопоиске", "info");
+                const type = url.includes('/series/') ? 'сериал' : 'фильм';
+                showMessage(`Текущий ${type}: "${result.result || 'Неизвестно'}"`, 'success');
+            } catch {
+                showMessage('Можно открыть на Кинопоиске', 'info');
             }
-            
-        } else if (url.startsWith(KINOPOISK_BASE) && (url.includes("/film/") || url.includes("/series/"))) {
-            openButton.style.display = 'none';
-            
-            try {
-                const [execResult] = await chrome.scripting.executeScript({
-                    target: { tabId: tab.id },
-                    func: () => document.title
-                });
-
-                const title = execResult.result || "Неизвестно";
-                let type = "фильм";
-                if (url.includes("/series/")) type = "сериал";
-                
-                showMessage(`Текущий ${type}: "${title}"`, "success");
-            } catch (error) {
-                showMessage("Страница Кинопоиска", "info");
-            }
-            
-        } else {
-            openButton.style.display = 'none';
-            showMessage("Выберите фильтры и нажмите 'Случайный'", "info");
+            return;
         }
 
-    } catch (error) {
-        showMessage("Выберите фильтры и нажмите 'Случайный'", "info");
+        if (url.startsWith(KINOPOISK_BASE) && (url.includes('/film/') || url.includes('/series/'))) {
+            openButton.style.display = 'none';
+            try {
+                const [result] = await chrome.scripting.executeScript({
+                    target: { tabId: tab.id },
+                    func: () => document.title
+                });
+                const type = url.includes('/series/') ? 'сериал' : 'фильм';
+                showMessage(`Текущий ${type}: "${result.result || 'Неизвестно'}"`, 'success');
+            } catch {
+                showMessage('Страница Кинопоиска', 'info');
+            }
+            return;
+        }
+
+        openButton.style.display = 'none';
+        showMessage("Выберите фильтры и нажмите 'Случайный'", 'info');
+    } catch {
+        showMessage("Выберите фильтры и нажмите 'Случайный'", 'info');
     }
 }
+
+// Навигация и настройки
+settingsButton.addEventListener('click', openSettings);
+backToMainButton.addEventListener('click', closeSettings);
+
+filtersToggle.addEventListener('click', () => {
+    filters.classList.toggle('active');
+    filtersToggle.classList.toggle('active');
+});
+
+historyToggle.addEventListener('click', () => {
+    setHistoryCollapsed(!historyItems.classList.contains('collapsed'));
+});
+
+clearFiltersBtn.addEventListener('click', clearFilters);
+
+themeSelect.addEventListener('change', () => {
+    currentSettings.theme = themeSelect.value;
+    saveSettings();
+    applyTheme();
+});
+
+historyMaxItemsSelect.addEventListener('change', () => {
+    currentSettings.historyMaxItems = normalizeLimit(historyMaxItemsSelect.value);
+    currentSettings.historyRulesActivated = true;
+    saveSettings();
+    applyHistoryRules();
+    updateHistoryView();
+});
+
+historyMaxAgeSelect.addEventListener('change', () => {
+    currentSettings.historyMaxAgeDays = normalizeLimit(historyMaxAgeSelect.value);
+    currentSettings.historyRulesActivated = true;
+    saveSettings();
+    applyHistoryRules();
+    updateHistoryView();
+});
+
+excludeHistoryCheckbox.addEventListener('change', () => {
+    currentSettings.excludeHistoryFromRandom = excludeHistoryCheckbox.checked;
+    saveSettings();
+});
+
+clearHistoryButton.addEventListener('click', () => {
+    clearHistoryConfirm.classList.add('visible');
+});
+
+cancelClearHistoryButton.addEventListener('click', () => {
+    clearHistoryConfirm.classList.remove('visible');
+});
+
+confirmClearHistoryButton.addEventListener('click', () => {
+    clearHistory();
+    clearHistoryConfirm.classList.remove('visible');
+});
+
+systemThemeQuery.addEventListener('change', () => {
+    if (currentSettings?.theme === 'system') applyTheme();
+});
+
+// Кнопка перехода с Кинопоиска на сайт просмотра
+ document.getElementById('convert').addEventListener('click', async () => {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.url) return;
+
+    const url = tab.url;
+    const isKinopoisk = url.startsWith(`${KINOPOISK_BASE}/film/`) || url.startsWith(`${KINOPOISK_BASE}/series/`);
+    const isWatch = url.startsWith(`${WATCH_BASE}/film/`) || url.startsWith(`${WATCH_BASE}/series/`) ||
+        url.startsWith(`${FALLBACK_WATCH_BASE}/film/`) || url.startsWith(`${FALLBACK_WATCH_BASE}/series/`);
+
+    if (isKinopoisk) {
+        const newUrl = url.replace(KINOPOISK_BASE, WATCH_BASE);
+        addToHistory(tab.title || 'Неизвестно', newUrl);
+        showMessage('Перенаправляем...', 'info');
+        chrome.tabs.update(tab.id, { url: newUrl });
+        return;
+    }
+
+    if (isWatch) {
+        try {
+            const [result] = await chrome.scripting.executeScript({
+                target: { tabId: tab.id },
+                func: () => document.title
+            });
+            const title = result.result || 'Неизвестно';
+            addToHistory(title, url);
+            showMessage(`Открыт: "${title}"`, 'success');
+        } catch {
+            showMessage('Уже открыт', 'success');
+        }
+        return;
+    }
+
+    showMessage('Откройте страницу фильма на Кинопоиске', 'error');
+});
+
+document.getElementById('kinopoiskFilm').addEventListener('click', () => {
+    const { url } = buildFilterUrl('film');
+    chrome.tabs.create({ url });
+    showMessage('Открываем фильмы...', 'info');
+});
+
+document.getElementById('kinopoiskSerial').addEventListener('click', () => {
+    const { url } = buildFilterUrl('series');
+    chrome.tabs.create({ url });
+    showMessage('Открываем сериалы...', 'info');
+});
+
+document.getElementById('randomFilm').addEventListener('click', async () => {
+    const button = document.getElementById('randomFilm');
+    const originalHtml = button.innerHTML;
+
+    try {
+        button.innerHTML = '<span class="icon">⏳</span> Поиск...';
+        button.classList.add('loading');
+        showFilterState();
+        showMessage('Ищем с текущими фильтрами...', 'info');
+
+        const { url: filterUrl, contentType } = buildFilterUrl();
+        const maxPage = await getMaxPage(contentType, filterUrl);
+        if (!maxPage) throw new Error('Ничего не найдено с такими фильтрами');
+
+        const attempts = currentSettings.excludeHistoryFromRandom ? 10 : 1;
+        let lastError = null;
+
+        for (let attempt = 1; attempt <= attempts; attempt += 1) {
+            const randomPage = Math.floor(Math.random() * maxPage) + 1;
+            showMessage(
+                currentSettings.excludeHistoryFromRandom
+                    ? `Ищем новый вариант: ${attempt}/10...`
+                    : `Ищем на странице ${randomPage}/${maxPage}...`,
+                'info'
+            );
+
+            try {
+                const movie = await pickRandomMovie(contentType, randomPage, filterUrl);
+                if (currentSettings.excludeHistoryFromRandom && historyContains(movie.vipUrl)) {
+                    debugLog('Пропускаем просмотренный:', movie.title, movie.vipUrl);
+                    continue;
+                }
+
+                addToHistory(movie.title, movie.vipUrl);
+                chrome.tabs.create({ url: movie.vipUrl });
+                showMessage(`Найден: "${movie.title}"`, 'success');
+                return;
+            } catch (error) {
+                lastError = error;
+                debugLog(`Ошибка случайного выбора, попытка ${attempt}:`, error);
+            }
+        }
+
+        if (currentSettings.excludeHistoryFromRandom) {
+            throw new Error('Не удалось найти непросмотренный фильм за 10 попыток');
+        }
+        throw lastError || new Error('Не удалось выбрать фильм');
+    } catch (error) {
+        showMessage(`Ошибка поиска: ${error.message}`, 'error');
+    } finally {
+        button.innerHTML = originalHtml;
+        button.classList.remove('loading');
+    }
+});
+
+document.getElementById('openOnKinopoisk').addEventListener('click', async () => {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.url) {
+        showMessage('Ошибка вкладки', 'error');
+        return;
+    }
+
+    const match = tab.url.match(/\/(film|series)\/(\d+)\//);
+    if (!match) {
+        showMessage('Не страница фильма', 'error');
+        return;
+    }
+
+    chrome.tabs.create({ url: `${KINOPOISK_BASE}/${match[1]}/${match[2]}/` });
+    showMessage('Открываем на КП...', 'success');
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+    currentSettings = loadSettings();
+    applyTheme();
+    syncSettingsControls();
+
+    const savedFilters = loadFiltersFromStorage();
+    applySavedFilters(savedFilters);
+    setupFilterListeners();
+
+    applyHistoryRules();
+    updateHistoryView();
+    setHistoryCollapsed(localStorage.getItem(HISTORY_COLLAPSED_KEY) === 'true');
+
+    showCurrentMovie();
+});
