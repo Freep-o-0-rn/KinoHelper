@@ -99,18 +99,57 @@
     }
   }
 
+  function comparableUrl(rawUrl) {
+    const url = new URL(rawUrl);
+    url.hash = '';
+    url.searchParams.delete('page');
+    url.searchParams.delete('ysclid');
+
+    const entries = [...url.searchParams.entries()]
+      .filter(([key]) => !/^utm_/i.test(key))
+      .sort(([keyA, valueA], [keyB, valueB]) =>
+        keyA.localeCompare(keyB) || valueA.localeCompare(valueB)
+      );
+
+    url.search = '';
+    entries.forEach(([key, value]) => url.searchParams.append(key, value));
+    return url.href;
+  }
+
   function urlsEqual(left, right) {
     try {
-      const a = new URL(left);
-      const b = new URL(right);
-      a.hash = '';
-      b.hash = '';
-      a.searchParams.delete('page');
-      b.searchParams.delete('page');
-      return a.href === b.href;
+      return comparableUrl(left) === comparableUrl(right);
     } catch {
       return left === right;
     }
+  }
+
+  function queryValues(rawUrl, key) {
+    try {
+      return new URL(rawUrl).searchParams.getAll(key).slice().sort();
+    } catch {
+      return [];
+    }
+  }
+
+  function multisetContains(container, subset) {
+    const remaining = [...container];
+    for (const value of subset) {
+      const index = remaining.indexOf(value);
+      if (index < 0) return false;
+      remaining.splice(index, 1);
+    }
+    return true;
+  }
+
+  // Kinopoisk's active quick-filter chip normally links to the URL that
+  // DISABLES that filter. Therefore an active chip has fewer b= values in its
+  // target than in the current source URL.
+  function isActiveQueryToggle(sourceUrl, targetUrl, key) {
+    const sourceValues = queryValues(sourceUrl, key);
+    const targetValues = queryValues(targetUrl, key);
+    return sourceValues.length > targetValues.length &&
+      multisetContains(sourceValues, targetValues);
   }
 
   function filterStateMap(rawUrl) {
@@ -435,6 +474,10 @@
       // Quick filters on Kinopoisk are represented by repeated ?b= values.
       // Keep them as buttons exactly as they appear in the sidebar.
       if (changes.length === 1 && changes[0] === 'query:b') {
+        candidate.selected = Boolean(
+          candidate.selected ||
+          isActiveQueryToggle(normalizedSourceUrl, candidate.url, 'b')
+        );
         actions.push(candidate);
         return;
       }
@@ -622,7 +665,7 @@
       throw new Error('Получена некорректная страница Кинопоиска');
     }
 
-    return buildModel(doc, page.url || sourceUrl, contentType);
+    return buildModel(doc, normalizeStateUrl(sourceUrl, contentType), contentType);
   }
 
   function create(options) {
@@ -868,8 +911,10 @@
       setUpdating(true);
 
       try {
-        const model = await fetchModel(targetUrl, type);
-        activeTypeState().sourceUrl = model.sourceUrl;
+        const requestedUrl = normalizeStateUrl(targetUrl, type);
+        const model = await fetchModel(requestedUrl, type);
+        model.sourceUrl = requestedUrl;
+        activeTypeState().sourceUrl = requestedUrl;
 
         if (meta.groupKey && meta.label) {
           activeTypeState().selectedLabels[meta.groupKey] = meta.label;
@@ -1003,8 +1048,9 @@
 
     function buildUrl() {
       const active = activeTypeState();
+      const url = normalizeStateUrl(active.sourceUrl, state.contentType);
       return {
-        url: active.sourceUrl,
+        url,
         contentType: TYPES[state.contentType].randomType
       };
     }
