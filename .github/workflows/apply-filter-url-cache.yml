@@ -1,0 +1,42 @@
+name: Apply filter URL cache
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-filter-url-cache.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Apply per-URL cache patch
+        run: python3 .github/scripts/patch-filter-url-cache.py
+
+      - name: Validate
+        run: |
+          node --check filters.js
+          node --check filters-ui.js
+          node --check popup.js
+          node --check background.js
+          python3 -m json.tool manifest.json > /dev/null
+          grep -q "kinopoiskFilterUrlCacheV1" filters.js
+          grep -q "PAGE_CACHE_MAX_ENTRIES = 40" filters.js
+          grep -q "cachedPageModel" filters.js
+          grep -q "refreshCachedPage" filters.js
+
+      - name: Commit
+        run: |
+          git config user.name "Vi"
+          git config user.email "Pornoenot@gmail.com"
+          git rm .github/workflows/apply-filter-url-cache.yml .github/scripts/patch-filter-url-cache.py
+          git add filters.js
+          git commit -m "Cache filter pages locally by URL"
+          git push origin main
