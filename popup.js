@@ -73,6 +73,46 @@ function buildKinopoiskUrl(url) {
     return media ? `${KINOPOISK_BASE}/${media.type}/${media.id}/` : null;
 }
 
+function compactTitle(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeKinopoiskTitle(value) {
+    const title = compactTitle(value);
+    if (!title) return '';
+
+    const seoTitle = title.match(/^(.*?)\s+(?:фильм|сериал),\s*(\d{4})\b/i);
+    if (seoTitle) return `${seoTitle[1].trim()} (${seoTitle[2]})`;
+
+    return title
+        .replace(/\s*[|—-]\s*Кинопоиск.*$/i, '')
+        .replace(/\s+на\s+Кинопоиске.*$/i, '')
+        .trim();
+}
+
+function normalizePlayerTitle(value, fallback = '') {
+    const title = compactTitle(value)
+        .replace(/\s*[|—]\s*(?:KinoKino|КиноКино).*$/i, '')
+        .trim();
+    const genericTitle = /^(?:KinoKino|КиноКино|КиноПомощник|about:blank)$/i.test(title);
+    return title && !genericTitle ? title : normalizeKinopoiskTitle(fallback);
+}
+
+async function getKinopoiskMovieTitle(tab) {
+    try {
+        const results = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: () => document.querySelector('h1')?.textContent || document.title
+        });
+        const pageTitle = normalizeKinopoiskTitle(results?.[0]?.result);
+        if (pageTitle) return pageTitle;
+    } catch (error) {
+        debugLog('Не удалось прочитать заголовок страницы Кинопоиска:', error);
+    }
+
+    return normalizeKinopoiskTitle(tab.title);
+}
+
 async function sendBackgroundMessage(message) {
     try {
         return await chrome.runtime.sendMessage(message);
@@ -82,7 +122,7 @@ async function sendBackgroundMessage(message) {
     }
 }
 
-async function startWatchSessionForTab(tabId, returnUrl, watchUrl) {
+async function startWatchSessionForTab(tabId, returnUrl, watchUrl, title = '') {
     const media = parseMediaUrl(returnUrl) || parseMediaUrl(watchUrl);
     if (!media) return false;
 
@@ -93,7 +133,8 @@ async function startWatchSessionForTab(tabId, returnUrl, watchUrl) {
             returnUrl: returnUrl || `${KINOPOISK_BASE}/${media.type}/${media.id}/`,
             watchUrl,
             type: media.type,
-            id: media.id
+            id: media.id,
+            title: normalizeKinopoiskTitle(title)
         }
     });
 
@@ -115,7 +156,7 @@ async function endWatchSession(tabId) {
     });
 }
 
-async function openTrackedWatchTab(watchUrl, returnUrl = null) {
+async function openTrackedWatchTab(watchUrl, returnUrl = null, title = '') {
     const resolvedReturnUrl = returnUrl || buildKinopoiskUrl(watchUrl);
 
     if (!resolvedReturnUrl) {
@@ -123,14 +164,14 @@ async function openTrackedWatchTab(watchUrl, returnUrl = null) {
     }
 
     const tab = await chrome.tabs.create({ url: 'about:blank', active: false });
-    await startWatchSessionForTab(tab.id, resolvedReturnUrl, watchUrl);
+    await startWatchSessionForTab(tab.id, resolvedReturnUrl, watchUrl, title);
     await chrome.tabs.update(tab.id, { url: watchUrl, active: true });
     return tab;
 }
 
-async function openHistoryUrl(url) {
+async function openHistoryUrl(url, title = '') {
     if (parseMediaUrl(url)) {
-        await openTrackedWatchTab(url, buildKinopoiskUrl(url));
+        await openTrackedWatchTab(url, buildKinopoiskUrl(url), title);
         return;
     }
     await chrome.tabs.create({ url });
@@ -296,7 +337,7 @@ function updateHistoryView() {
         title.textContent = item.title || 'Неизвестно';
         title.title = item.title || 'Неизвестно';
         title.addEventListener('click', () => {
-            void openHistoryUrl(item.url);
+            void openHistoryUrl(item.url, item.title);
         });
 
         const actions = document.createElement('div');
@@ -308,7 +349,7 @@ function updateHistoryView() {
         openButton.textContent = '▶';
         openButton.title = 'Открыть';
         openButton.addEventListener('click', () => {
-            void openHistoryUrl(item.url);
+            void openHistoryUrl(item.url, item.title);
         });
 
         const removeButton = document.createElement('button');
@@ -562,21 +603,24 @@ async function showCurrentMovie() {
         if (isKinopoiskMedia) {
             setConvertButtonMode('watch');
             const type = media.type === 'series' ? 'сериал' : 'фильм';
-            showMessage(`Текущий ${type}: "${tab.title || 'Страница Кинопоиска'}"`, 'success');
+            const title = await getKinopoiskMovieTitle(tab);
+            showMessage(`Текущий ${type}: «${title || 'Страница Кинопоиска'}»`, 'success');
             return;
         }
 
         const session = await getWatchSession(tab.id);
         if (session?.returnUrl) {
             setConvertButtonMode('return', session.returnUrl);
-            showMessage('Можно вернуться на страницу фильма на Кинопоиске', 'info');
+            const title = normalizePlayerTitle(tab.title, session.title);
+            showMessage(title ? `Сейчас смотрите: «${title}»` : 'Сейчас идёт просмотр', 'success');
             return;
         }
 
         const isKnownWatchSite = url.startsWith(WATCH_BASE) || url.startsWith(FALLBACK_WATCH_BASE);
         if (isKnownWatchSite && media) {
             setConvertButtonMode('return', `${KINOPOISK_BASE}/${media.type}/${media.id}/`);
-            showMessage('Можно вернуться на страницу фильма на Кинопоиске', 'info');
+            const title = normalizePlayerTitle(tab.title);
+            showMessage(title ? `Сейчас смотрите: «${title}»` : 'Сейчас идёт просмотр', 'success');
             return;
         }
 
@@ -679,8 +723,9 @@ document.getElementById('convert').addEventListener('click', async () => {
 
     const watchUrl = tab.url.replace(KINOPOISK_BASE, WATCH_BASE);
 
-    await startWatchSessionForTab(tab.id, tab.url, watchUrl);
-    addToHistory(tab.title || 'Неизвестно', watchUrl);
+    const title = await getKinopoiskMovieTitle(tab);
+    await startWatchSessionForTab(tab.id, tab.url, watchUrl, title);
+    addToHistory(title || 'Неизвестно', watchUrl);
     showMessage('Перенаправляем...', 'info');
     await chrome.tabs.update(tab.id, { url: watchUrl });
 });
@@ -733,7 +778,7 @@ document.getElementById('randomFilm').addEventListener('click', async () => {
 
                 addToHistory(movie.title, movie.vipUrl);
                 showMessage(`Найден: "${movie.title}"`, 'success');
-                await openTrackedWatchTab(movie.vipUrl, buildKinopoiskUrl(movie.vipUrl));
+                await openTrackedWatchTab(movie.vipUrl, buildKinopoiskUrl(movie.vipUrl), movie.title);
                 return;
             } catch (error) {
                 lastError = error;

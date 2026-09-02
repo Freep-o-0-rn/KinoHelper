@@ -47,7 +47,7 @@ async function clearSession(tabId) {
   await chrome.storage.session.remove(sessionKey(tabId));
 }
 
-async function startSession({ tabId, returnUrl, watchUrl, type, id }) {
+async function startSession({ tabId, returnUrl, watchUrl, type, id, title = '' }) {
   if (!Number.isInteger(tabId) || !returnUrl || !watchUrl || !type || !id) {
     throw new Error("Недостаточно данных для запуска просмотра");
   }
@@ -65,6 +65,7 @@ async function startSession({ tabId, returnUrl, watchUrl, type, id }) {
     watchUrl,
     type,
     id,
+    title: String(title || '').replace(/\s+/g, ' ').trim(),
     startedAt: now,
     lastNavigationAt: now,
     currentUrl: watchUrl,

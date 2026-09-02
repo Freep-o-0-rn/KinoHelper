@@ -272,7 +272,7 @@
             const returnUrl = typeof window.buildKinopoiskUrl === 'function'
               ? window.buildKinopoiskUrl(movie.vipUrl)
               : null;
-            await window.openTrackedWatchTab(movie.vipUrl, returnUrl);
+            await window.openTrackedWatchTab(movie.vipUrl, returnUrl, movie.title);
           } else {
             await chrome.tabs.create({ url: movie.vipUrl });
           }
