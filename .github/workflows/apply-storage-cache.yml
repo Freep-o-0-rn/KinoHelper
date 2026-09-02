@@ -1,0 +1,42 @@
+name: Apply storage cache
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-storage-cache.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Apply cache patch
+        run: python3 _patch_storage_cache.py
+
+      - name: Validate
+        run: |
+          node --check filters.js
+          node --check filters-ui.js
+          node --check popup.js
+          node --check background.js
+          python3 -m json.tool manifest.json > /dev/null
+          grep -q "kinopoiskDynamicFilterCacheV4" filters.js
+          grep -q "chrome.storage.local.get(CACHE_KEY)" filters.js
+          grep -q "Используется сохранённый кэш" filters.js
+          grep -q '"storage"' manifest.json
+
+      - name: Commit
+        run: |
+          git config user.name "Vi"
+          git config user.email "Pornoenot@gmail.com"
+          git rm .github/workflows/apply-storage-cache.yml _patch_storage_cache.py
+          git add filters.js
+          git commit -m "Persist Kinopoisk filter cache locally"
+          git push origin main
