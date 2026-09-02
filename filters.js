@@ -4,7 +4,7 @@
   const KINOPOISK_BASE = 'https://www.kinopoisk.ru';
   const STATE_KEY = 'kinopoiskDynamicFilterStateV2';
   const CACHE_KEY = 'kinopoiskDynamicFilterCacheV4';
-  const PAGE_CACHE_KEY = 'kinopoiskFilterUrlCacheV2';
+  const PAGE_CACHE_KEY = 'kinopoiskFilterUrlCacheV3';
   const FILTER_CATALOG_KEY = 'kinopoiskFilterCatalogV2';
   const LEGACY_CACHE_KEYS = ['kinopoiskDynamicFilterCacheV3', 'kinopoiskDynamicFilterCacheV2'];
   const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -1143,14 +1143,33 @@
 
   async function fetchModel(sourceUrl, contentType) {
     const requestedUrl = normalizeStateUrl(sourceUrl, contentType);
-    const matchingTab = await findMatchingListTab(requestedUrl);
+    const response = await chrome.runtime.sendMessage({
+      action: 'fetchFilterPage',
+      payload: { url: requestedUrl }
+    });
 
-    if (matchingTab?.id) {
-      try { return await buildCompleteModelFromTab(matchingTab.id, requestedUrl, contentType); }
-      catch (error) { console.warn('[KinoHelper filters] Не удалось прочитать открытую страницу:', error); }
+    if (!response?.ok) {
+      throw new Error(response?.error || 'Не удалось получить страницу фильтров Кинопоиска');
     }
 
-    return await fetchCompleteModelViaServiceWindow(requestedUrl, contentType);
+    const page = response.page;
+    if (!page?.html || !page?.url) {
+      throw new Error('Service worker не вернул страницу Кинопоиска');
+    }
+
+    const doc = new DOMParser().parseFromString(page.html, 'text/html');
+    if (!doc.querySelector('h1') && !doc.body?.textContent?.includes('Кинопоиск')) {
+      throw new Error('Получена некорректная страница Кинопоиска');
+    }
+
+    const model = buildModel(doc, requestedUrl, contentType);
+    model.sourceUrl = requestedUrl;
+    model.fetchedAt = Date.now();
+
+    return enrichModelWithCatalog(model, {
+      fetchedAt: Date.now(),
+      groups: page.groups || {}
+    });
   }
 
   function create(options) {
