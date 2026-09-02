@@ -1,7 +1,7 @@
 /* Dynamic Kinopoisk filters. Kept separate from popup.css so watch UI stays untouched. */
 
 .filters.active {
-  max-height: 410px;
+  max-height: 480px;
 }
 
 /* Legacy hardcoded controls remain in DOM for backward compatibility with
@@ -29,17 +29,10 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: 230px;
-  overflow-y: auto;
-  overflow-x: hidden;
+  max-height: none;
+  overflow: visible;
   padding-right: 1px;
-  scrollbar-width: none;
   transition: opacity .18s ease;
-}
-
-.dynamic-filters::-webkit-scrollbar {
-  width: 0;
-  height: 0;
 }
 
 .filters.is-updating .dynamic-filters,

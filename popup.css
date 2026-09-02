@@ -51,9 +51,9 @@ body {
   width: 320px;
   min-width: 320px;
   max-width: 320px;
-  height: 540px;
-  min-height: 540px;
-  max-height: 540px;
+  height: 600px;
+  min-height: 600px;
+  max-height: 600px;
   overflow: hidden;
 }
 
@@ -86,7 +86,7 @@ input:focus-visible {
 
 .app-shell {
   width: 320px;
-  height: 540px;
+  height: 600px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
