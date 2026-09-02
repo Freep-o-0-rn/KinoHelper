@@ -3,14 +3,15 @@
 
   const KINOPOISK_BASE = 'https://www.kinopoisk.ru';
   const STATE_KEY = 'kinopoiskDynamicFilterStateV2';
-  // Новые ключи не дают старому общему каталогу перекрыть раздельные модели
-  // для films/series после обновления расширения.
-  const CACHE_KEY = 'kinopoiskDynamicFilterCacheV6';
-  const PAGE_CACHE_KEY = 'kinopoiskFilterUrlCacheV5';
+  const CACHE_KEY = 'kinopoiskSharedFilterCacheV7';
+  const PREVIOUS_CACHE_KEYS = [
+    'kinopoiskDynamicFilterCacheV6',
+    'kinopoiskDynamicFilterCacheV5',
+    'kinopoiskDynamicFilterCacheV4'
+  ];
+  const REBUILD_STATE_KEY = 'kinopoiskFilterRebuildStateV1';
   const FILTER_CATALOG_KEY = 'kinopoiskFilterCatalogV2';
-  const LEGACY_CACHE_KEYS = ['kinopoiskDynamicFilterCacheV3', 'kinopoiskDynamicFilterCacheV2'];
-  const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-  const PAGE_CACHE_MAX_ENTRIES = 40;
+  const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
   const TYPES = {
     all: {
@@ -75,6 +76,14 @@
       url.protocol = 'https:';
       url.hostname = 'www.kinopoisk.ru';
       url.hash = '';
+
+      const bValues = url.searchParams.getAll('b')
+        .filter(value => value !== 'films' && value !== 'series');
+      if (type === 'films') bValues.unshift('films');
+      if (type === 'series') bValues.unshift('series');
+      url.searchParams.delete('b');
+      bValues.forEach(value => url.searchParams.append('b', value));
+
       return stripNonFilterParams(url).href;
     } catch {
       return fallback;
@@ -1228,7 +1237,76 @@
     }
   }
 
-  async function fetchModel(sourceUrl, contentType) {
+  function modelIsUsable(model) {
+    if (!model || !Array.isArray(model.pathGroups) || !Array.isArray(model.actions)) {
+      return false;
+    }
+
+    if (!model.actions.length) return false;
+
+    return ['country', 'genre', 'year'].every(key => {
+      const group = model.pathGroups.find(item => item.key === `path:${key}`);
+      return Boolean(group && Array.isArray(group.options) && group.options.length > 1);
+    });
+  }
+
+  function catalogFromModel(model) {
+    const groups = {};
+
+    for (const key of ['country', 'genre', 'year']) {
+      const group = model?.pathGroups?.find(item => item.key === `path:${key}`);
+      if (!group?.options?.length) continue;
+
+      const reset = group.options.find(option => /^Все\s+/i.test(option.label));
+      const options = group.options
+        .filter(option => option !== reset)
+        .map(option => ({ label: option.label, url: option.url }));
+
+      if (!reset || !options.length) continue;
+      groups[key] = {
+        key: group.key,
+        title: group.title,
+        resetLabel: reset.label,
+        resetUrl: reset.url,
+        options
+      };
+    }
+
+    return { fetchedAt: Date.now(), groups };
+  }
+
+  function modelFromPage(page, sourceUrl, contentType, fallbackModel = null) {
+    const requestedUrl = normalizeStateUrl(sourceUrl, contentType);
+    if (!page?.html || !page?.url) {
+      throw new Error('Не получена страница фильтров Кинопоиска');
+    }
+
+    const doc = new DOMParser().parseFromString(page.html, 'text/html');
+    if (!doc.querySelector('h1') && !doc.body?.textContent?.includes('Кинопоиск')) {
+      throw new Error('Получена некорректная страница Кинопоиска');
+    }
+
+    let model = buildModel(doc, requestedUrl, contentType);
+    const fallbackCatalog = catalogFromModel(fallbackModel);
+    if (Object.keys(fallbackCatalog.groups).length) {
+      model = enrichModelWithCatalog(model, fallbackCatalog);
+    }
+    if (page.groups && typeof page.groups === 'object') {
+      model = enrichModelWithCatalog(model, {
+        fetchedAt: Date.now(),
+        groups: page.groups
+      });
+    }
+
+    model.sourceUrl = requestedUrl;
+    model.fetchedAt = Date.now();
+    if (!modelIsUsable(model)) {
+      throw new Error('Кэш фильтров получен не полностью');
+    }
+    return model;
+  }
+
+  async function fetchModelViaServiceTab(sourceUrl, contentType) {
     const requestedUrl = normalizeStateUrl(sourceUrl, contentType);
     const response = await chrome.runtime.sendMessage({
       action: 'fetchFilterPage',
@@ -1239,24 +1317,13 @@
       throw new Error(response?.error || 'Не удалось получить страницу фильтров Кинопоиска');
     }
 
-    const page = response.page;
-    if (!page?.html || !page?.url) {
-      throw new Error('Service worker не вернул страницу Кинопоиска');
-    }
+    return modelFromPage(response.page, requestedUrl, contentType);
+  }
 
-    const doc = new DOMParser().parseFromString(page.html, 'text/html');
-    if (!doc.querySelector('h1') && !doc.body?.textContent?.includes('Кинопоиск')) {
-      throw new Error('Получена некорректная страница Кинопоиска');
-    }
-
-    const model = buildModel(doc, requestedUrl, contentType);
-    model.sourceUrl = requestedUrl;
-    model.fetchedAt = Date.now();
-
-    return enrichModelWithCatalog(model, {
-      fetchedAt: Date.now(),
-      groups: page.groups || {}
-    });
+  async function fetchModelSilently(sourceUrl, contentType, fallbackModel) {
+    const requestedUrl = normalizeStateUrl(sourceUrl, contentType);
+    const page = await readKinopoiskPage(requestedUrl);
+    return modelFromPage(page, requestedUrl, contentType, fallbackModel);
   }
 
   function create(options) {
@@ -1333,35 +1400,39 @@
     }
 
     let cacheMemory = null;
-    let pageCacheMemory = null;
+
+    function usableCacheEntry(entry) {
+      return Boolean(entry?.sourceUrl && modelIsUsable(entry.model));
+    }
+
+    function previousCacheCandidates(value) {
+      if (!value || typeof value !== 'object') return [];
+      return [value.shared, value.all, value.films, value.series, ...Object.values(value)]
+        .filter(usableCacheEntry);
+    }
 
     async function ensureCache() {
       if (cacheMemory && typeof cacheMemory === 'object') return cacheMemory;
 
       try {
-        const stored = await chrome.storage.local.get(CACHE_KEY);
-        const value = stored?.[CACHE_KEY];
-        if (value && typeof value === 'object') {
-          cacheMemory = value;
+        const stored = await chrome.storage.local.get([CACHE_KEY, ...PREVIOUS_CACHE_KEYS]);
+        const current = stored?.[CACHE_KEY];
+        if (usableCacheEntry(current?.shared)) {
+          cacheMemory = current;
+          return cacheMemory;
+        }
+
+        // Reuse one complete cache from older versions. The catalog itself is
+        // common; only selected values remain separate for each content type.
+        for (const key of PREVIOUS_CACHE_KEYS) {
+          const migrated = previousCacheCandidates(stored?.[key])[0];
+          if (!migrated) continue;
+          cacheMemory = { shared: migrated };
+          await chrome.storage.local.set({ [CACHE_KEY]: cacheMemory });
           return cacheMemory;
         }
       } catch (error) {
-        debug('Не удалось прочитать chrome.storage.local:', error);
-      }
-
-      // Однократная миграция уже распарсенного кэша из localStorage.
-      for (const legacyKey of LEGACY_CACHE_KEYS) {
-        const legacy = safeParse(localStorage.getItem(legacyKey) || 'null', null);
-        if (!legacy || typeof legacy !== 'object' || !Object.keys(legacy).length) continue;
-
-        cacheMemory = legacy;
-        try {
-          await chrome.storage.local.set({ [CACHE_KEY]: cacheMemory });
-          LEGACY_CACHE_KEYS.forEach(key => localStorage.removeItem(key));
-        } catch (error) {
-          debug('Не удалось перенести кэш в chrome.storage.local:', error);
-        }
-        return cacheMemory;
+        debug('Не удалось прочитать общий кэш фильтров:', error);
       }
 
       cacheMemory = {};
@@ -1373,80 +1444,22 @@
       await chrome.storage.local.set({ [CACHE_KEY]: cacheMemory });
     }
 
-    function pageCacheId(type, rawUrl) {
-      const normalized = normalizeStateUrl(rawUrl, type);
-      try {
-        return `${type}\n${comparableUrl(normalized)}`;
-      } catch {
-        return `${type}\n${normalized}`;
-      }
-    }
-
-    async function ensurePageCache() {
-      if (pageCacheMemory && typeof pageCacheMemory === 'object') return pageCacheMemory;
-
-      try {
-        const stored = await chrome.storage.local.get(PAGE_CACHE_KEY);
-        const value = stored?.[PAGE_CACHE_KEY];
-        if (value && typeof value === 'object') {
-          pageCacheMemory = value;
-          return pageCacheMemory;
-        }
-      } catch (error) {
-        debug('Не удалось прочитать локальные копии фильтров:', error);
-      }
-
-      // V2 stores only complete per-URL models captured from the real rendered
-      // Kinopoisk sidebar. Old partial models are intentionally not migrated.
-      pageCacheMemory = {};
-      return pageCacheMemory;
-    }
-
-    async function savePageCache(cache) {
-      const entries = Object.entries(cache && typeof cache === 'object' ? cache : {})
-        .sort(([, left], [, right]) => Number(right?.fetchedAt || 0) - Number(left?.fetchedAt || 0))
-        .slice(0, PAGE_CACHE_MAX_ENTRIES);
-
-      pageCacheMemory = Object.fromEntries(entries);
-      await chrome.storage.local.set({ [PAGE_CACHE_KEY]: pageCacheMemory });
-    }
-
-    async function cachePageModel(type, model, rawUrl = model?.sourceUrl) {
-      if (!model || !rawUrl) return;
-
-      const sourceUrl = normalizeStateUrl(rawUrl, type);
-      const cache = await ensurePageCache();
-      cache[pageCacheId(type, sourceUrl)] = {
-        fetchedAt: Date.now(),
-        sourceUrl,
-        model: { ...model, sourceUrl }
-      };
-      await savePageCache(cache);
-    }
-
-    async function cachedPageModel(type, rawUrl) {
-      const cache = await ensurePageCache();
-      const entry = cache[pageCacheId(type, rawUrl)];
-      return entry?.model && entry?.sourceUrl ? entry : null;
-    }
-
-    async function cacheModel(type, model) {
-      const sourceUrl = normalizeStateUrl(model.sourceUrl, type);
+    async function cacheModel(model) {
+      const sourceUrl = normalizeStateUrl(model.sourceUrl, 'all');
       const normalizedModel = { ...model, sourceUrl };
-      const cache = await ensureCache();
-      cache[type] = {
+      const entry = {
         fetchedAt: Date.now(),
         sourceUrl,
         model: normalizedModel
       };
-      await saveCache(cache);
-      await cachePageModel(type, normalizedModel, sourceUrl);
+      await saveCache({ shared: entry });
+      await chrome.storage.local.remove(REBUILD_STATE_KEY);
+      return entry;
     }
 
-    async function cachedModel(type) {
+    async function cachedModel() {
       const cache = await ensureCache();
-      const entry = cache[type];
-      return entry?.model && entry?.sourceUrl ? entry : null;
+      return usableCacheEntry(cache.shared) ? cache.shared : null;
     }
 
     function fresh(entry) {
@@ -1467,13 +1480,36 @@
       if (value) setStatus(`⏳ ${text}`, 'loading');
     }
 
-    function selectedLabel(group) {
+    function selectedOption(group) {
       const remembered = activeTypeState().selectedLabels?.[group.key];
-      if (remembered) return remembered;
+      if (remembered) {
+        const option = group.options.find(item => item.label === remembered);
+        if (option) return option;
+      }
 
-      const selected = group.options.find(option =>
-        option.selected || urlsEqual(option.url, activeTypeState().sourceUrl)
-      );
+      if (group.key.startsWith('path:')) {
+        const key = group.key.slice('path:'.length);
+        const selectedSegment = pathSegmentForKey(activeTypeState().sourceUrl, key);
+        const option = group.options.find(item =>
+          pathSegmentForKey(item.url, key) === selectedSegment
+        );
+        if (option) return option;
+      }
+
+      if (group.key.startsWith('query:')) {
+        const key = group.key.slice('query:'.length);
+        const selectedValues = JSON.stringify(queryValues(activeTypeState().sourceUrl, key));
+        const option = group.options.find(item =>
+          JSON.stringify(queryValues(item.url, key)) === selectedValues
+        );
+        if (option) return option;
+      }
+
+      return group.options.find(option => option.selected) || null;
+    }
+
+    function selectedLabel(group) {
+      const selected = selectedOption(group);
       if (selected) return selected.label;
 
       const reset = group.options.find(option => /^Все\s+/i.test(option.label));
@@ -1497,9 +1533,7 @@
         select.className = 'kp-filter-select';
         select.setAttribute('aria-label', group.title);
 
-        const currentOption = group.options.find(option =>
-          option.selected || urlsEqual(option.url, activeTypeState().sourceUrl)
-        );
+        const currentOption = selectedOption(group);
 
         if (!currentOption) {
           const placeholder = document.createElement('option');
@@ -1530,7 +1564,9 @@
             node.value,
             group.key
           );
-          void applyUrl(targetUrl, { groupKey: group.key, label: node.textContent });
+          activeTypeState().sourceUrl = normalizeStateUrl(targetUrl, state.contentType);
+          activeTypeState().selectedLabels[group.key] = node.textContent;
+          saveState();
         });
 
         wrapper.append(caption, select);
@@ -1564,7 +1600,8 @@
             if (updating) return;
 
             if (!quickToggle) {
-              void applyUrl(action.url);
+              setStatus('Не удалось применить быстрый фильтр из кэша', 'warning');
+              retryElement.style.display = 'inline-flex';
               return;
             }
 
@@ -1574,8 +1611,6 @@
             activeTypeState().sourceUrl = normalizeStateUrl(next.url, state.contentType);
             saveState();
             button.classList.toggle('active', next.active);
-            retryElement.style.display = 'none';
-            setStatus();
           });
           block.appendChild(button);
         });
@@ -1584,74 +1619,29 @@
       }
     }
 
-    async function refreshCachedPage(type, sourceUrl) {
-      try {
-        const requestedUrl = normalizeStateUrl(sourceUrl, type);
-        const model = await fetchModel(requestedUrl, type);
-        model.sourceUrl = requestedUrl;
-
-        const stillActive = state.contentType === type &&
-          urlsEqual(activeTypeState().sourceUrl, requestedUrl);
-
-        if (stillActive) {
-          await cacheModel(type, model);
-          render(model);
-          retryElement.style.display = 'none';
-          setStatus();
-        } else {
-          await cachePageModel(type, model, requestedUrl);
-        }
-      } catch (error) {
-        debug('Не удалось обновить локальную копию фильтров:', error);
-      }
-    }
-
-    async function applyUrl(targetUrl, meta = {}) {
+    async function rebuildCache({ manual = false } = {}) {
       if (updating) return;
-
-      const type = state.contentType;
-      const previousState = JSON.parse(JSON.stringify(activeTypeState()));
-      const previousModel = currentModel;
-      const requestedUrl = normalizeStateUrl(targetUrl, type);
-      const pageCacheEntry = await cachedPageModel(type, requestedUrl);
-
-      // Состояние выбранных фильтров фиксируем сразу, до сетевого запроса.
-      activeTypeState().sourceUrl = requestedUrl;
-      if (meta.groupKey && meta.label) {
-        activeTypeState().selectedLabels[meta.groupKey] = meta.label;
-      }
-      saveState();
-
-      // Уже посещённая комбинация открывается мгновенно из локальной копии.
-      if (pageCacheEntry?.model) {
-        render({ ...pageCacheEntry.model, sourceUrl: requestedUrl });
-        retryElement.style.display = 'none';
-        setStatus();
-
-        // Устаревшую копию обновляем в фоне, не блокируя интерфейс.
-        if (!fresh(pageCacheEntry)) {
-          void refreshCachedPage(type, requestedUrl);
-        }
-        return;
-      }
-
-      setUpdating(true);
+      setUpdating(true, manual ? 'Обновляем данные...' : 'Первичная загрузка фильтров...');
+      await chrome.storage.local.set({
+        [REBUILD_STATE_KEY]: { attemptedAt: Date.now(), failed: false }
+      });
 
       try {
-        const model = await fetchModel(requestedUrl, type);
-        model.sourceUrl = requestedUrl;
-        activeTypeState().sourceUrl = requestedUrl;
-        saveState();
-        await cacheModel(type, model);
+        // Cold start is the only automatic path allowed to create a service tab.
+        // One page provides the common catalog used by all three content types.
+        const model = await fetchModelViaServiceTab(TYPES.all.baseUrl, 'all');
+        await cacheModel(model);
         render(model);
         retryElement.style.display = 'none';
         setStatus();
       } catch (error) {
-        state.byType[type] = previousState;
-        saveState();
-        if (previousModel) render(previousModel);
-        debug('Не удалось обновить фильтры:', error);
-        setStatus('Не удалось обновить фильтры Кинопоиска', 'error');
+        await chrome.storage.local.set({
+          [REBUILD_STATE_KEY]: { attemptedAt: Date.now(), failed: true }
+        });
+        currentModel = null;
+        dynamicElement.innerHTML = '<div class="kp-filter-empty">Кэш фильтров недоступен</div>';
+        debug('Не удалось создать кэш фильтров:', error);
+        setStatus('Не удалось получить данные. Запустите обновление вручную', 'warning');
         retryElement.style.display = 'inline-flex';
       } finally {
         filtersElement.classList.remove('is-updating');
@@ -1659,126 +1649,77 @@
       }
     }
 
-    async function load({ force = false } = {}) {
-      const type = state.contentType;
-      const typeState = activeTypeState();
-      const cacheEntry = await cachedPageModel(type, typeState.sourceUrl);
-      const typeCacheEntry = cacheEntry?.model ? null : await cachedModel(type);
-      contentTypeElement.value = type;
-
-      // Любая уже сохранённая комбинация показывается сразу.
-      if (cacheEntry?.model) {
-        render({ ...cacheEntry.model, sourceUrl: typeState.sourceUrl });
-        retryElement.style.display = 'none';
-        setStatus();
-
-        if (!force) {
-          if (!fresh(cacheEntry)) {
-            void refreshCachedPage(type, typeState.sourceUrl);
-          }
-          return;
-        }
-      }
-
-      // Quick chips only change repeated b= values. Reuse the last complete
-      // model for the same path so reopening the popup does not create a
-      // service tab merely to redraw the same controls.
-      if (
-        !force &&
-        typeCacheEntry?.model &&
-        urlsEqualExceptQueryKey(typeCacheEntry.sourceUrl, typeState.sourceUrl, 'b')
-      ) {
-        render(typeCacheEntry.model);
-        retryElement.style.display = 'none';
-        setStatus();
-        return;
-      }
-
-      setUpdating(
-        true,
-        cacheEntry?.model ? 'Обновляем локальную копию...' : 'Загружаем фильтры...'
-      );
+    async function refreshCache(entry, { manual = false } = {}) {
+      if (!entry || updating) return;
+      if (manual) setUpdating(true, 'Обновляем кэш...');
 
       try {
-        const requestedUrl = normalizeStateUrl(typeState.sourceUrl, type);
-        const model = await fetchModel(requestedUrl, type);
-        model.sourceUrl = requestedUrl;
-        typeState.sourceUrl = requestedUrl;
-        saveState();
-        await cacheModel(type, model);
-        render(model);
+        // This path performs only a background request (or uses an already open
+        // Kinopoisk tab) and never creates or navigates a visible page.
+        const model = await fetchModelSilently(TYPES.all.baseUrl, 'all', entry.model);
+        await cacheModel(model);
+        if (manual) render(model);
         retryElement.style.display = 'none';
         setStatus();
       } catch (error) {
-        debug('Ошибка загрузки фильтров:', error);
-
-        if (cacheEntry?.model) {
-          typeState.sourceUrl = cacheEntry.sourceUrl;
-          saveState();
-          render(cacheEntry.model);
-          setStatus('Не удалось обновить фильтры. Используется локальная копия', 'error');
-        } else {
-          currentModel = null;
-          dynamicElement.innerHTML = '<div class="kp-filter-empty">Не удалось загрузить фильтры Кинопоиска</div>';
-          setStatus('Не удалось загрузить фильтры Кинопоиска', 'error');
-        }
-
+        debug('Не удалось обновить недельный кэш:', error);
+        setStatus('Не удалось обновить данные. Используется старый кэш', 'warning');
         retryElement.style.display = 'inline-flex';
       } finally {
-        filtersElement.classList.remove('is-updating');
-        updating = false;
+        if (manual) {
+          filtersElement.classList.remove('is-updating');
+          updating = false;
+        }
       }
     }
 
-    async function changeType(type) {
+    async function load() {
+      contentTypeElement.value = state.contentType;
+      const entry = await cachedModel();
+
+      if (entry) {
+        render(entry.model);
+        retryElement.style.display = 'none';
+        setStatus();
+        if (!fresh(entry)) void refreshCache(entry);
+        return;
+      }
+
+      const stored = await chrome.storage.local.get(REBUILD_STATE_KEY);
+      if (stored?.[REBUILD_STATE_KEY]?.failed) {
+        currentModel = null;
+        dynamicElement.innerHTML = '<div class="kp-filter-empty">Кэш фильтров недоступен</div>';
+        setStatus('Автоматическое обновление не удалось. Повторите вручную', 'warning');
+        retryElement.style.display = 'inline-flex';
+        return;
+      }
+
+      await rebuildCache();
+    }
+
+    function changeType(type) {
       if (!TYPES[type] || updating) return;
       state.contentType = type;
       saveState();
-      await load();
+      contentTypeElement.value = type;
+      if (currentModel) render(currentModel);
     }
 
-    async function clear() {
+    function clear() {
       if (updating) return;
-
       const type = state.contentType;
-      const previousState = JSON.parse(JSON.stringify(activeTypeState()));
-      const previousModel = currentModel;
-      const baseUrl = normalizeStateUrl(TYPES[type].baseUrl, type);
-      const pageCacheEntry = await cachedPageModel(type, baseUrl);
-
-      state.byType[type] = {
-        sourceUrl: baseUrl,
-        selectedLabels: {}
-      };
+      state.byType[type] = createTypeState(type);
       saveState();
+      if (currentModel) render(currentModel);
+    }
 
-      if (pageCacheEntry?.model) {
-        render({ ...pageCacheEntry.model, sourceUrl: baseUrl });
-        retryElement.style.display = 'none';
-        setStatus();
-        if (!fresh(pageCacheEntry)) void refreshCachedPage(type, baseUrl);
-        return;
-      }
-
-      setUpdating(true, 'Сбрасываем фильтры...');
-
-      try {
-        const model = await fetchModel(baseUrl, type);
-        model.sourceUrl = baseUrl;
-        await cacheModel(type, model);
-        render(model);
-        retryElement.style.display = 'none';
-        setStatus();
-      } catch (error) {
-        state.byType[type] = previousState;
-        saveState();
-        if (previousModel) render(previousModel);
-        debug('Не удалось сбросить фильтры:', error);
-        setStatus('Не удалось обновить фильтры Кинопоиска', 'error');
-        retryElement.style.display = 'inline-flex';
-      } finally {
-        filtersElement.classList.remove('is-updating');
-        updating = false;
+    async function retry() {
+      if (updating) return;
+      const entry = await cachedModel();
+      if (entry) {
+        await refreshCache(entry, { manual: true });
+      } else {
+        await rebuildCache({ manual: true });
       }
     }
 
@@ -1808,7 +1749,7 @@
       initialize,
       changeType,
       clear,
-      retry: () => load({ force: true }),
+      retry,
       showState,
       buildUrl,
       getBaseUrl: type => TYPES[type]?.baseUrl || TYPES.all.baseUrl,

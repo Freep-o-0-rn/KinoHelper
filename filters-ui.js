@@ -106,7 +106,7 @@
     retry.id = 'retryFiltersBtn';
     retry.className = 'btn-retry';
     retry.type = 'button';
-    retry.textContent = '↻ Повторить';
+    retry.textContent = '↻ Обновить данные';
     retry.style.display = 'none';
 
     if (buttons) buttons.insertBefore(retry, clearButton || null);
