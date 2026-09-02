@@ -92,6 +92,12 @@ async function handleCommittedNavigation(details) {
   if (!session) return;
 
   const { url } = details;
+  const now = Date.now();
+  const withinRedirectWindow = now - session.startedAt <= REDIRECT_WINDOW_MS;
+
+  // Новая вкладка для Случайного/истории сначала создаётся как about:blank,
+  // чтобы успеть сохранить контекст до её активации.
+  if (url === "about:blank" && withinRedirectWindow) return;
 
   // Возврат на Кинопоиск завершает сессию просмотра.
   if (url.startsWith(KINOPOISK_BASE)) {
@@ -99,8 +105,6 @@ async function handleCommittedNavigation(details) {
     return;
   }
 
-  const now = Date.now();
-  const withinRedirectWindow = now - session.startedAt <= REDIRECT_WINDOW_MS;
   const knownOrigin = isKnownWatchOrigin(session, url);
   const matchingMediaDuringRedirect = withinRedirectWindow && sameMedia(session, url);
   const redirectDuringWindow = withinRedirectWindow && isRedirectNavigation(details);
