@@ -24,48 +24,17 @@
             </button>
 
             <div class="filters" id="filters">
-              <div class="filter-row">
-                <select id="genreFilter" aria-label="Жанр">
-                  <option value="">Все жанры</option>
-                  <option value="anime">Аниме</option>
-                  <option value="biography">Биографии</option>
-                  <option value="action">Боевики</option>
-                  <option value="western">Вестерны</option>
-                  <option value="war">Военные</option>
-                  <option value="mystery">Детективы</option>
-                  <option value="children">Детские</option>
-                  <option value="documentary">Документальные</option>
-                  <option value="drama">Драмы</option>
-                  <option value="history">Исторические</option>
-                  <option value="romance">Мелодрамы</option>
-                  <option value="animation">Мультфильмы</option>
-                  <option value="family">Семейные</option>
-                  <option value="comedy">Комедии</option>
-                  <option value="crime">Криминал</option>
-                  <option value="horror">Ужасы</option>
-                  <option value="sci-fi">Фантастика</option>
-                  <option value="fantasy">Фэнтези</option>
-                </select>
-
-                <select id="typeFilter" aria-label="Тип">
-                  <option value="">Все типы</option>
-                  <option value="films">Фильмы</option>
-                  <option value="series">Сериалы</option>
-                </select>
+              <!-- Compatibility placeholders for the legacy popup.js filter bindings.
+                   They are hidden by filters.css and are never used by Random. -->
+              <div class="filter-row" aria-hidden="true">
+                <select id="genreFilter" tabindex="-1"><option value=""></option></select>
+                <select id="typeFilter" tabindex="-1"><option value=""></option></select>
               </div>
-
-              <input type="number" id="yearFilter" placeholder="Год (например: 2026)" min="1900" max="2026">
-
-              <div class="checkbox-group">
-                <label class="checkbox-label">
-                  <input type="checkbox" id="highRatedCheckbox"> Высокий рейтинг
-                </label>
-                <label class="checkbox-label">
-                  <input type="checkbox" id="releasedCheckbox"> Уже вышедшие
-                </label>
-                <label class="checkbox-label">
-                  <input type="checkbox" id="popularCheckbox"> Популярные
-                </label>
+              <input type="number" id="yearFilter" tabindex="-1" aria-hidden="true">
+              <div class="checkbox-group" aria-hidden="true">
+                <input type="checkbox" id="highRatedCheckbox" tabindex="-1">
+                <input type="checkbox" id="releasedCheckbox" tabindex="-1">
+                <input type="checkbox" id="popularCheckbox" tabindex="-1">
               </div>
 
               <div class="filter-buttons">
