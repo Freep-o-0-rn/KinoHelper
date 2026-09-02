@@ -3,7 +3,8 @@
 
   const KINOPOISK_BASE = 'https://www.kinopoisk.ru';
   const STATE_KEY = 'kinopoiskDynamicFilterStateV2';
-  const CACHE_KEY = 'kinopoiskDynamicFilterCacheV3';
+  const CACHE_KEY = 'kinopoiskDynamicFilterCacheV4';
+  const LEGACY_CACHE_KEYS = ['kinopoiskDynamicFilterCacheV3', 'kinopoiskDynamicFilterCacheV2'];
   const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
   const TYPES = {
@@ -697,27 +698,59 @@
       return state.byType[state.contentType];
     }
 
-    function loadCache() {
-      const cache = safeParse(localStorage.getItem(CACHE_KEY) || '{}', {});
-      return cache && typeof cache === 'object' ? cache : {};
+    let cacheMemory = null;
+
+    async function ensureCache() {
+      if (cacheMemory && typeof cacheMemory === 'object') return cacheMemory;
+
+      try {
+        const stored = await chrome.storage.local.get(CACHE_KEY);
+        const value = stored?.[CACHE_KEY];
+        if (value && typeof value === 'object') {
+          cacheMemory = value;
+          return cacheMemory;
+        }
+      } catch (error) {
+        debug('Не удалось прочитать chrome.storage.local:', error);
+      }
+
+      // Однократная миграция уже распарсенного кэша из localStorage.
+      for (const legacyKey of LEGACY_CACHE_KEYS) {
+        const legacy = safeParse(localStorage.getItem(legacyKey) || 'null', null);
+        if (!legacy || typeof legacy !== 'object' || !Object.keys(legacy).length) continue;
+
+        cacheMemory = legacy;
+        try {
+          await chrome.storage.local.set({ [CACHE_KEY]: cacheMemory });
+          LEGACY_CACHE_KEYS.forEach(key => localStorage.removeItem(key));
+        } catch (error) {
+          debug('Не удалось перенести кэш в chrome.storage.local:', error);
+        }
+        return cacheMemory;
+      }
+
+      cacheMemory = {};
+      return cacheMemory;
     }
 
-    function saveCache(cache) {
-      localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+    async function saveCache(cache) {
+      cacheMemory = cache && typeof cache === 'object' ? cache : {};
+      await chrome.storage.local.set({ [CACHE_KEY]: cacheMemory });
     }
 
-    function cacheModel(type, model) {
-      const cache = loadCache();
+    async function cacheModel(type, model) {
+      const cache = await ensureCache();
       cache[type] = {
         fetchedAt: Date.now(),
         sourceUrl: model.sourceUrl,
         model
       };
-      saveCache(cache);
+      await saveCache(cache);
     }
 
-    function cachedModel(type) {
-      const entry = loadCache()[type];
+    async function cachedModel(type) {
+      const cache = await ensureCache();
+      const entry = cache[type];
       return entry?.model && entry?.sourceUrl ? entry : null;
     }
 
@@ -843,7 +876,7 @@
         }
 
         saveState();
-        cacheModel(type, model);
+        await cacheModel(type, model);
         render(model);
         retryElement.style.display = 'none';
         setStatus();
@@ -863,23 +896,33 @@
     async function load({ force = false } = {}) {
       const type = state.contentType;
       const typeState = activeTypeState();
-      const cacheEntry = cachedModel(type);
+      const cacheEntry = await cachedModel(type);
+      const cacheMatchesState = Boolean(
+        cacheEntry?.model && urlsEqual(cacheEntry.sourceUrl, typeState.sourceUrl)
+      );
       contentTypeElement.value = type;
 
-      if (!force && fresh(cacheEntry) && urlsEqual(cacheEntry.sourceUrl, typeState.sourceUrl)) {
+      // Показываем локальную копию сразу. Свежий кэш вообще не требует сети.
+      if (cacheMatchesState) {
         render(cacheEntry.model);
         retryElement.style.display = 'none';
-        setStatus();
-        return;
+
+        if (!force && fresh(cacheEntry)) {
+          setStatus();
+          return;
+        }
       }
 
-      setUpdating(true, 'Загружаем фильтры...');
+      setUpdating(
+        true,
+        cacheMatchesState ? 'Обновляем сохранённые фильтры...' : 'Загружаем фильтры...'
+      );
 
       try {
         const model = await fetchModel(typeState.sourceUrl, type);
         typeState.sourceUrl = model.sourceUrl;
         saveState();
-        cacheModel(type, model);
+        await cacheModel(type, model);
         render(model);
         retryElement.style.display = 'none';
         setStatus();
@@ -887,10 +930,12 @@
         debug('Ошибка загрузки фильтров:', error);
 
         if (cacheEntry?.model) {
+          // Даже просроченная копия лучше полного отказа: она остаётся рабочей,
+          // пока Кинопоиск снова не станет доступен для обновления.
           typeState.sourceUrl = cacheEntry.sourceUrl;
           saveState();
           render(cacheEntry.model);
-          setStatus('Не удалось обновить фильтры. Используется последний кэш', 'error');
+          setStatus('Не удалось обновить фильтры. Используется сохранённый кэш', 'error');
         } else {
           currentModel = null;
           dynamicElement.innerHTML = '<div class="kp-filter-empty">Не удалось загрузить фильтры Кинопоиска</div>';
@@ -926,7 +971,7 @@
           selectedLabels: {}
         };
         saveState();
-        cacheModel(type, model);
+        await cacheModel(type, model);
         render(model);
         retryElement.style.display = 'none';
         setStatus();
