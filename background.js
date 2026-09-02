@@ -1,6 +1,80 @@
 const KINOPOISK_BASE = "https://www.kinopoisk.ru";
 const WATCH_BASE = "https://www.kinokino.vip";
 const FALLBACK_WATCH_BASE = "https://flcksbr.top";
+const KINOPOISK_GRAPHQL = "https://graphql.kinopoisk.ru/graphql/";
+const RATING_ORIGIN_RULE_ID = 1516;
+
+const MOVIE_PREVIEW_CARD_QUERY = `
+  query MoviePreviewCard($movieId: Long!, $actorsLimit: Int!, $withUserData: Boolean = false) {
+    movie(id: $movieId) {
+      id
+      contentId
+      title { russian original __typename }
+      ... on Film {
+        productionYear
+        isShortFilm
+        ratingLists { top250 { movieListSlug position __typename } __typename }
+        __typename
+      }
+      ... on TvSeries { releaseYears { start end __typename } __typename }
+      ... on MiniSeries { releaseYears { start end __typename } __typename }
+      ... on TvShow { releaseYears { start end __typename } __typename }
+      ... on Video { productionYear __typename }
+      ticketOption { purchasable __typename }
+      viewOption {
+        buttonText
+        originalButtonText
+        isAvailableOnline: isWatchable(filter: { anyDevice: false, anyRegion: false })
+        purchasabilityStatus
+        promotionIcons { avatarsUrl fallbackUrl __typename }
+        type
+        rightholderLogoUrlForPoster
+        __typename
+      }
+      actors: members(limit: $actorsLimit, role: [ACTOR, CAMEO, UNCREDITED]) {
+        items { person { id name originalName __typename } __typename }
+        total
+        __typename
+      }
+      directors: members(role: DIRECTOR, limit: 4) {
+        items { person { id name originalName __typename } __typename }
+        __typename
+      }
+      rating { kinopoisk { value isActive count __typename } __typename }
+      poster { avatarsUrl fallbackUrl __typename }
+      ...MoviePreviewUserData @include(if: $withUserData)
+      __typename
+    }
+  }
+
+  fragment MoviePreviewUserData on Movie {
+    userData {
+      voting { value votedAt __typename }
+      isPlannedToWatch
+      __typename
+    }
+    __typename
+  }
+`;
+
+const MOVIE_SET_VOTE_QUERY = `
+  mutation MovieSetVote($movieId: Long!, $rate: Int!) {
+    movie {
+      vote {
+        set(input: { movieId: $movieId, rate: $rate }) {
+          error {
+            message
+            __typename
+          }
+          status
+          __typename
+        }
+        __typename
+      }
+      __typename
+    }
+  }
+`;
 
 const SESSION_PREFIX = "kinoWatchSession:";
 const REDIRECT_WINDOW_MS = 15000;
@@ -31,6 +105,170 @@ function parseMedia(url) {
 function sameMedia(session, url) {
   const media = parseMedia(url);
   return Boolean(media && media.type === session.type && media.id === session.id);
+}
+
+function normalizeMediaPayload(payload) {
+  const id = Number(payload?.id);
+  const type = payload?.type;
+  if (!Number.isSafeInteger(id) || id <= 0 || !["film", "series"].includes(type)) {
+    throw new Error("Некорректные данные фильма");
+  }
+  return { id, type };
+}
+
+function ratingGraphqlUrl(operationName) {
+  return `${KINOPOISK_GRAPHQL}?operationName=${encodeURIComponent(operationName)}`;
+}
+
+function ratingRequestOptions(operationName, variables, query) {
+  return {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+      "service-id": "25",
+      "source-id": "1",
+      "x-preferred-language": "ru"
+    },
+    body: JSON.stringify({ operationName, variables, query })
+  };
+}
+
+async function installRatingOriginRule() {
+  await chrome.declarativeNetRequest.updateSessionRules({
+    removeRuleIds: [RATING_ORIGIN_RULE_ID],
+    addRules: [{
+      id: RATING_ORIGIN_RULE_ID,
+      priority: 100,
+      action: {
+        type: "modifyHeaders",
+        requestHeaders: [
+          { header: "Origin", operation: "set", value: KINOPOISK_BASE },
+          { header: "Referer", operation: "set", value: `${KINOPOISK_BASE}/` }
+        ]
+      },
+      condition: {
+        regexFilter: "^https://graphql\\.kinopoisk\\.ru/graphql/\\?operationName=(?:MoviePreviewCard|MovieSetVote)$",
+        requestMethods: ["post"],
+        resourceTypes: ["xmlhttprequest"],
+        tabIds: [chrome.tabs.TAB_ID_NONE]
+      }
+    }]
+  });
+}
+
+async function removeRatingOriginRule() {
+  try {
+    await chrome.declarativeNetRequest.updateSessionRules({
+      removeRuleIds: [RATING_ORIGIN_RULE_ID]
+    });
+  } catch {}
+}
+
+let ratingRequestQueue = Promise.resolve();
+
+function queueRatingRequest(task) {
+  const pending = ratingRequestQueue.then(task, task);
+  ratingRequestQueue = pending.catch(() => {});
+  return pending;
+}
+
+async function runRatingRequest(task) {
+  return queueRatingRequest(async () => {
+    await installRatingOriginRule();
+    try {
+      return await task();
+    } finally {
+      await removeRatingOriginRule();
+    }
+  });
+}
+
+async function getMovieRating(payload) {
+  const media = normalizeMediaPayload(payload);
+
+  return runRatingRequest(async () => {
+    const response = await fetch(
+      ratingGraphqlUrl("MoviePreviewCard"),
+      ratingRequestOptions(
+        "MoviePreviewCard",
+        { movieId: media.id, actorsLimit: 0, withUserData: true },
+        MOVIE_PREVIEW_CARD_QUERY
+      )
+    );
+
+    if (response.status === 401 || response.status === 403) {
+      return { authorized: false, rating: null };
+    }
+    if (!response.ok) {
+      throw new Error(`Кинопоиск вернул ошибку ${response.status}`);
+    }
+
+    const result = await response.json();
+    const errors = Array.isArray(result?.errors) ? result.errors : [];
+    const details = errors.map(error => error?.message).filter(Boolean).join(" ");
+    const authRequired = errors.some(error =>
+      error?.extensions?.classification === "AuthenticationError" ||
+      /auth|authoriz|login|unauthor|forbidden|войд|авториз/i.test(error?.message || "")
+    );
+
+    if (authRequired) return { authorized: false, rating: null };
+    if (errors.length) throw new Error(details || "Не удалось получить оценку Кинопоиска");
+
+    const userData = result?.data?.movie?.userData;
+    if (!userData) return { authorized: false, rating: null };
+
+    const rating = Number(userData.voting?.value);
+    return {
+      authorized: true,
+      rating: Number.isInteger(rating) && rating >= 1 && rating <= 10 ? rating : null
+    };
+  });
+}
+
+async function setMovieRating(payload) {
+  const media = normalizeMediaPayload(payload);
+  const rating = Number(payload?.rating);
+  if (!Number.isInteger(rating) || rating < 1 || rating > 10) {
+    throw new Error("Оценка должна быть от 1 до 10");
+  }
+
+  return runRatingRequest(async () => {
+    const response = await fetch(
+      ratingGraphqlUrl("MovieSetVote"),
+      ratingRequestOptions(
+        "MovieSetVote",
+        { movieId: media.id, rate: rating },
+        MOVIE_SET_VOTE_QUERY
+      )
+    );
+
+    if (response.status === 401 || response.status === 403) {
+      return { ok: false, authRequired: true };
+    }
+    if (!response.ok) {
+      throw new Error(`Кинопоиск вернул ошибку ${response.status}`);
+    }
+
+    const result = await response.json();
+    const vote = result?.data?.movie?.vote?.set;
+    if (vote?.status === "SUCCESS") {
+      return { ok: true, rating };
+    }
+
+    const details = [
+      vote?.error?.message,
+      ...(Array.isArray(result?.errors) ? result.errors.map(error => error?.message) : [])
+    ].filter(Boolean).join(" ");
+    const authRequired = /auth|authoriz|login|unauthor|forbidden|войд|авториз/i.test(details);
+
+    return {
+      ok: false,
+      authRequired,
+      error: details || "Кинопоиск не подтвердил сохранение оценки"
+    };
+  });
 }
 
 async function getSession(tabId) {
@@ -622,6 +860,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "endWatchSession") {
     clearSession(message.tabId)
       .then(() => sendResponse({ ok: true }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.action === "getMovieRating") {
+    getMovieRating(message.payload)
+      .then(rating => sendResponse({ ok: true, ...rating }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.action === "setMovieRating") {
+    setMovieRating(message.payload)
+      .then(result => sendResponse(result))
       .catch(error => sendResponse({ ok: false, error: error.message }));
     return true;
   }

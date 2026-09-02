@@ -409,6 +409,91 @@ button.btn-convert {
 #message.info { background: rgba(67,97,238,.10); color: var(--secondary); }
 #message.warning { background: rgba(255,209,102,.12); color: var(--warning); }
 
+.rating-card[hidden] {
+  display: none;
+}
+
+.rating-card {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow);
+}
+
+.rating-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.rating-card-title {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.rating-current {
+  flex: 0 0 auto;
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.rating-scale {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: 3px;
+}
+
+.rating-button {
+  min-width: 0;
+  height: 27px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-secondary);
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 600;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease, opacity .15s ease;
+}
+
+.rating-button:hover:not(:disabled) {
+  transform: none;
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.rating-button.active {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+
+.rating-button:disabled {
+  cursor: default;
+  opacity: .55;
+}
+
+.rating-status {
+  min-height: 14px;
+  margin-top: 6px;
+  color: var(--text-muted);
+  text-align: center;
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.rating-status.success { color: var(--success); }
+.rating-status.error { color: var(--error); }
+.rating-status.info { color: var(--text-muted); }
+
 .loading {
   position: relative;
   opacity: .78;

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "КиноПомощник",
-  "version": "1.515",
+  "version": "1.516",
   "description": "Быстрый доступ к фильмам и сериалам с удобными фильтрами",
   "action": {
     "default_popup": "popup.html",
@@ -19,10 +19,12 @@
     "tabs",
     "scripting",
     "storage",
-    "webNavigation"
+    "webNavigation",
+    "declarativeNetRequestWithHostAccess"
   ],
   "host_permissions": [
     "https://www.kinopoisk.ru/*",
+    "https://graphql.kinopoisk.ru/*",
     "https://www.kinokino.vip/*",
     "https://flcksbr.top/*"
   ],

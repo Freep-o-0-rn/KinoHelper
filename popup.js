@@ -40,9 +40,15 @@ const clearHistoryButton = document.getElementById('clearHistoryBtn');
 const clearHistoryConfirm = document.getElementById('clearHistoryConfirm');
 const confirmClearHistoryButton = document.getElementById('confirmClearHistory');
 const cancelClearHistoryButton = document.getElementById('cancelClearHistory');
+const ratingCard = document.getElementById('ratingCard');
+const ratingScale = document.getElementById('ratingScale');
+const ratingCurrent = document.getElementById('ratingCurrent');
+const ratingStatus = document.getElementById('ratingStatus');
 
 const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
 let currentSettings = null;
+let currentRatingContext = null;
+let ratingLoadSequence = 0;
 
 const DEBUG = true;
 function debugLog(...args) {
@@ -175,6 +181,124 @@ async function openHistoryUrl(url, title = '') {
         return;
     }
     await chrome.tabs.create({ url });
+}
+
+function setRatingStatus(text = '', type = 'info') {
+    ratingStatus.textContent = text;
+    ratingStatus.className = `rating-status ${type}`;
+}
+
+function setRatingButtonsDisabled(disabled) {
+    ratingScale.querySelectorAll('.rating-button').forEach(button => {
+        button.disabled = disabled;
+    });
+}
+
+function applyCurrentRating(rating) {
+    const normalized = Number.isInteger(Number(rating)) ? Number(rating) : null;
+    ratingCurrent.textContent = normalized ? `Ваша: ${normalized}` : 'Не оценено';
+    ratingScale.querySelectorAll('.rating-button').forEach(button => {
+        const isActive = Number(button.dataset.rating) === normalized;
+        button.classList.toggle('active', isActive);
+        button.setAttribute('aria-pressed', String(isActive));
+    });
+}
+
+function hideRatingCard() {
+    ratingLoadSequence += 1;
+    currentRatingContext = null;
+    ratingCard.hidden = true;
+    applyCurrentRating(null);
+    setRatingStatus('');
+}
+
+async function submitRating(rating) {
+    const context = currentRatingContext;
+    if (!context) return;
+
+    const previousRating = context.rating;
+    applyCurrentRating(rating);
+    setRatingButtonsDisabled(true);
+    setRatingStatus(`Отправляем оценку ${rating}...`, 'info');
+
+    const response = await sendBackgroundMessage({
+        action: 'setMovieRating',
+        payload: {
+            id: context.id,
+            type: context.type,
+            rating
+        }
+    });
+
+    if (currentRatingContext !== context) return;
+
+    if (response?.ok) {
+        context.rating = rating;
+        applyCurrentRating(rating);
+        setRatingStatus(`Оценка ${rating} сохранена`, 'success');
+    } else {
+        applyCurrentRating(previousRating);
+        const message = response?.authRequired
+            ? 'Для отправки оценки войдите в Кинопоиск'
+            : 'Не удалось отправить оценку. Проверьте авторизацию на Кинопоиске';
+        setRatingStatus(message, 'error');
+    }
+
+    setRatingButtonsDisabled(false);
+}
+
+function setupRatingButtons() {
+    for (let rating = 1; rating <= 10; rating += 1) {
+        const button = document.createElement('button');
+        button.className = 'rating-button';
+        button.type = 'button';
+        button.dataset.rating = String(rating);
+        button.textContent = String(rating);
+        button.setAttribute('aria-label', `Оценка ${rating}`);
+        button.setAttribute('aria-pressed', 'false');
+        button.addEventListener('click', () => {
+            void submitRating(rating);
+        });
+        ratingScale.appendChild(button);
+    }
+}
+
+async function showRatingCard(media) {
+    const sequence = ++ratingLoadSequence;
+    const context = {
+        id: Number(media.id),
+        type: media.type,
+        rating: null
+    };
+    currentRatingContext = context;
+    ratingCard.hidden = false;
+    applyCurrentRating(null);
+    setRatingButtonsDisabled(true);
+    setRatingStatus('Проверяем вашу оценку...', 'info');
+
+    const response = await sendBackgroundMessage({
+        action: 'getMovieRating',
+        payload: { id: context.id, type: context.type }
+    });
+
+    if (sequence !== ratingLoadSequence || currentRatingContext !== context) return;
+
+    if (!response?.ok) {
+        setRatingStatus('Не удалось загрузить оценку. Проверьте авторизацию на Кинопоиске', 'error');
+        setRatingButtonsDisabled(false);
+        return;
+    }
+
+    if (!response.authorized) {
+        setRatingStatus('Для отправки оценки войдите в Кинопоиск', 'error');
+        setRatingButtonsDisabled(false);
+        return;
+    }
+
+    context.rating = Number.isInteger(Number(response.rating)) ? Number(response.rating) : null;
+    applyCurrentRating(context.rating);
+    setRatingStatus(context.rating ? 'Нажмите число, чтобы изменить оценку' : 'Нажмите число, чтобы поставить оценку', 'info');
+    setRatingButtonsDisabled(false);
 }
 
 function setConvertButtonMode(mode, returnUrl = '') {
@@ -591,6 +715,7 @@ async function showCurrentMovie() {
         if (legacyOpenButton) legacyOpenButton.style.display = 'none';
 
         if (!tab?.url) {
+            hideRatingCard();
             setConvertButtonMode('unavailable');
             showMessage("Выберите фильтры и нажмите 'Случайный'", 'info');
             return;
@@ -605,6 +730,7 @@ async function showCurrentMovie() {
             const type = media.type === 'series' ? 'сериал' : 'фильм';
             const title = await getKinopoiskMovieTitle(tab);
             showMessage(`Текущий ${type}: «${title || 'Страница Кинопоиска'}»`, 'success');
+            await showRatingCard(media);
             return;
         }
 
@@ -613,6 +739,7 @@ async function showCurrentMovie() {
             setConvertButtonMode('return', session.returnUrl);
             const title = normalizePlayerTitle(tab.title, session.title);
             showMessage(title ? `Сейчас смотрите: «${title}»` : 'Сейчас идёт просмотр', 'success');
+            await showRatingCard({ type: session.type, id: session.id });
             return;
         }
 
@@ -621,13 +748,16 @@ async function showCurrentMovie() {
             setConvertButtonMode('return', `${KINOPOISK_BASE}/${media.type}/${media.id}/`);
             const title = normalizePlayerTitle(tab.title);
             showMessage(title ? `Сейчас смотрите: «${title}»` : 'Сейчас идёт просмотр', 'success');
+            await showRatingCard(media);
             return;
         }
 
+        hideRatingCard();
         setConvertButtonMode('unavailable');
         showMessage('Откройте страницу фильма на Кинопоиске', 'info');
     } catch (error) {
         debugLog('Ошибка определения текущей страницы:', error);
+        hideRatingCard();
         setConvertButtonMode('unavailable');
         showMessage("Выберите фильтры и нажмите 'Случайный'", 'info');
     }
@@ -812,5 +942,6 @@ document.addEventListener('DOMContentLoaded', () => {
     updateHistoryView();
     setHistoryCollapsed(localStorage.getItem(HISTORY_COLLAPSED_KEY) === 'true');
 
+    setupRatingButtons();
     showCurrentMovie();
 });
