@@ -1,0 +1,48 @@
+name: Fix sidebar parser
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-sidebar-parser.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Apply parser fix
+        run: python3 .github/tmp_sidebar_parser.py
+
+      - name: Validate
+        run: |
+          node --check filters.js
+          node --check filters-ui.js
+          node --check popup.js
+          node --check background.js
+          python3 -m json.tool manifest.json > /dev/null
+          grep -q "fetchKinopoiskDirect" filters.js
+          grep -q "fetchKinopoiskThroughOpenTab" filters.js
+          grep -q "findSidebarRoot" filters.js
+          grep -q "readPage: readKinopoiskPage" filters.js
+          ! grep -q "chrome.tabs.create({ url: sourceUrl" filters.js
+          ! grep -q "kinopoisk-fetch.js" popup.html
+          test "$(grep -c 'function isKinopoiskListsUrl' filters.js)" -eq 1
+          test "$(grep -c 'function readKinopoiskPage' filters.js)" -eq 1
+          grep -q '"version": "1.502"' manifest.json
+          grep -q 'vadim.reizer@ya.ru' popup.html
+
+      - name: Commit
+        run: |
+          git config user.name "Vi"
+          git config user.email "Pornoenot@gmail.com"
+          git rm .github/workflows/fix-sidebar-parser.yml .github/tmp_sidebar_parser.py kinopoisk-fetch.js
+          git add filters.js popup.html
+          git commit -m "Parse only Kinopoisk sidebar filters without visible tabs"
+          git push origin main
