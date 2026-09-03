@@ -20,6 +20,9 @@
   --text-muted: #707a8b;
   --border: #dfe4eb;
   --border-hover: #cbd2dc;
+  --header-start: #c54f23;
+  --header-end: #a93816;
+  --header-text: #ffffff;
   --film-action: #b94e2f;
   --film-action-hover: #a64025;
   --series-action: #267a76;
@@ -62,6 +65,9 @@
   --text-muted: #a8b0c1;
   --border: #3c4359;
   --border-hover: #515a74;
+  --header-start: #ff9b73;
+  --header-end: #ff7546;
+  --header-text: #1b1e2b;
   --film-action: #ff956d;
   --film-action-hover: #ff8254;
   --series-action: #57c4be;
@@ -102,6 +108,9 @@
   --text-muted: #776e83;
   --border: #f0dcd2;
   --border-hover: #e7c5b5;
+  --header-start: #ff7a3d;
+  --header-end: #ec4d1f;
+  --header-text: #281123;
   --film-action: #d14312;
   --film-action-hover: #bd3709;
   --series-action: #007f7a;
@@ -181,9 +190,9 @@ input:focus-visible {
   align-items: center;
   justify-content: flex-start;
   padding: 0 14px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-elevated);
-  color: var(--text);
+  border-bottom: 1px solid rgba(0, 0, 0, .08);
+  background: linear-gradient(135deg, var(--header-start), var(--header-end));
+  color: var(--header-text);
   box-shadow: none;
   z-index: 2;
 }
@@ -199,10 +208,10 @@ input:focus-visible {
   height: 28px;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(var(--primary-rgb), .18);
+  border: 1px solid rgba(255, 255, 255, .30);
   border-radius: var(--radius-sm);
-  background: rgba(var(--primary-rgb), .09);
-  color: var(--primary);
+  background: rgba(255, 255, 255, .18);
+  color: var(--header-text);
 }
 
 .brand-icon svg {
@@ -228,25 +237,25 @@ input:focus-visible {
   place-items: center;
   padding: 0;
   border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  border: 1px solid var(--border);
-  background: var(--bg-secondary);
+  color: var(--header-text);
+  border: 1px solid rgba(255, 255, 255, .34);
+  background: rgba(255, 255, 255, .20);
   box-shadow: none;
   transition: background-color .18s ease, color .18s ease, border-color .18s ease, box-shadow .18s ease;
 }
 
 .header-button:hover {
   transform: translateY(-50%);
-  border-color: var(--primary);
-  background: var(--bg-elevated);
-  color: var(--primary);
+  border-color: rgba(255, 255, 255, .52);
+  background: rgba(255, 255, 255, .32);
+  color: var(--header-text);
   box-shadow: var(--shadow);
 }
 
 .header-button.active {
-  border-color: var(--secondary);
-  background: var(--secondary);
-  color: var(--on-secondary);
+  border-color: rgba(255, 255, 255, .58);
+  background: rgba(255, 255, 255, .38);
+  color: var(--header-text);
 }
 
 .header-button svg {
