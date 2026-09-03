@@ -57,17 +57,17 @@
 }
 
 .filter-status.loading {
-  background: rgba(67, 97, 238, .10);
+  background: rgba(var(--secondary-rgb), .10);
   color: var(--secondary);
 }
 
 .filter-status.error {
-  background: rgba(239, 71, 111, .10);
+  background: rgba(var(--error-rgb), .10);
   color: var(--error);
 }
 
 .filter-status.warning {
-  background: rgba(255, 209, 102, .12);
+  background: rgba(var(--warning-rgb), .12);
   color: var(--warning);
 }
 
@@ -97,7 +97,7 @@
 
 .kp-filter-chip.active {
   border-color: var(--primary);
-  background: rgba(255, 107, 53, .10);
+  background: rgba(var(--primary-rgb), .10);
   color: var(--primary);
 }
 
@@ -116,7 +116,7 @@
   min-height: 32px;
   padding: 7px 10px;
   border-radius: var(--radius);
-  background: rgba(67, 97, 238, .10);
+  background: rgba(var(--secondary-rgb), .10);
   color: var(--secondary);
   font-size: 11px;
   transition: background-color .18s ease, color .18s ease;

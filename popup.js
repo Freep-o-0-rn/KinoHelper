@@ -41,6 +41,7 @@ const clearHistoryConfirm = document.getElementById('clearHistoryConfirm');
 const confirmClearHistoryButton = document.getElementById('confirmClearHistory');
 const cancelClearHistoryButton = document.getElementById('cancelClearHistory');
 const ratingCard = document.getElementById('ratingCard');
+const contextCard = document.getElementById('contextCard');
 const ratingScale = document.getElementById('ratingScale');
 const movieRating = document.getElementById('movieRating');
 const ratingCurrent = document.getElementById('ratingCurrent');
@@ -338,8 +339,7 @@ function setConvertButtonMode(mode, returnUrl = '') {
 
     if (mode === 'return') {
         button.innerHTML = '<span class="icon">←</span> На Кинопоиск';
-        button.style.opacity = '';
-        button.style.cursor = 'pointer';
+        button.disabled = false;
         button.setAttribute('aria-disabled', 'false');
         return;
     }
@@ -347,12 +347,10 @@ function setConvertButtonMode(mode, returnUrl = '') {
     button.innerHTML = '<span class="icon">▶</span> Смотреть';
 
     if (mode === 'watch') {
-        button.style.opacity = '';
-        button.style.cursor = 'pointer';
+        button.disabled = false;
         button.setAttribute('aria-disabled', 'false');
     } else {
-        button.style.opacity = '0.55';
-        button.style.cursor = 'not-allowed';
+        button.disabled = true;
         button.setAttribute('aria-disabled', 'true');
     }
 }
@@ -404,6 +402,7 @@ function applyTheme() {
     const useDark = currentSettings.theme === 'dark' ||
         (currentSettings.theme === 'system' && systemThemeQuery.matches);
     document.body.classList.toggle('dark-theme', useDark);
+    document.body.classList.toggle('bright-theme', currentSettings.theme === 'bright');
 }
 
 function syncSettingsControls() {
@@ -462,6 +461,7 @@ function clearHistory() {
 }
 
 function setHistoryCollapsed(collapsed) {
+    historySection.classList.toggle('collapsed', collapsed);
     historyItems.classList.toggle('collapsed', collapsed);
     historyToggle.innerHTML = collapsed
         ? '<span class="icon">▶</span> Показать'
@@ -522,6 +522,7 @@ function updateHistoryView() {
 function showMessage(text, type = 'info') {
     messageBox.textContent = text;
     messageBox.className = type;
+    contextCard.className = `context-card ${type}`;
 }
 
 function openSettings() {
@@ -854,8 +855,9 @@ settingsButton.addEventListener('click', openSettings);
 backToMainButton.addEventListener('click', closeSettings);
 
 filtersToggle.addEventListener('click', () => {
-    filters.classList.toggle('active');
-    filtersToggle.classList.toggle('active');
+    const expanded = filters.classList.toggle('active');
+    filtersToggle.classList.toggle('active', expanded);
+    filtersToggle.setAttribute('aria-expanded', String(expanded));
 });
 
 historyToggle.addEventListener('click', () => {

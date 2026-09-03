@@ -10,7 +10,10 @@
 <body>
   <div class="app-shell">
     <header class="app-header">
-      <h1>🎬 КиноПомощник</h1>
+      <div class="app-brand">
+        <span class="brand-icon" aria-hidden="true">🎬</span>
+        <h1>КиноПомощник</h1>
+      </div>
       <button class="header-button" id="settingsButton" type="button" title="Настройки" aria-label="Открыть настройки">⚙</button>
     </header>
 
@@ -53,15 +56,17 @@
               <button class="btn-accent" id="openOnKinopoisk" type="button" style="display: none;"><span class="icon">🎭</span> На Кинопоиск</button>
             </div>
 
-            <div id="message" class="info">Выберите фильтры и нажмите «Случайный»</div>
+            <section class="context-card info" id="contextCard" aria-label="Текущий фильм или состояние">
+              <div id="message" class="info" aria-live="polite">Выберите фильтры и нажмите «Случайный»</div>
 
-            <section class="rating-card" id="ratingCard" aria-label="Оценка на Кинопоиске" hidden>
-              <div class="rating-card-header">
-                <span class="rating-card-title">Кинопоиск: <strong class="movie-rating" id="movieRating">—</strong></span>
-                <span class="rating-current" id="ratingCurrent">Ваша: —</span>
-              </div>
-              <div class="rating-scale" id="ratingScale" role="group" aria-label="Поставить оценку от 1 до 10"></div>
-              <div class="rating-status" id="ratingStatus" aria-live="polite"></div>
+              <section class="rating-card" id="ratingCard" aria-label="Оценка на Кинопоиске" hidden>
+                <div class="rating-card-header">
+                  <span class="rating-card-title">Кинопоиск: <strong class="movie-rating" id="movieRating">—</strong></span>
+                  <span class="rating-current" id="ratingCurrent">Ваша: —</span>
+                </div>
+                <div class="rating-scale" id="ratingScale" role="group" aria-label="Поставить оценку от 1 до 10"></div>
+                <div class="rating-status" id="ratingStatus" aria-live="polite"></div>
+              </section>
             </section>
 
             <div class="history" id="history">
@@ -93,6 +98,7 @@
                   <option value="system">Системная</option>
                   <option value="light">Светлая</option>
                   <option value="dark">Тёмная</option>
+                  <option value="bright">Яркая</option>
                 </select>
               </label>
             </section>
