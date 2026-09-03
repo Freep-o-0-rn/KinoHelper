@@ -362,6 +362,74 @@ input[type="checkbox"] {
   margin-top: 0;
 }
 
+.has-tooltip {
+  position: relative;
+}
+
+.has-tooltip::before,
+.has-tooltip::after {
+  position: absolute;
+  z-index: 30;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity .14s ease,
+    transform .14s ease,
+    visibility 0s linear .14s;
+}
+
+.has-tooltip::before {
+  content: '';
+  top: calc(100% + 3px);
+  left: 50%;
+  border-right: 5px solid transparent;
+  border-bottom: 5px solid #202332;
+  border-left: 5px solid transparent;
+  transform: translate(-50%, -4px);
+}
+
+.has-tooltip::after {
+  content: attr(data-tooltip);
+  top: calc(100% + 8px);
+  width: max-content;
+  max-width: 210px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  background: #202332;
+  color: #fff;
+  box-shadow: 0 5px 16px rgba(0, 0, 0, .22);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.3;
+  text-align: center;
+  white-space: normal;
+  transform: translateY(-4px);
+}
+
+.action-grid .has-tooltip:first-child::after {
+  left: 0;
+}
+
+.action-grid .has-tooltip:last-child::after {
+  right: 0;
+}
+
+.has-tooltip:hover::before,
+.has-tooltip:hover::after,
+.has-tooltip:focus-visible::before,
+.has-tooltip:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  transition-delay: .3s;
+}
+
+.has-tooltip:hover::before,
+.has-tooltip:focus-visible::before {
+  transform: translate(-50%, 0);
+}
+
 .main-buttons {
   display: flex;
   flex-direction: column;
