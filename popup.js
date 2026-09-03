@@ -50,6 +50,9 @@ const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
 let currentSettings = null;
 let currentRatingContext = null;
 let ratingLoadSequence = 0;
+let currentViewRefreshSequence = 0;
+let currentViewRefreshTimer = null;
+let lastRenderedTabSignature = '';
 
 const DEBUG = true;
 function debugLog(...args) {
@@ -720,13 +723,29 @@ async function pickRandomMovie(contentType, page, filterUrl) {
     };
 }
 
-async function showCurrentMovie() {
+function getTabSignature(tab) {
+    return [tab?.id ?? '', tab?.url ?? '', tab?.title ?? ''].join('|');
+}
+
+function isCurrentViewRefresh(sequence) {
+    return sequence === currentViewRefreshSequence;
+}
+
+async function showCurrentMovie({ force = false } = {}) {
+    const refreshSequence = ++currentViewRefreshSequence;
+
     try {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!isCurrentViewRefresh(refreshSequence)) return;
+
+        const tabSignature = getTabSignature(tab);
+        if (!force && tabSignature === lastRenderedTabSignature) return;
+
         const legacyOpenButton = document.getElementById('openOnKinopoisk');
         if (legacyOpenButton) legacyOpenButton.style.display = 'none';
 
         if (!tab?.url) {
+            lastRenderedTabSignature = tabSignature;
             hideRatingCard();
             setConvertButtonMode('unavailable');
             showMessage("Выберите фильтры и нажмите 'Случайный'", 'info');
@@ -741,13 +760,19 @@ async function showCurrentMovie() {
             setConvertButtonMode('watch');
             const type = media.type === 'series' ? 'сериал' : 'фильм';
             const title = await getKinopoiskMovieTitle(tab);
+            if (!isCurrentViewRefresh(refreshSequence)) return;
+
+            lastRenderedTabSignature = tabSignature;
             showMessage(`Текущий ${type}: «${title || 'Страница Кинопоиска'}»`, 'success');
             await showRatingCard(media);
             return;
         }
 
         const session = await getWatchSession(tab.id);
+        if (!isCurrentViewRefresh(refreshSequence)) return;
+
         if (session?.returnUrl) {
+            lastRenderedTabSignature = tabSignature;
             setConvertButtonMode('return', session.returnUrl);
             const title = normalizePlayerTitle(tab.title, session.title);
             showMessage(title ? `Сейчас смотрите: «${title}»` : 'Сейчас идёт просмотр', 'success');
@@ -757,6 +782,7 @@ async function showCurrentMovie() {
 
         const isKnownWatchSite = url.startsWith(WATCH_BASE) || url.startsWith(FALLBACK_WATCH_BASE);
         if (isKnownWatchSite && media) {
+            lastRenderedTabSignature = tabSignature;
             setConvertButtonMode('return', `${KINOPOISK_BASE}/${media.type}/${media.id}/`);
             const title = normalizePlayerTitle(tab.title);
             showMessage(title ? `Сейчас смотрите: «${title}»` : 'Сейчас идёт просмотр', 'success');
@@ -764,16 +790,49 @@ async function showCurrentMovie() {
             return;
         }
 
+        lastRenderedTabSignature = tabSignature;
         hideRatingCard();
         setConvertButtonMode('unavailable');
         showMessage('Откройте страницу фильма на Кинопоиске', 'info');
     } catch (error) {
         debugLog('Ошибка определения текущей страницы:', error);
+        if (!isCurrentViewRefresh(refreshSequence)) return;
+
+        lastRenderedTabSignature = '';
         hideRatingCard();
         setConvertButtonMode('unavailable');
         showMessage("Выберите фильтры и нажмите 'Случайный'", 'info');
     }
 }
+
+function scheduleCurrentMovieRefresh(delayMs = 60) {
+    if (currentViewRefreshTimer !== null) clearTimeout(currentViewRefreshTimer);
+    currentViewRefreshTimer = setTimeout(() => {
+        currentViewRefreshTimer = null;
+        void showCurrentMovie();
+    }, delayMs);
+}
+
+async function refreshActiveTabIfReady(tabId) {
+    try {
+        const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (activeTab?.id !== tabId || activeTab.status !== 'complete') return;
+        scheduleCurrentMovieRefresh();
+    } catch (error) {
+        debugLog('Не удалось обновить состояние активной вкладки:', error);
+    }
+}
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    const completed = changeInfo.status === 'complete';
+    const titleChangedAfterLoad = typeof changeInfo.title === 'string' && tab.status === 'complete';
+    if (!completed && !titleChangedAfterLoad) return;
+    void refreshActiveTabIfReady(tabId);
+});
+
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+    void refreshActiveTabIfReady(tabId);
+});
 
 // Навигация и настройки
 settingsButton.addEventListener('click', openSettings);
@@ -955,5 +1014,5 @@ document.addEventListener('DOMContentLoaded', () => {
     setHistoryCollapsed(localStorage.getItem(HISTORY_COLLAPSED_KEY) === 'true');
 
     setupRatingButtons();
-    showCurrentMovie();
+    void showCurrentMovie({ force: true });
 });
