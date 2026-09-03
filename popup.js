@@ -42,6 +42,7 @@ const confirmClearHistoryButton = document.getElementById('confirmClearHistory')
 const cancelClearHistoryButton = document.getElementById('cancelClearHistory');
 const ratingCard = document.getElementById('ratingCard');
 const ratingScale = document.getElementById('ratingScale');
+const movieRating = document.getElementById('movieRating');
 const ratingCurrent = document.getElementById('ratingCurrent');
 const ratingStatus = document.getElementById('ratingStatus');
 
@@ -196,7 +197,7 @@ function setRatingButtonsDisabled(disabled) {
 
 function applyCurrentRating(rating) {
     const normalized = Number.isInteger(Number(rating)) ? Number(rating) : null;
-    ratingCurrent.textContent = normalized ? `Ваша: ${normalized}` : 'Не оценено';
+    ratingCurrent.textContent = normalized ? `Ваша: ${normalized}` : 'Ваша: —';
     ratingScale.querySelectorAll('.rating-button').forEach(button => {
         const isActive = Number(button.dataset.rating) === normalized;
         button.classList.toggle('active', isActive);
@@ -204,10 +205,18 @@ function applyCurrentRating(rating) {
     });
 }
 
+function applyMovieRating(rating) {
+    const normalized = Number(rating);
+    movieRating.textContent = Number.isFinite(normalized) && normalized > 0
+        ? normalized.toFixed(1)
+        : '—';
+}
+
 function hideRatingCard() {
     ratingLoadSequence += 1;
     currentRatingContext = null;
     ratingCard.hidden = true;
+    applyMovieRating(null);
     applyCurrentRating(null);
     setRatingStatus('');
 }
@@ -272,6 +281,7 @@ async function showRatingCard(media) {
     };
     currentRatingContext = context;
     ratingCard.hidden = false;
+    applyMovieRating(null);
     applyCurrentRating(null);
     setRatingButtonsDisabled(true);
     setRatingStatus('Проверяем вашу оценку...', 'info');
@@ -288,6 +298,8 @@ async function showRatingCard(media) {
         setRatingButtonsDisabled(false);
         return;
     }
+
+    applyMovieRating(response.movieRating);
 
     if (!response.authorized) {
         setRatingStatus('Для отправки оценки войдите в Кинопоиск', 'error');

@@ -206,6 +206,12 @@ async function getMovieRating(payload) {
     }
 
     const result = await response.json();
+    const movie = result?.data?.movie;
+    const rawMovieRating = movie?.rating?.kinopoisk?.value;
+    const movieRating = typeof rawMovieRating === "number" &&
+      Number.isFinite(rawMovieRating) && rawMovieRating > 0
+      ? rawMovieRating
+      : null;
     const errors = Array.isArray(result?.errors) ? result.errors : [];
     const details = errors.map(error => error?.message).filter(Boolean).join(" ");
     const authRequired = errors.some(error =>
@@ -213,16 +219,17 @@ async function getMovieRating(payload) {
       /auth|authoriz|login|unauthor|forbidden|войд|авториз/i.test(error?.message || "")
     );
 
-    if (authRequired) return { authorized: false, rating: null };
+    if (authRequired) return { authorized: false, rating: null, movieRating };
     if (errors.length) throw new Error(details || "Не удалось получить оценку Кинопоиска");
 
-    const userData = result?.data?.movie?.userData;
-    if (!userData) return { authorized: false, rating: null };
+    const userData = movie?.userData;
+    if (!userData) return { authorized: false, rating: null, movieRating };
 
     const rating = Number(userData.voting?.value);
     return {
       authorized: true,
-      rating: Number.isInteger(rating) && rating >= 1 && rating <= 10 ? rating : null
+      rating: Number.isInteger(rating) && rating >= 1 && rating <= 10 ? rating : null,
+      movieRating
     };
   });
 }
