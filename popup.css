@@ -30,7 +30,6 @@
   --border-hover: #cbd2dc;
   --header-start: #c54f23;
   --header-end: #a93816;
-  --header-text: #ffffff;
   --film-action: #b94e2f;
   --film-action-hover: #a64025;
   --series-action: #267a76;
@@ -75,7 +74,6 @@
   --border-hover: #515a74;
   --header-start: #ff9b73;
   --header-end: #ff7546;
-  --header-text: #1b1e2b;
   --film-action: #ff956d;
   --film-action-hover: #ff8254;
   --series-action: #57c4be;
@@ -118,7 +116,6 @@
   --border-hover: #e7c5b5;
   --header-start: #ff7a3d;
   --header-end: #ec4d1f;
-  --header-text: #281123;
   --film-action: #d14312;
   --film-action-hover: #bd3709;
   --series-action: #007f7a;
@@ -192,15 +189,15 @@ input:focus-visible {
 
 .app-header {
   position: relative;
-  flex: 0 0 46px;
-  height: 46px;
+  flex: 0 0 50px;
+  height: 50px;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  padding: 0 14px;
+  justify-content: center;
+  padding: 0 50px;
   border-bottom: 1px solid rgba(0, 0, 0, .08);
   background: linear-gradient(135deg, var(--header-start), var(--header-end));
-  color: var(--header-text);
+  color: #fff;
   box-shadow: none;
   z-index: 2;
 }
@@ -208,42 +205,26 @@ input:focus-visible {
 .app-brand {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  gap: 9px;
+  min-width: 0;
 }
 
 .brand-icon {
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border: 1px solid rgba(255, 255, 255, .30);
-  border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, .18);
-  color: var(--header-text);
-}
-
-.brand-icon svg {
-  width: 17px;
-  height: 17px;
+  flex: 0 0 auto;
   display: block;
+  font-size: 21px;
+  line-height: 1;
 }
 
 .app-header h1 {
   font-family: "Manrope", "Segoe UI", sans-serif;
-  font-size: 14.5px;
-  font-weight: 600;
-  line-height: 1;
-  letter-spacing: -.025em;
-  white-space: nowrap;
-}
-
-.brand-word-base {
-  font-weight: 600;
-  opacity: .84;
-}
-
-.brand-word-strong {
+  font-size: 17px;
   font-weight: 800;
+  line-height: 1;
+  letter-spacing: -.02em;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(78, 24, 4, .28);
 }
 
 .header-button {
@@ -257,7 +238,7 @@ input:focus-visible {
   place-items: center;
   padding: 0;
   border-radius: var(--radius-sm);
-  color: var(--header-text);
+  color: #fff;
   border: 1px solid rgba(255, 255, 255, .34);
   background: rgba(255, 255, 255, .20);
   box-shadow: none;
@@ -268,14 +249,14 @@ input:focus-visible {
   transform: translateY(-50%);
   border-color: rgba(255, 255, 255, .52);
   background: rgba(255, 255, 255, .32);
-  color: var(--header-text);
+  color: #fff;
   box-shadow: var(--shadow);
 }
 
 .header-button.active {
   border-color: rgba(255, 255, 255, .58);
   background: rgba(255, 255, 255, .38);
-  color: var(--header-text);
+  color: #fff;
 }
 
 .header-button svg {
