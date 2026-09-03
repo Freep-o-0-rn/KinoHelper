@@ -83,6 +83,21 @@ function buildKinopoiskUrl(url) {
     return media ? `${KINOPOISK_BASE}/${media.type}/${media.id}/` : null;
 }
 
+function getDirectPlayerMedia(url) {
+    try {
+        const parsed = new URL(url);
+        const media = parseMediaUrl(url);
+        if (!media || parsed.origin === KINOPOISK_BASE) return null;
+
+        const builtInOrigins = [new URL(WATCH_BASE).origin, new URL(FALLBACK_WATCH_BASE).origin];
+        return builtInOrigins.includes(parsed.origin) || parsed.searchParams.has('socialAlias')
+            ? media
+            : null;
+    } catch {
+        return null;
+    }
+}
+
 function compactTitle(value) {
     return String(value || '').replace(/\s+/g, ' ').trim();
 }
@@ -780,13 +795,13 @@ async function showCurrentMovie({ force = false } = {}) {
             return;
         }
 
-        const isKnownWatchSite = url.startsWith(WATCH_BASE) || url.startsWith(FALLBACK_WATCH_BASE);
-        if (isKnownWatchSite && media) {
+        const directPlayerMedia = getDirectPlayerMedia(url);
+        if (directPlayerMedia) {
             lastRenderedTabSignature = tabSignature;
-            setConvertButtonMode('return', `${KINOPOISK_BASE}/${media.type}/${media.id}/`);
+            setConvertButtonMode('return', `${KINOPOISK_BASE}/${directPlayerMedia.type}/${directPlayerMedia.id}/`);
             const title = normalizePlayerTitle(tab.title);
             showMessage(title ? `Сейчас смотрите: «${title}»` : 'Сейчас идёт просмотр', 'success');
-            await showRatingCard(media);
+            await showRatingCard(directPlayerMedia);
             return;
         }
 

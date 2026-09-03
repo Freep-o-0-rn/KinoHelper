@@ -3,6 +3,8 @@ const WATCH_BASE = "https://www.kinokino.vip";
 const FALLBACK_WATCH_BASE = "https://flcksbr.top";
 const KINOPOISK_GRAPHQL = "https://graphql.kinopoisk.ru/graphql/";
 const RATING_ORIGIN_RULE_ID = 1516;
+const WATCH_ORIGINS_KEY = "kinoWatchOrigins";
+const MAX_WATCH_ORIGINS = 20;
 
 const MOVIE_PREVIEW_CARD_QUERY = `
   query MoviePreviewCard($movieId: Long!, $actorsLimit: Int!, $withUserData: Boolean = false) {
@@ -89,6 +91,44 @@ function getOrigin(url) {
   } catch {
     return null;
   }
+}
+
+function isKinopoiskUrl(url) {
+  return getOrigin(url) === KINOPOISK_BASE;
+}
+
+function hasWatchMarker(url) {
+  try {
+    return new URL(url).searchParams.has("socialAlias");
+  } catch {
+    return false;
+  }
+}
+
+async function getRememberedWatchOrigins() {
+  const data = await chrome.storage.local.get(WATCH_ORIGINS_KEY);
+  return Array.isArray(data[WATCH_ORIGINS_KEY]) ? data[WATCH_ORIGINS_KEY] : [];
+}
+
+async function rememberWatchOrigin(url) {
+  const origin = getOrigin(url);
+  if (!origin || origin === KINOPOISK_BASE) return;
+
+  const current = await getRememberedWatchOrigins();
+  const next = [origin, ...current.filter(item => item !== origin)].slice(0, MAX_WATCH_ORIGINS);
+  await chrome.storage.local.set({ [WATCH_ORIGINS_KEY]: next });
+}
+
+async function isRecoverableWatchUrl(url) {
+  const media = parseMedia(url);
+  if (!media || isKinopoiskUrl(url)) return false;
+
+  const origin = getOrigin(url);
+  const builtInOrigins = [getOrigin(WATCH_BASE), getOrigin(FALLBACK_WATCH_BASE)];
+  if (builtInOrigins.includes(origin) || hasWatchMarker(url)) return true;
+
+  const rememberedOrigins = await getRememberedWatchOrigins();
+  return rememberedOrigins.includes(origin);
 }
 
 function parseMedia(url) {
@@ -318,7 +358,32 @@ async function startSession({ tabId, returnUrl, watchUrl, type, id, title = '' }
   };
 
   await saveSession(tabId, session);
+  await rememberWatchOrigin(watchUrl);
   return session;
+}
+
+async function getOrRecoverSession(tabId) {
+  const session = await getSession(tabId);
+  if (session) return session;
+
+  let tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch {
+    return null;
+  }
+
+  if (!tab?.url || !(await isRecoverableWatchUrl(tab.url))) return null;
+
+  const media = parseMedia(tab.url);
+  return startSession({
+    tabId,
+    returnUrl: `${KINOPOISK_BASE}/${media.type}/${media.id}/`,
+    watchUrl: tab.url,
+    type: media.type,
+    id: media.id,
+    title: tab.title || ''
+  });
 }
 
 function isRedirectNavigation(details) {
@@ -367,6 +432,7 @@ async function handleCommittedNavigation(details) {
   const origin = getOrigin(url);
   if (origin && (knownOrigin || matchingMediaDuringRedirect || redirectDuringWindow)) {
     nextOrigins.add(origin);
+    await rememberWatchOrigin(url);
   }
 
   await saveSession(details.tabId, {
@@ -858,7 +924,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === "getWatchSession") {
-    getSession(message.tabId)
+    getOrRecoverSession(message.tabId)
       .then(session => sendResponse({ ok: true, session }))
       .catch(error => sendResponse({ ok: false, error: error.message }));
     return true;
