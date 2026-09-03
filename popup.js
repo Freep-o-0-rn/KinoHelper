@@ -9,7 +9,7 @@ const FILTERS_KEY = 'kinopoiskFilters';
 const HISTORY_COLLAPSED_KEY = 'historyCollapsed';
 
 const DEFAULT_SETTINGS = {
-    theme: 'system',
+    theme: 'bright',
     historyMaxItems: 20,
     historyMaxAgeDays: 30,
     excludeHistoryFromRandom: true,
@@ -386,7 +386,11 @@ function loadSettings() {
     const legacyDarkTheme = localStorage.getItem('darkTheme');
     const settings = {
         ...DEFAULT_SETTINGS,
-        theme: legacyDarkTheme === 'true' ? 'dark' : legacyDarkTheme === 'false' ? 'light' : 'system',
+        theme: legacyDarkTheme === 'true'
+            ? 'dark'
+            : legacyDarkTheme === 'false'
+                ? 'light'
+                : DEFAULT_SETTINGS.theme,
         historyRulesActivated: !hasExistingHistory
     };
 
@@ -527,12 +531,28 @@ function showMessage(text, type = 'info') {
 
 function openSettings() {
     document.body.classList.add('settings-open');
+    settingsButton.classList.add('active');
+    settingsButton.dataset.tooltip = 'Вернуться в главное меню';
+    settingsButton.setAttribute('aria-label', 'Вернуться в главное меню');
+    settingsButton.setAttribute('aria-pressed', 'true');
     clearHistoryConfirm.classList.remove('visible');
 }
 
 function closeSettings() {
     document.body.classList.remove('settings-open');
+    settingsButton.classList.remove('active');
+    settingsButton.dataset.tooltip = 'Открыть настройки';
+    settingsButton.setAttribute('aria-label', 'Открыть настройки');
+    settingsButton.setAttribute('aria-pressed', 'false');
     clearHistoryConfirm.classList.remove('visible');
+}
+
+function toggleSettings() {
+    if (document.body.classList.contains('settings-open')) {
+        closeSettings();
+    } else {
+        openSettings();
+    }
 }
 
 // Сохранение фильтров
@@ -851,7 +871,7 @@ chrome.tabs.onActivated.addListener(({ tabId }) => {
 });
 
 // Навигация и настройки
-settingsButton.addEventListener('click', openSettings);
+settingsButton.addEventListener('click', toggleSettings);
 backToMainButton.addEventListener('click', closeSettings);
 
 filtersToggle.addEventListener('click', () => {
