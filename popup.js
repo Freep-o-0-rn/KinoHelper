@@ -116,12 +116,23 @@ function normalizeKinopoiskTitle(value) {
         .trim();
 }
 
+function isGenericPlayerTitle(value) {
+    const title = compactTitle(value)
+        .replace(/\s*[|—]\s*(?:KinoKino|КиноКино).*$/i, '')
+        .trim();
+
+    return /^(?:Flicksbar|KinoKino|КиноКино|КиноПомощник|about:blank)$/i.test(title);
+}
+
 function normalizePlayerTitle(value, fallback = '') {
     const title = compactTitle(value)
         .replace(/\s*[|—]\s*(?:KinoKino|КиноКино).*$/i, '')
         .trim();
-    const genericTitle = /^(?:KinoKino|КиноКино|КиноПомощник|about:blank)$/i.test(title);
-    return title && !genericTitle ? title : normalizeKinopoiskTitle(fallback);
+
+    if (title && !isGenericPlayerTitle(title)) return title;
+
+    const fallbackTitle = normalizeKinopoiskTitle(fallback);
+    return fallbackTitle && !isGenericPlayerTitle(fallbackTitle) ? fallbackTitle : '';
 }
 
 async function getKinopoiskMovieTitle(tab) {
@@ -310,12 +321,12 @@ async function showRatingCard(media) {
         payload: { id: context.id, type: context.type }
     });
 
-    if (sequence !== ratingLoadSequence || currentRatingContext !== context) return;
+    if (sequence !== ratingLoadSequence || currentRatingContext !== context) return null;
 
     if (!response?.ok) {
         setRatingStatus('Не удалось загрузить оценку. Проверьте авторизацию на Кинопоиске', 'error');
         setRatingButtonsDisabled(false);
-        return;
+        return response || null;
     }
 
     applyMovieRating(response.movieRating);
@@ -323,13 +334,14 @@ async function showRatingCard(media) {
     if (!response.authorized) {
         setRatingStatus('Для отправки оценки войдите в Кинопоиск', 'error');
         setRatingButtonsDisabled(false);
-        return;
+        return response;
     }
 
     context.rating = Number.isInteger(Number(response.rating)) ? Number(response.rating) : null;
     applyCurrentRating(context.rating);
     setRatingStatus(context.rating ? 'Нажмите число, чтобы изменить оценку' : 'Нажмите число, чтобы поставить оценку', 'info');
     setRatingButtonsDisabled(false);
+    return response;
 }
 
 function setConvertButtonMode(mode, returnUrl = '') {
@@ -810,9 +822,17 @@ async function showCurrentMovie({ force = false } = {}) {
         if (session?.returnUrl) {
             lastRenderedTabSignature = tabSignature;
             setConvertButtonMode('return', session.returnUrl);
-            const title = normalizePlayerTitle(tab.title, session.title);
-            showMessage(title ? `Сейчас смотрите: «${title}»` : 'Сейчас идёт просмотр', 'success');
-            await showRatingCard({ type: session.type, id: session.id });
+
+            const fallbackTitle = normalizePlayerTitle(tab.title, session.title);
+            showMessage(fallbackTitle ? `Сейчас смотрите: «${fallbackTitle}»` : 'Сейчас идёт просмотр', 'success');
+
+            const ratingResponse = await showRatingCard({ type: session.type, id: session.id });
+            if (!isCurrentViewRefresh(refreshSequence)) return;
+
+            const kinopoiskTitle = normalizeKinopoiskTitle(ratingResponse?.movieTitle);
+            if (kinopoiskTitle && kinopoiskTitle !== fallbackTitle) {
+                showMessage(`Сейчас смотрите: «${kinopoiskTitle}»`, 'success');
+            }
             return;
         }
 
@@ -820,9 +840,17 @@ async function showCurrentMovie({ force = false } = {}) {
         if (directPlayerMedia) {
             lastRenderedTabSignature = tabSignature;
             setConvertButtonMode('return', `${KINOPOISK_BASE}/${directPlayerMedia.type}/${directPlayerMedia.id}/`);
-            const title = normalizePlayerTitle(tab.title);
-            showMessage(title ? `Сейчас смотрите: «${title}»` : 'Сейчас идёт просмотр', 'success');
-            await showRatingCard(directPlayerMedia);
+
+            const fallbackTitle = normalizePlayerTitle(tab.title);
+            showMessage(fallbackTitle ? `Сейчас смотрите: «${fallbackTitle}»` : 'Сейчас идёт просмотр', 'success');
+
+            const ratingResponse = await showRatingCard(directPlayerMedia);
+            if (!isCurrentViewRefresh(refreshSequence)) return;
+
+            const kinopoiskTitle = normalizeKinopoiskTitle(ratingResponse?.movieTitle);
+            if (kinopoiskTitle && kinopoiskTitle !== fallbackTitle) {
+                showMessage(`Сейчас смотрите: «${kinopoiskTitle}»`, 'success');
+            }
             return;
         }
 
