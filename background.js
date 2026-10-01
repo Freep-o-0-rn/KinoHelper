@@ -225,6 +225,29 @@ async function runRatingRequest(task) {
   });
 }
 
+function getMoviePreviewMeta(movie) {
+  const rawTitle = String(movie?.title?.russian || movie?.title?.original || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const rawYear = movie?.productionYear ?? movie?.releaseYears?.start;
+  const numericYear = Number(rawYear);
+  const year = Number.isInteger(numericYear) && numericYear > 1800 && numericYear < 2200
+    ? numericYear
+    : null;
+
+  const rawMovieRating = movie?.rating?.kinopoisk?.value;
+  const movieRating = typeof rawMovieRating === "number" &&
+    Number.isFinite(rawMovieRating) && rawMovieRating > 0
+    ? rawMovieRating
+    : null;
+
+  return {
+    movieRating,
+    movieTitle: rawTitle ? (year ? `${rawTitle} (${year})` : rawTitle) : ''
+  };
+}
+
 async function getMovieRating(payload) {
   const media = normalizeMediaPayload(payload);
 
@@ -239,19 +262,35 @@ async function getMovieRating(payload) {
     );
 
     if (response.status === 401 || response.status === 403) {
-      return { authorized: false, rating: null };
+      const publicResponse = await fetch(
+        ratingGraphqlUrl("MoviePreviewCard"),
+        ratingRequestOptions(
+          "MoviePreviewCard",
+          { movieId: media.id, actorsLimit: 0, withUserData: false },
+          MOVIE_PREVIEW_CARD_QUERY
+        )
+      );
+
+      if (!publicResponse.ok) {
+        return { authorized: false, rating: null, movieRating: null, movieTitle: '' };
+      }
+
+      const publicResult = await publicResponse.json();
+      const publicMovie = publicResult?.data?.movie;
+      return {
+        authorized: false,
+        rating: null,
+        ...getMoviePreviewMeta(publicMovie)
+      };
     }
+
     if (!response.ok) {
       throw new Error(`Кинопоиск вернул ошибку ${response.status}`);
     }
 
     const result = await response.json();
     const movie = result?.data?.movie;
-    const rawMovieRating = movie?.rating?.kinopoisk?.value;
-    const movieRating = typeof rawMovieRating === "number" &&
-      Number.isFinite(rawMovieRating) && rawMovieRating > 0
-      ? rawMovieRating
-      : null;
+    const previewMeta = getMoviePreviewMeta(movie);
     const errors = Array.isArray(result?.errors) ? result.errors : [];
     const details = errors.map(error => error?.message).filter(Boolean).join(" ");
     const authRequired = errors.some(error =>
@@ -259,17 +298,19 @@ async function getMovieRating(payload) {
       /auth|authoriz|login|unauthor|forbidden|войд|авториз/i.test(error?.message || "")
     );
 
-    if (authRequired) return { authorized: false, rating: null, movieRating };
+    if (authRequired) {
+      return { authorized: false, rating: null, ...previewMeta };
+    }
     if (errors.length) throw new Error(details || "Не удалось получить оценку Кинопоиска");
 
     const userData = movie?.userData;
-    if (!userData) return { authorized: false, rating: null, movieRating };
+    if (!userData) return { authorized: false, rating: null, ...previewMeta };
 
     const rating = Number(userData.voting?.value);
     return {
       authorized: true,
       rating: Number.isInteger(rating) && rating >= 1 && rating <= 10 ? rating : null,
-      movieRating
+      ...previewMeta
     };
   });
 }
