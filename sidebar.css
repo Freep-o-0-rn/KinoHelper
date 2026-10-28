@@ -1,0 +1,480 @@
+/* KinoHelper Side Panel — separate skin, existing JS and popup remain unchanged. */
+html,
+body {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+}
+
+body.sidebar-mode {
+  /* Purple night — deliberately independent from the compact popup palette. */
+  --primary: #c393ff;
+  --primary-hover: #d8b3ff;
+  --primary-rgb: 195, 147, 255;
+  --secondary: #ad78fa;
+  --secondary-hover: #c28cff;
+  --secondary-rgb: 173, 120, 250;
+  --accent: #a86af0;
+  --accent-hover: #bb89ff;
+  --success: #66debc;
+  --success-rgb: 102, 222, 188;
+  --error: #ff8aa8;
+  --error-rgb: 255, 138, 168;
+  --warning: #ffd47e;
+  --warning-rgb: 255, 212, 126;
+  --bg: #1d1835;
+  --bg-secondary: #292246;
+  --bg-elevated: #30274e;
+  --text: #f5efff;
+  --text-muted: #b1a5cc;
+  --border: #534273;
+  --border-hover: #79629d;
+  --header-start: #42286a;
+  --header-end: #2b214c;
+  --film-action: #573a95;
+  --film-action-hover: #6a4caa;
+  --series-action: #423672;
+  --series-action-hover: #584689;
+  --catalog-text: #f8f2ff;
+  --context-action: #9350e9;
+  --context-action-hover: #aa64ff;
+  --return-action: #7763df;
+  --return-action-hover: #8f78f7;
+  --on-secondary: #200f3d;
+  --on-context: #ffffff;
+  --disabled-bg: #3a3355;
+  --disabled-text: #9188af;
+  --tooltip-bg: #140e2a;
+  --radius: 13px;
+  --radius-sm: 9px;
+  --shadow: 0 8px 24px rgba(10, 7, 29, .14);
+  --shadow-hover: 0 8px 25px rgba(12, 6, 33, .23);
+  font-family: "Manrope", "Segoe UI", sans-serif;
+  font-size: 13px;
+  background: #1d1835;
+  color: var(--text);
+}
+
+/* Dark mode is a quieter variation, bright is the default vibrant purple.
+   Light/system-light still work through the existing settings controls. */
+body.sidebar-mode.dark-theme {
+  --bg: #151127;
+  --bg-secondary: #211b37;
+  --bg-elevated: #29213f;
+  --border: #45365f;
+  --text: #f3edff;
+  --text-muted: #a79aba;
+}
+
+body.sidebar-mode.sidebar-light-theme {
+  --primary: #8145c6;
+  --primary-hover: #6633a9;
+  --primary-rgb: 129, 69, 198;
+  --secondary: #794ad4;
+  --secondary-hover: #6738bd;
+  --secondary-rgb: 121, 74, 212;
+  --accent: #9860d5;
+  --accent-hover: #7b45bd;
+  --success: #087961;
+  --success-rgb: 8, 121, 97;
+  --error: #b7325b;
+  --bg: #f7f3ff;
+  --bg-secondary: #eee8fb;
+  --bg-elevated: #ffffff;
+  --text: #302441;
+  --text-muted: #786a8b;
+  --border: #ddd0ef;
+  --border-hover: #bda7db;
+  --film-action: #ece2fb;
+  --film-action-hover: #dfcef6;
+  --series-action: #e5dcf5;
+  --series-action-hover: #d9c9ed;
+  --catalog-text: #49316a;
+  --context-action: #8452d3;
+  --context-action-hover: #7144be;
+  --disabled-bg: #e5ddef;
+  --disabled-text: #988cad;
+  background: #f7f3ff;
+}
+
+.sidebar-mode .app-shell {
+  width: 100%;
+  min-width: 0;
+  height: 100dvh;
+  min-height: 0;
+  max-height: none;
+  background:
+    radial-gradient(circle at 100% -8%, rgba(173, 99, 255, .22), transparent 45%),
+    var(--bg);
+}
+
+.sidebar-mode .app-header {
+  flex: 0 0 auto;
+  height: 80px;
+  min-height: 80px;
+  justify-content: flex-start;
+  padding: 13px 60px 13px 16px;
+  background: linear-gradient(112deg, #42286a 0%, #312450 75%, #282047 100%);
+  border-bottom: 1px solid rgba(203, 153, 255, .18);
+  box-shadow: 0 3px 16px rgba(20, 9, 39, .22);
+}
+
+.sidebar-mode .app-brand {
+  justify-content: flex-start;
+  gap: 12px;
+  text-align: left;
+}
+
+.sidebar-mode .brand-icon {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  font-size: 24px;
+  border-radius: 14px;
+  background: linear-gradient(145deg, #b75eff 0%, #7934df 90%);
+  box-shadow: 0 7px 20px rgba(109, 27, 201, .27);
+}
+
+.sidebar-brand-copy { min-width: 0; }
+.sidebar-mode .app-header h1 {
+  color: #f7e8ff;
+  font-family: "Manrope", sans-serif;
+  font-size: clamp(15px, 4.7vw, 21px);
+  font-weight: 800;
+  line-height: 1.15;
+  text-shadow: none;
+}
+
+.sidebar-brand-subtitle {
+  display: block;
+  margin-top: 5px;
+  color: #c6a3ed;
+  font-size: 9px;
+  line-height: 1.15;
+  letter-spacing: .12em;
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.sidebar-mode .header-button {
+  right: 16px;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  color: #e5d1ff;
+  border: 1px solid rgba(215, 182, 255, .22);
+  background: rgba(190, 117, 255, .12);
+}
+
+.sidebar-mode .header-button:hover,
+.sidebar-mode .header-button.active {
+  color: #fff;
+  border-color: #9d6ddb;
+  background: rgba(190, 117, 255, .28);
+}
+
+.sidebar-mode .screen-stage,
+.sidebar-mode .screen {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+.sidebar-mode .screen-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.sidebar-mode .screen-scroll::-webkit-scrollbar,
+.sidebar-mode .history-items::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+.sidebar-mode .screen-scroll::-webkit-scrollbar-thumb,
+.sidebar-mode .history-items::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 7px;
+}
+
+.sidebar-mode .main-content,
+.sidebar-mode .settings-content {
+  padding: 16px;
+  min-height: 100%;
+  width: 100%;
+}
+.sidebar-mode .main-content {
+  gap: 12px;
+}
+
+.sidebar-section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin: 5px 1px 0;
+  color: var(--text);
+  font-weight: 750;
+  font-size: 12px;
+  letter-spacing: .01em;
+}
+.sidebar-heading-hint {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+.sidebar-catalog-heading,
+.sidebar-random-heading {
+  margin-top: 10px;
+}
+
+.sidebar-mode .title-search-section { gap: 0; }
+.sidebar-mode .title-search-form {
+  min-height: 49px;
+  padding: 0 13px;
+  border: 1px solid #69518e;
+  background: var(--bg-elevated);
+  border-radius: 13px;
+  box-shadow: 0 5px 13px rgba(10, 6, 30, .10);
+}
+.sidebar-mode .title-search-form:focus-within {
+  border-color: #b77dff;
+  box-shadow: 0 0 0 3px rgba(170, 105, 240, .14);
+}
+.sidebar-mode #titleSearchInput {
+  height: 45px;
+  color: var(--text);
+  font-family: "Manrope", sans-serif;
+  font-size: 12px;
+}
+.sidebar-mode #titleSearchInput::placeholder { color: var(--text-muted); }
+.sidebar-mode .title-search-icon { font-size: 17px; }
+.sidebar-mode .title-search-clear {
+  width: 28px;
+  height: 28px;
+  flex-basis: 28px;
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+}
+
+.sidebar-mode .title-search-results {
+  margin-top: 9px;
+  max-height: clamp(210px, 47vh, 590px);
+  padding: 10px;
+  gap: 9px;
+  background: rgba(55, 42, 88, .76);
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.sidebar-mode.sidebar-light-theme .title-search-results {
+  background: var(--bg-elevated);
+}
+.sidebar-mode .title-search-status {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.sidebar-mode .title-search-item {
+  gap: 10px;
+  padding: 11px 0;
+  align-items: flex-start;
+}
+.sidebar-mode .title-search-poster {
+  width: 58px;
+  height: 82px;
+  flex-basis: 58px;
+  border-radius: 9px;
+  background: linear-gradient(140deg, var(--bg-secondary), #5a3a8e);
+}
+.sidebar-mode .title-search-title { font-size: 12px; line-height: 1.4; }
+.sidebar-mode .title-search-meta { font-size: 10px; line-height: 1.4; }
+.sidebar-mode .title-search-actions { gap: 6px; flex-wrap: wrap; }
+.sidebar-mode .title-search-action {
+  min-height: 28px;
+  padding: 6px 9px;
+  font-size: 10px;
+  font-weight: 750;
+  border-radius: 8px;
+}
+.sidebar-mode .title-search-action.watch {
+  color: #ffffff;
+  background: linear-gradient(115deg, #a466f0, #7b3bea);
+}
+.sidebar-mode .title-search-action.kinopoisk {
+  background: var(--bg-secondary);
+  border-color: var(--border);
+  color: var(--text);
+}
+.sidebar-mode .title-search-rating { color: var(--success); }
+.sidebar-mode .title-search-external {
+  color: var(--primary);
+  font-size: 11px;
+  padding-top: 9px;
+}
+
+.sidebar-mode .action-grid {
+  gap: 9px;
+}
+.sidebar-mode button.btn-primary {
+  min-width: 0;
+  min-height: 45px;
+  padding: 8px 10px;
+  border-radius: 11px;
+  font-weight: 750;
+  font-size: 12px;
+  background: var(--film-action);
+  border: 1px solid var(--border);
+  color: var(--catalog-text);
+}
+.sidebar-mode button.btn-primary:hover {
+  border-color: var(--primary);
+  background: var(--film-action-hover);
+}
+.sidebar-mode #kinopoiskSerial {
+  background: var(--series-action);
+}
+.sidebar-mode #kinopoiskSerial:hover {
+  background: var(--series-action-hover);
+}
+
+.sidebar-mode .filters-toggle {
+  min-height: 44px;
+  padding: 11px 14px;
+  border-radius: 11px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+}
+.sidebar-mode .filters-toggle:hover,
+.sidebar-mode .filters-toggle.active {
+  border-color: #a875ec;
+  background: var(--bg-secondary);
+}
+.sidebar-mode .filters {
+  border-radius: 11px;
+  background: var(--bg-elevated);
+}
+.sidebar-mode .filters.active {
+  max-height: min(72vh, 680px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.sidebar-mode .kp-filter-chip.active {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.sidebar-mode .main-buttons {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 9px;
+}
+.sidebar-mode .main-buttons button {
+  min-width: 0;
+  min-height: 48px;
+  font-size: 12px;
+  padding: 9px 7px;
+  border-radius: 11px;
+  font-weight: 750;
+}
+.sidebar-mode .btn-secondary {
+  background: linear-gradient(110deg, #ad6bf9, #823de9);
+  color: #ffffff;
+  box-shadow: 0 6px 17px rgba(139, 60, 226, .20);
+}
+.sidebar-mode .btn-secondary:hover {
+  background: linear-gradient(110deg, #bc80ff, #9755f1);
+}
+.sidebar-mode .btn-convert {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+.sidebar-mode .btn-convert:hover {
+  background: var(--bg-elevated);
+  border-color: var(--primary);
+}
+.sidebar-mode .btn-convert:disabled {
+  background: var(--disabled-bg);
+  color: var(--disabled-text);
+  border: 1px solid var(--border);
+}
+.sidebar-mode .btn-convert[data-mode="return"] {
+  background: var(--return-action);
+  color: #fff;
+}
+.sidebar-mode .btn-accent {
+  grid-column: 1 / -1;
+}
+
+.sidebar-mode .context-card,
+.sidebar-mode .history,
+.sidebar-mode .settings-section {
+  padding: 13px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+.sidebar-mode .context-card {
+  border-left: 3px solid var(--secondary);
+}
+.sidebar-mode .history-title { color: var(--text); font-size: 12px; font-weight: 750; }
+.sidebar-mode .history-items { max-height: 230px; scrollbar-width: thin; }
+.sidebar-mode .history-item { padding: 8px 6px; border-color: var(--border); font-size: 11px; }
+.sidebar-mode .history-item-btn:hover { color: #fff; }
+.sidebar-mode .rating-card { border-color: var(--border); }
+.sidebar-mode .rating-button { min-height: 28px; }
+
+.sidebar-footer-hint {
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: .04em;
+}
+.sidebar-mode .author-info {
+  border: 0;
+  padding: 0 0 8px;
+  margin-top: 0;
+  color: var(--text-muted);
+}
+.sidebar-mode .author-name { color: var(--primary); }
+
+.sidebar-mode .settings-section {
+  gap: 14px;
+  box-shadow: none;
+}
+.sidebar-mode .settings-section-title { color: var(--primary); }
+.sidebar-mode .setting-field select {
+  min-height: 40px;
+  background: var(--bg-secondary);
+  color: var(--text);
+}
+.sidebar-mode .back-button { color: var(--primary); }
+
+@media (max-width: 335px) {
+  .sidebar-mode .main-content,
+  .sidebar-mode .settings-content { padding: 12px; }
+  .sidebar-mode .app-header { padding-left: 12px; }
+  .sidebar-mode .sidebar-brand-subtitle { font-size: 8px; letter-spacing: .065em; }
+  .sidebar-mode .title-search-poster { width: 48px; flex-basis: 48px; height: 70px; }
+  .sidebar-mode .title-search-action { padding: 5px 7px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-mode *,
+  .sidebar-mode *::before,
+  .sidebar-mode *::after {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+  }
+}
