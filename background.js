@@ -59,6 +59,35 @@ const MOVIE_PREVIEW_CARD_QUERY = `
   }
 `;
 
+// Запрос подсказок Кинопоиска возвращает несколько фильмов вместе с
+// корректными постерами, годом и рейтингом без поиска ссылок в DOM.
+const TITLE_SUGGEST_QUERY = `
+  query SuggestSearch($keyword: String!, $limit: Int, $yandexCityId: Int) {
+    suggest(keyword: $keyword) {
+      top(limit: $limit, yandexCityId: $yandexCityId) {
+        movies {
+          movie {
+            id
+            __typename
+            title { russian original }
+            rating { kinopoisk { value } }
+            gallery {
+              posters {
+                kpVertical: vertical { avatarsUrl fallbackUrl }
+                hdVertical: vertical(override: OTT_WHEN_EXISTS) { avatarsUrl fallbackUrl }
+              }
+            }
+            ... on Film { productionYear }
+            ... on TvSeries { releaseYears { start end } }
+            ... on MiniSeries { releaseYears { start end } }
+            ... on TvShow { releaseYears { start end } }
+          }
+        }
+      }
+    }
+  }
+`;
+
 const MOVIE_SET_VOTE_QUERY = `
   mutation MovieSetVote($movieId: Long!, $rate: Int!) {
     movie {
@@ -189,7 +218,7 @@ async function installRatingOriginRule() {
         ]
       },
       condition: {
-        regexFilter: "^https://graphql\\.kinopoisk\\.ru/graphql/\\?operationName=(?:MoviePreviewCard|MovieSetVote)$",
+        regexFilter: "^https://graphql\\.kinopoisk\\.ru/graphql/\\?operationName=(?:MoviePreviewCard|MovieSetVote|SuggestSearch)$",
         requestMethods: ["post"],
         resourceTypes: ["xmlhttprequest"],
         tabIds: [chrome.tabs.TAB_ID_NONE]
@@ -250,6 +279,131 @@ function getMoviePreviewMeta(movie) {
 
 // Публичные данные для карточек поиска. Берём по ID из того же GraphQL,
 // который уже используется для оценки, а не из ссылок «Актеры» поисковой выдачи.
+// Кэш результатов поиска — не хранит личных данных или историю.
+const titleSuggestCache = new Map();
+const TITLE_SUGGEST_TTL = 2 * 60 * 1000;
+const TITLE_SUGGEST_MAX_CACHE = 30;
+const TITLE_SEARCH_MAX = 30;
+
+function convertSuggestedMovie(movie) {
+  const id = Number(movie?.id);
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+  const title = String(movie.title?.russian || movie.title?.original || '')
+    .replace(/\s+/g, ' ').trim();
+  if (!title) return null;
+
+  const type = ['TvSeries', 'MiniSeries', 'TvShow'].includes(movie.__typename)
+    ? 'series' : 'film';
+  const yearValue = Number(movie.productionYear ?? movie.releaseYears?.start);
+  const ratingValue = Number(movie.rating?.kinopoisk?.value);
+  const posters = movie.gallery?.posters;
+
+  return {
+    id: String(id),
+    type,
+    kpUrl: KINOPOISK_BASE + '/' + type + '/' + id + '/',
+    watchUrl: WATCH_BASE + '/' + type + '/' + id + '/',
+    title,
+    year: Number.isInteger(yearValue) && yearValue >= 1880 && yearValue <= 2200
+      ? yearValue : null,
+    rating: Number.isFinite(ratingValue) && ratingValue > 0 && ratingValue <= 10
+      ? ratingValue : null,
+    poster: posters?.kpVertical?.avatarsUrl ||
+      posters?.hdVertical?.avatarsUrl || null,
+    posterFallback: posters?.kpVertical?.fallbackUrl ||
+      posters?.hdVertical?.fallbackUrl || null
+  };
+}
+
+async function fetchTitleSuggestions(keyword) {
+  return runRatingRequest(async () => {
+    const response = await fetch(
+      ratingGraphqlUrl('SuggestSearch'),
+      {
+        ...ratingRequestOptions(
+          'SuggestSearch',
+          { keyword, limit: TITLE_SEARCH_MAX, yandexCityId: 6 },
+          TITLE_SUGGEST_QUERY
+        ),
+        signal: AbortSignal.timeout(12000)
+      }
+    );
+    if (!response.ok) throw new Error('Поиск Кинопоиска: HTTP ' + response.status);
+    const result = await response.json();
+    const top = result?.data?.suggest?.top;
+    if (!top || result?.errors?.length) {
+      const explanation = result?.errors?.map(e => e.message).filter(Boolean).join('; ');
+      throw new Error(explanation || 'Кинопоиск не вернул список подсказок');
+    }
+    return (top.movies || [])
+      .map(item => convertSuggestedMovie(item?.movie))
+      .filter(Boolean);
+  });
+}
+
+function suggestRank(item, query) {
+  const norm = text => String(text || '').toLocaleLowerCase('ru')
+    .replace(/ё/g, 'е').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const title = norm(item.title);
+  const needle = norm(query);
+  if (!needle || !title) return 0;
+  if (title === needle) return 1000;
+  if (title.startsWith(needle + ' ')) return 900;
+  if (title.startsWith(needle)) return 800;
+  if (title.includes(needle)) return 600;
+  const tokens = needle.split(' ').filter(word => word.length > 1);
+  const matched = tokens.filter(word => title.includes(word)).length;
+  return tokens.length ? Math.round(matched / tokens.length * 400) : 100;
+}
+
+async function searchMovieTitles(payload) {
+  const query = String(payload?.query || '').replace(/\s+/g, ' ').trim();
+  if (query.length < 2 || query.length > 100) {
+    throw new Error('Название должно содержать от 2 до 100 символов');
+  }
+  const key = query.toLocaleLowerCase('ru');
+  const cached = titleSuggestCache.get(key);
+  if (cached && Date.now() - cached.time < TITLE_SUGGEST_TTL) return cached.items;
+
+  const all = new Map();
+  const errors = [];
+  async function mergeMatches(keyword) {
+    try {
+      const movies = await fetchTitleSuggestions(keyword);
+      movies.forEach(movie => {
+        const id = movie.type + ':' + movie.id;
+        if (!all.has(id)) all.set(id, movie);
+      });
+    } catch (error) {
+      errors.push(error.message);
+    }
+  }
+
+  await mergeMatches(query);
+
+  // Дополнительный запрос с укороченной фразой помогает искать серии:
+  // «Очень страшное кино» → также «Очень страшное кино 2», 3, 4 и т.д.
+  const words = query.split(/\s+/);
+  if (words.length >= 3 && all.size < 12) {
+    const broad = words.slice(0, -1).join(' ');
+    if (broad.length >= 4 && broad.toLowerCase() !== query.toLowerCase()) {
+      await mergeMatches(broad);
+    }
+  }
+
+  if (!all.size && errors.length) throw new Error(errors[0]);
+  const items = [...all.values()]
+    .sort((a, b) => suggestRank(b, query) - suggestRank(a, query) ||
+      ((b.rating || 0) - (a.rating || 0)))
+    .slice(0, TITLE_SEARCH_MAX);
+
+  titleSuggestCache.set(key, { items, time: Date.now() });
+  if (titleSuggestCache.size > TITLE_SUGGEST_MAX_CACHE) {
+    titleSuggestCache.delete(titleSuggestCache.keys().next().value);
+  }
+  return items;
+}
+
 const searchMetadataCache = new Map();
 const SEARCH_META_TTL_MS = 30 * 60 * 1000;
 const SEARCH_META_MAX_CACHE = 100;
@@ -300,8 +454,12 @@ async function getSearchMovieMetadata(payload) {
       year,
       rating,
       // Поля уже присутствуют в MOVIE_PREVIEW_CARD_QUERY.
-      poster: movie.poster?.avatarsUrl || movie.poster?.fallbackUrl || null,
-      posterFallback: movie.poster?.fallbackUrl || null
+      poster: movie.gallery?.posters?.kpVertical?.avatarsUrl ||
+        movie.gallery?.posters?.hdVertical?.avatarsUrl ||
+        movie.poster?.avatarsUrl || movie.poster?.fallbackUrl || null,
+      posterFallback: movie.gallery?.posters?.kpVertical?.fallbackUrl ||
+        movie.gallery?.posters?.hdVertical?.fallbackUrl ||
+        movie.poster?.fallbackUrl || null
     };
   });
 
@@ -1094,6 +1252,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "endWatchSession") {
     clearSession(message.tabId)
       .then(() => sendResponse({ ok: true }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.action === "searchMovieTitles") {
+    searchMovieTitles(message.payload)
+      .then(movies => sendResponse({ ok: true, movies }))
       .catch(error => sendResponse({ ok: false, error: error.message }));
     return true;
   }
