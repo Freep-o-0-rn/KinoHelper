@@ -7,8 +7,52 @@
     const SEARCH_DELAY = 350;
     const MIN_QUERY_LENGTH = 2;
     const MAX_RESULTS = 30;
-    const CACHE_LIFETIME = 2 * 60 * 1000;
+    const CACHE_LIFETIME = 10 * 60 * 1000;
+    const STORAGE_CACHE_KEY = 'kinoHelperSearchCacheV1';
+    const STORAGE_CACHE_LIMIT = 12;
     const cache = new Map();
+
+    // Кэш результатов на время сеанса Chrome: при повторном открытии
+    // расширения не нужно заново выполнять все запросы продолжений.
+    // Сохраняем только метаданные фильмов, без картинок и DOM.
+    async function getSessionResults(key) {
+        try {
+            const stored = (await chrome.storage.session.get(STORAGE_CACHE_KEY))
+                ?.[STORAGE_CACHE_KEY] || {};
+            const entry = stored[key];
+            if (!entry || !Array.isArray(entry.items) ||
+                Date.now() - entry.savedAt >= CACHE_LIFETIME) return null;
+            return entry.items.map(item => ({ ...item }));
+        } catch {
+            return null;
+        }
+    }
+
+    async function saveSessionResults(key, movies) {
+        try {
+            const stored = (await chrome.storage.session.get(STORAGE_CACHE_KEY))
+                ?.[STORAGE_CACHE_KEY] || {};
+            const entry = {
+                savedAt: Date.now(),
+                items: movies.map(movie => ({
+                    id: movie.id, type: movie.type,
+                    kpUrl: movie.kpUrl, watchUrl: movie.watchUrl,
+                    title: movie.title, year: movie.year, rating: movie.rating,
+                    poster: movie.poster || '', posterFallback: movie.posterFallback || ''
+                }))
+            };
+            const entries = Object.entries({ ...stored, [key]: entry })
+                .filter(([, item]) => item?.savedAt &&
+                    Date.now() - item.savedAt < CACHE_LIFETIME)
+                .sort((a, b) => b[1].savedAt - a[1].savedAt)
+                .slice(0, STORAGE_CACHE_LIMIT);
+            await chrome.storage.session.set({
+                [STORAGE_CACHE_KEY]: Object.fromEntries(entries)
+            });
+        } catch {
+            // Отсутствие доступа к кэшу не препятствует поиску.
+        }
+    }
 
     const form = document.getElementById('titleSearchForm');
     const input = document.getElementById('titleSearchInput');
@@ -530,6 +574,15 @@
             return;
         }
 
+        const sessionResults = await getSessionResults(cacheKey);
+        if (currentRequest !== requestNumber) return;
+        if (sessionResults?.length) {
+            cache.set(cacheKey, { items: sessionResults, savedAt: Date.now() });
+            renderResults(sessionResults);
+            void enrichResults(sessionResults, currentRequest);
+            return;
+        }
+
         const abort = new AbortController();
         controller = abort;
         const results = new Map();
@@ -679,6 +732,7 @@
             // Карточки уже показаны по мере поступления результатов.
             cache.set(cacheKey, { items: movies, savedAt: Date.now() });
             renderResults(movies);
+            void saveSessionResults(cacheKey, movies);
         }
         if (currentRequest === requestNumber) controller = null;
     }
