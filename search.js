@@ -276,17 +276,45 @@
         const abort = new AbortController();
         controller = abort;
         try {
-            const response = await fetch(searchPageUrl(query), {
-                credentials: 'include',
-                signal: abort.signal
-            });
-            if (!response.ok) throw new Error('Кинопоиск вернул HTTP ' + response.status);
-            const html = await response.text();
-            if (currentRequest !== requestNumber) return;
-            const movies = parseSearchPage(html, response.url, query);
-            if (!movies.length && !/search_results|searchResults|search-results|Ничего не найдено|не найдено/i.test(html)) {
-                throw new Error('Не удалось прочитать результаты на странице Кинопоиска');
+            let movies = null;
+            let fetchError = null;
+
+            // Быстрый путь: читаем HTML без открытия дополнительных вкладок.
+            try {
+                const response = await fetch(searchPageUrl(query), {
+                    credentials: 'include',
+                    signal: abort.signal
+                });
+                if (!response.ok) throw new Error('Кинопоиск вернул HTTP ' + response.status);
+                const html = await response.text();
+                if (currentRequest !== requestNumber) return;
+                const directResults = parseSearchPage(html, response.url, query);
+                if (directResults.length) movies = directResults;
+            } catch (error) {
+                if (error.name === 'AbortError') return;
+                fetchError = error;
             }
+
+            if (currentRequest !== requestNumber) return;
+            if (!movies) {
+                // Для страниц, где результаты создаёт JavaScript, читаем DOM в
+                // кратковременной фоновой вкладке. Вкладка закрывается автоматически.
+                const response = await chrome.runtime.sendMessage({
+                    action: 'fetchTitleSearchPage',
+                    payload: { url: searchPageUrl(query) }
+                });
+                if (currentRequest !== requestNumber) return;
+                if (!response?.ok) {
+                    throw new Error(response?.error || fetchError?.message ||
+                        'Не удалось загрузить результаты Кинопоиска');
+                }
+                movies = parseSearchPage(response.page.html, response.page.url, query);
+                if (!movies.length &&
+                    !/search_results|searchResults|search-results|Ничего не найдено|не найдено/i.test(response.page.html)) {
+                    throw new Error('Кинопоиск не предоставил список фильмов');
+                }
+            }
+
             cache.set(query.toLocaleLowerCase(), { items: movies, savedAt: Date.now() });
             if (cache.size > 20) cache.delete(cache.keys().next().value);
             renderResults(movies);
