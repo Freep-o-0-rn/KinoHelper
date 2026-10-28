@@ -300,7 +300,8 @@ async function getSearchMovieMetadata(payload) {
       year,
       rating,
       // Поля уже присутствуют в MOVIE_PREVIEW_CARD_QUERY.
-      poster: movie.poster?.avatarsUrl || movie.poster?.fallbackUrl || null
+      poster: movie.poster?.avatarsUrl || movie.poster?.fallbackUrl || null,
+      posterFallback: movie.poster?.fallbackUrl || null
     };
   });
 
