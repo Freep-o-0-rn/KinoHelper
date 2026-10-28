@@ -356,10 +356,37 @@
     initialized = true;
   }
 
+  let initializationPromise = null;
+  function ensureFiltersReady() {
+    if (!initializationPromise) {
+      initializationPromise = initialize().catch(error => {
+        debug('Ошибка инициализации:', error);
+        showMessage('Не удалось загрузить фильтры Кинопоиска', 'error');
+      });
+    }
+    return initializationPromise;
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
-    void initialize().catch(error => {
-      debug('Ошибка инициализации:', error);
-      showMessage('Не удалось загрузить фильтры Кинопоиска', 'error');
+    const toggle = document.getElementById('filtersToggle');
+    const random = document.getElementById('randomFilm');
+
+    // Не открываем временные вкладки Кинопоиска при обычном
+    // запуске popup и при поиске фильма по названию.
+    // Динамические фильтры загружаются только по требованию.
+    toggle?.addEventListener('click', () => {
+      void ensureFiltersReady();
     });
+
+    random?.addEventListener('click', event => {
+      if (initialized) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void ensureFiltersReady().then(() => {
+        if (!initialized) return;
+        const dynamic = document.getElementById('dynamicFilters');
+        if (dynamic) void runRandom(random, dynamic);
+      });
+    }, true);
   });
 })();
