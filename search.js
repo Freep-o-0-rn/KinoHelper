@@ -11,7 +11,7 @@
     const SEARCH_CONCURRENCY = 5;
     const POSTER_CONCURRENCY = 2;
     const CACHE_LIFETIME = 10 * 60 * 1000;
-    const STORAGE_CACHE_KEY = 'kinoHelperSearchCacheV1';
+    const STORAGE_CACHE_KEY = 'kinoHelperSearchCacheV2';
     const STORAGE_CACHE_LIMIT = 12;
     const cache = new Map();
 
