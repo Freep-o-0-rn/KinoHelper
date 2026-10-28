@@ -90,7 +90,7 @@
             const url = new URL(normalized);
             const pathname = url.pathname.replace(/\/+$/, '');
             const isAvatar = url.hostname === 'avatars.mds.yandex.net' &&
-                /^\/get-[^/]+\/[^/]+\/[^/]+/.test(pathname);
+                /^\/get-kinopoisk-image\/[^/]+\/[^/]+/.test(pathname);
             if (isAvatar) {
                 const isSized = /\/(?:orig|\d+x\d+)$/i.test(pathname);
                 const base = isSized ? pathname.replace(/\/(?:orig|\d+x\d+)$/i, '') : pathname;
