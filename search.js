@@ -71,7 +71,8 @@
             // Только изображения Кинопоиска и Яндекса.
             const allowed = host === 'kinopoisk.ru' || host.endsWith('.kinopoisk.ru') ||
                 host === 'yandex.net' || host.endsWith('.yandex.net') ||
-                host === 'yandex.ru' || host.endsWith('.yandex.ru');
+                host === 'yandex.ru' || host.endsWith('.yandex.ru') ||
+                host === 'st.kp.yandex.net';
             return allowed ? url.href : '';
         } catch {
             return '';
@@ -104,6 +105,13 @@
         };
         add(movie.poster);
         add(movie.posterFallback);
+        // Старый статический каталог Кинопоиска как резервный источник.
+        // Реальные ссылки проверяются загрузкой; не заявляем их рабочими заранее.
+        if (/^\d+$/.test(String(movie.id || ''))) {
+            add('https://st.kp.yandex.net/images/film_iphone/iphone360_' + movie.id + '.jpg');
+            add('https://st.kp.yandex.net/images/film_big/' + movie.id + '.jpg');
+        }
+
         return urls.filter(url => !failedPosters.has(url));
     }
 
@@ -286,12 +294,17 @@
         const sources = getPosterSources(movie);
         if (movie.posterDataUrl || sources.length) {
             const image = document.createElement('img');
-            image.loading = 'eager';
+            image.loading = 'lazy';
             image.referrerPolicy = 'no-referrer';
             image.alt = '';
             let index = 0;
+            let fallbackStarted = false;
+            let failed = false;
             async function tryProxy() {
-                for (const src of sources.slice(0, 3)) {
+                if (fallbackStarted || failed) return;
+                fallbackStarted = true;
+                for (const src of sources) {
+                    if (image.isConnected === false) return;
                     try {
                         const response = await chrome.runtime.sendMessage({
                             action: 'loadSearchPoster',
@@ -299,39 +312,39 @@
                         });
                         if (response?.ok && response.dataUrl) {
                             movie.posterDataUrl = response.dataUrl;
-                            image.src = movie.posterDataUrl;
+                            image.src = response.dataUrl;
                             diagnostics.poster = 'загружен через фоновый процесс';
                             updateDiagnostics();
                             return;
                         }
-                        diagnostics.poster = response?.error || 'не удалось загрузить изображение';
+                        diagnostics.poster = response?.error || 'изображение не ответило';
+                        updateDiagnostics();
                     } catch (error) {
                         diagnostics.poster = error.message;
+                        updateDiagnostics();
                     }
                 }
-                diagnostics.poster = diagnostics.poster || 'адрес изображения не отвечает';
-                updateDiagnostics();
+                failed = true;
                 image.remove();
+                diagnostics.poster = 'все адреса недоступны (ID ' + movie.id + ')';
+                updateDiagnostics();
             }
             image.addEventListener('error', () => {
                 if (movie.posterDataUrl) {
-                    diagnostics.poster = 'не удалось отобразить встроенное изображение';
+                    diagnostics.poster = 'ошибка отображения изображения';
                     updateDiagnostics();
                     image.remove();
                     return;
                 }
                 if (index < sources.length) failedPosters.add(sources[index]);
-                index++;
-                if (index < sources.length) {
-                    image.src = sources[index];
-                } else {
-                    void tryProxy();
-                }
+                index += 1;
+                if (index < sources.length) image.src = sources[index];
+                else void tryProxy();
             });
             image.src = movie.posterDataUrl || sources[0];
             poster.appendChild(image);
         } else {
-            diagnostics.poster = 'Кинопоиск не вернул URL постера для ID ' + movie.id;
+            diagnostics.poster = 'нет URL изображения для ID ' + movie.id;
             updateDiagnostics();
         }
         const details = document.createElement('div');
@@ -525,30 +538,10 @@
             }
         }
 
-        const graphqlTask = (async () => {
-            try {
-                const response = await chrome.runtime.sendMessage({
-                    action: 'searchMovieTitles',
-                    payload: { query }
-                });
-                if (currentRequest !== requestNumber) return;
-                if (!response?.ok) {
-                    throw new Error(response?.error || 'сервис не ответил');
-                }
-                const movies = Array.isArray(response.movies) ? response.movies : [];
-                diagnostics.api = 'получено ' + movies.length;
-                updateDiagnostics();
-                merge(movies.map(movie => ({
-                    ...movie,
-                    _metadataLoaded: Boolean(movie.title && movie.poster && movie.rating != null)
-                })), 'GraphQL');
-            } catch (error) {
-                if (currentRequest !== requestNumber) return;
-                diagnostics.api = 'ошибка: ' + error.message;
-                updateDiagnostics();
-                errors.push(error.message);
-            }
-        })();
+        // GraphQL SuggestSearch сейчас отвечает HTTP 400 в браузере.
+        // Не отправляем заведомо неуспешные запросы во время ввода текста.
+        diagnostics.api = 'подсказки отключены (HTTP 400); данные карточек по ID';
+        updateDiagnostics();
 
         const htmlTask = (async () => {
             let movies = await htmlLookup(query);
@@ -575,7 +568,7 @@
             }
         })();
 
-        await Promise.allSettled([graphqlTask, htmlTask]);
+        await htmlTask;
         if (currentRequest !== requestNumber) return;
         const movies = [...results.values()]
             .sort((a, b) => rank(b) - rank(a) ||
