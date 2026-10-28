@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>КиноПомощник</title>
+  <link rel="stylesheet" href="popup.css">
+  <link rel="stylesheet" href="filters.css">
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body class="side-panel-host">
+  <div class="app-shell">
+    <header class="app-header">
+      <div class="app-brand">
+        <span class="brand-icon" aria-hidden="true">🎬</span>
+        <h1>КиноПомощник</h1>
+      </div>
+      <button class="header-button" id="settingsButton" type="button" data-tooltip="Открыть настройки" aria-label="Открыть настройки" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.09A1.7 1.7 0 0 0 9 19.36a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.63 15a1.7 1.7 0 0 0-1.56-1.03H3v-4h.09A1.7 1.7 0 0 0 4.64 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.63a1.7 1.7 0 0 0 1.03-1.56V3h4v.09A1.7 1.7 0 0 0 15 4.64a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.37 9a1.7 1.7 0 0 0 1.56 1.03H21v4h-.09A1.7 1.7 0 0 0 19.4 15Z" />
+        </svg>
+      </button>
+    </header>
+
+    <div class="screen-stage">
+      <section class="screen main-screen" id="mainScreen" aria-label="Главный экран">
+        <div class="screen-scroll">
+          <main class="main-content">
+            <section class="title-search-section" aria-label="Поиск по названию">
+              <form class="title-search-form" id="titleSearchForm" role="search" autocomplete="off">
+                <span class="title-search-icon" aria-hidden="true">🔎</span>
+                <input id="titleSearchInput" type="search" name="q" placeholder="Название фильма или сериала" aria-label="Название фильма или сериала" maxlength="100" spellcheck="false">
+                <button id="titleSearchClear" class="title-search-clear" type="button" aria-label="Очистить поиск" hidden>✕</button>
+              </form>
+              <div id="titleSearchResults" class="title-search-results" hidden>
+                <div id="titleSearchStatus" class="title-search-status" role="status" aria-live="polite"></div>
+                <div id="titleSearchItems" class="title-search-items"></div>
+                <a id="titleSearchOnKinopoisk" class="title-search-external" href="https://www.kinopoisk.ru/" target="_blank" rel="noopener noreferrer">Все результаты на Кинопоиске ↗</a>
+              </div>
+            </section>
+
+            <div class="action-grid">
+              <button class="btn-primary has-tooltip" id="kinopoiskFilm" type="button" data-tooltip="Перейти к фильмам на Кинопоиске"><span class="icon">🎬</span> Фильмы</button>
+              <button class="btn-primary has-tooltip" id="kinopoiskSerial" type="button" data-tooltip="Перейти к сериалам на Кинопоиске"><span class="icon">📺</span> Сериалы</button>
+            </div>
+
+            <button class="filters-toggle" id="filtersToggle" type="button" aria-expanded="false">
+              <span>Фильтры случайного выбора</span>
+              <span class="toggle-chevron">▼</span>
+            </button>
+
+            <div class="filters" id="filters">
+              <!-- Compatibility placeholders for the legacy popup.js filter bindings.
+                   They are hidden by filters.css and are never used by Random. -->
+              <div class="filter-row" aria-hidden="true">
+                <select id="genreFilter" tabindex="-1"><option value=""></option></select>
+                <select id="typeFilter" tabindex="-1"><option value=""></option></select>
+              </div>
+              <input type="number" id="yearFilter" tabindex="-1" aria-hidden="true">
+              <div class="checkbox-group" aria-hidden="true">
+                <input type="checkbox" id="highRatedCheckbox" tabindex="-1">
+                <input type="checkbox" id="releasedCheckbox" tabindex="-1">
+                <input type="checkbox" id="popularCheckbox" tabindex="-1">
+              </div>
+
+              <div class="filter-buttons">
+                <button class="btn-clear" id="clearFiltersBtn" type="button" title="Очистить фильтры">🗑️ Очистить фильтры</button>
+              </div>
+            </div>
+
+            <div class="main-buttons">
+              <button class="btn-secondary" id="randomFilm" type="button"><span class="icon">🎲</span> Случайный</button>
+              <button class="btn-convert" id="convert" type="button"><span class="icon">▶</span> Смотреть</button>
+              <button class="btn-accent" id="openOnKinopoisk" type="button" style="display: none;"><span class="icon">🎭</span> На Кинопоиск</button>
+            </div>
+
+            <section class="context-card info" id="contextCard" aria-label="Текущий фильм или состояние">
+              <div id="message" class="info" aria-live="polite">Выберите фильтры и нажмите «Случайный»</div>
+
+              <section class="rating-card" id="ratingCard" aria-label="Оценка на Кинопоиске" hidden>
+                <div class="rating-card-header">
+                  <span class="rating-card-title">Кинопоиск: <strong class="movie-rating" id="movieRating">—</strong></span>
+                  <span class="rating-current" id="ratingCurrent">Ваша: —</span>
+                </div>
+                <div class="rating-scale" id="ratingScale" role="group" aria-label="Поставить оценку от 1 до 10"></div>
+                <div class="rating-status" id="ratingStatus" aria-live="polite"></div>
+              </section>
+            </section>
+
+            <div class="history" id="history">
+              <div class="history-header">
+                <div class="history-title">Недавно просмотренные</div>
+                <button class="history-toggle" id="historyToggle" type="button" aria-expanded="true"><span class="icon">▼</span> Скрыть</button>
+              </div>
+              <div class="history-items" id="historyItems"></div>
+            </div>
+
+            <div class="author-info">
+              <div class="author-name">FreeP0rn</div>
+              <div class="author-email">vadim.reizer@ya.ru</div>
+            </div>
+          </main>
+        </div>
+      </section>
+
+      <section class="screen settings-screen" id="settingsScreen" aria-label="Настройки">
+        <div class="screen-scroll">
+          <div class="settings-content">
+            <button class="back-button" id="backToMain" type="button">← Настройки</button>
+
+            <section class="settings-section">
+              <div class="settings-section-title">ИНТЕРФЕЙС</div>
+              <label class="setting-field" for="themeSelect">
+                <span>Тема</span>
+                <select id="themeSelect">
+                  <option value="system">Системная</option>
+                  <option value="light">Светлая</option>
+                  <option value="dark">Тёмная</option>
+                  <option value="bright">Яркая</option>
+                </select>
+              </label>
+
+              <div class="display-mode-setting">
+                <div class="display-mode-copy">
+                  <div class="display-mode-title">Боковая панель</div>
+                  <div class="display-mode-description">Включено — расширение открывается сбоку. Выключено — обычное popup-окно.</div>
+                </div>
+                <label class="display-mode-switch" title="Переключить способ открытия">
+                  <input id="displayModeToggle" type="checkbox" aria-label="Открывать КиноПомощник в боковой панели">
+                  <span class="display-mode-switch-track" aria-hidden="true"></span>
+                </label>
+              </div>
+              <div id="displayModeStatus" class="display-mode-status" role="status" aria-live="polite"></div>
+            </section>
+
+            <section class="settings-section">
+              <div class="settings-section-title">ИСТОРИЯ</div>
+
+              <label class="setting-field" for="historyMaxItems">
+                <span>Максимум записей</span>
+                <select id="historyMaxItems">
+                  <option value="5">5</option>
+                  <option value="10">10</option>
+                  <option value="20">20</option>
+                  <option value="50">50</option>
+                  <option value="unlimited">Без ограничений</option>
+                </select>
+              </label>
+
+              <label class="setting-field" for="historyMaxAge">
+                <span>Удалять старше</span>
+                <select id="historyMaxAge">
+                  <option value="7">7 дней</option>
+                  <option value="30">30 дней</option>
+                  <option value="90">90 дней</option>
+                  <option value="365">1 год</option>
+                  <option value="unlimited">Без ограничений</option>
+                </select>
+              </label>
+
+              <label class="setting-checkbox">
+                <input type="checkbox" id="excludeHistoryFromRandom">
+                <span>Не показывать просмотренные при случайном выборе</span>
+              </label>
+            </section>
+
+            <section class="settings-section">
+              <div class="settings-section-title">ДАННЫЕ</div>
+              <button class="danger-button" id="clearHistoryBtn" type="button">Очистить историю</button>
+
+              <div class="clear-confirm" id="clearHistoryConfirm">
+                <div class="clear-confirm-text">Удалить всю историю?</div>
+                <div class="clear-confirm-actions">
+                  <button class="secondary-small" id="cancelClearHistory" type="button">Отмена</button>
+                  <button class="danger-small" id="confirmClearHistory" type="button">Очистить</button>
+                </div>
+              </div>
+            </section>
+
+            <div class="settings-note">Изменения применяются автоматически.</div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+  <script src="search.js"></script>
+  <script src="filters.js"></script>
+  <script src="filters-ui.js"></script>
+  <script src="display-mode.js"></script>
+</body>
+</html>
