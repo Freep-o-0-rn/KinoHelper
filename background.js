@@ -947,8 +947,62 @@ async function fetchFilterPage(url) {
   }
 }
 
+// Если HTML-ответ поиска пустой (SPA/ограничения fetch), читаем страницу в фоновой вкладке.
+async function fetchTitleSearchPage(rawUrl) {
+  const url = new URL(String(rawUrl || ''));
+  if (url.origin !== 'https://www.kinopoisk.ru' ||
+      url.pathname !== '/index.php' ||
+      !url.searchParams.has('kp_query') ||
+      (url.searchParams.get('kp_query') || '').trim().length < 2 ||
+      (url.searchParams.get('kp_query') || '').length > 100) {
+    throw new Error('Недопустимый поисковый запрос');
+  }
+
+  let tabId = null;
+  try {
+    const tab = await chrome.tabs.create({ url: url.href, active: false });
+    tabId = tab.id;
+    if (!Number.isInteger(tabId)) throw new Error('Не удалось создать вкладку поиска');
+
+    const startedAt = Date.now();
+    let loaded = false;
+    while (Date.now() - startedAt < 12000) {
+      const currentTab = await chrome.tabs.get(tabId);
+      if (currentTab.status === 'complete') {
+        loaded = true;
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+    if (!loaded) throw new Error('Кинопоиск не ответил вовремя');
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    const script = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => ({
+        url: location.href,
+        html: document.documentElement.outerHTML
+      })
+    });
+    const page = script?.[0]?.result;
+    if (!page?.html) throw new Error('Не удалось прочитать страницу поиска');
+    return page;
+  } finally {
+    if (Number.isInteger(tabId)) {
+      try { await chrome.tabs.remove(tabId); } catch {}
+    }
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message !== "object") return false;
+
+  if (message.action === "fetchTitleSearchPage") {
+    fetchTitleSearchPage(message.payload?.url)
+      .then(page => sendResponse({ ok: true, page }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
 
   if (message.action === "fetchFilterPage") {
     fetchFilterPage(message.payload?.url)
