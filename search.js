@@ -99,13 +99,35 @@
         ) || anchor.parentElement?.parentElement || anchor;
     }
 
-    function extractTitle(anchor, card) {
-        const anchorText = cleanText(anchor.textContent);
-        const imageText = cleanText(anchor.querySelector('img')?.getAttribute('alt'));
-        const heading = card.querySelector('h2, h3, [class*="name"] a, [class*="title"] a');
-        const headingText = cleanText(heading?.textContent);
-        const title = anchorText || headingText || imageText;
-        return title.replace(/^Смотреть\s+/i, '').trim().slice(0, 160);
+    function extractTitle(anchor, card, query) {
+        const ignored = /^(?:актеры|актёры|актерский состав|в ролях|режиссеры|режиссёры|фото|трейлер|трейлеры|кадры|отзывы|рецензии|постеры|смотреть|подробнее|о фильме|о сериале)$/i;
+        const headings = [
+            card.querySelector('h2 a[href], h3 a[href], h2, h3'),
+            card.querySelector('[class*="name"] a[href], [class*="title"] a[href]'),
+            card.querySelector('[data-test-id*="title"]')
+        ];
+        const candidates = [
+            ...headings.map(node => cleanText(node?.textContent)),
+            cleanText(anchor.querySelector('img')?.getAttribute('alt')),
+            cleanText(anchor.textContent)
+        ];
+
+        const normalizedQuery = cleanText(query).toLocaleLowerCase();
+        let best = '';
+        let bestScore = -1;
+        for (const candidate of candidates) {
+            const title = candidate.replace(/^Смотреть\s+/i, '').trim().slice(0, 160);
+            if (!title || title.length < 2 || ignored.test(title) || /^https?:\/\//i.test(title)) continue;
+            const normalized = title.toLocaleLowerCase();
+            const score = (normalized === normalizedQuery ? 15 : 0) +
+                (normalized.includes(normalizedQuery) ? 5 : 0) -
+                (title.length > 75 ? 3 : 0);
+            if (score > bestScore) {
+                best = title;
+                bestScore = score;
+            }
+        }
+        return { title: best, score: bestScore };
     }
 
     function parseSearchPage(html, pageUrl, query) {
@@ -117,23 +139,34 @@
         const anchors = root.querySelectorAll('a[href*="/film/"], a[href*="/series/"]');
 
         anchors.forEach(anchor => {
-            const media = getMediaUrl(anchor.getAttribute('href'), pageUrl);
-            if (!media || found.has(media.type + ':' + media.id)) return;
+            const href = anchor.getAttribute('href');
+            const media = getMediaUrl(href, pageUrl);
+            if (!media) return;
 
             const card = findCard(anchor);
-            const title = extractTitle(anchor, card);
-            if (!title || title.length < 2 || /^смотреть$/i.test(title)) return;
+            const { title, score } = extractTitle(anchor, card, query);
             const description = cleanText(card.textContent).slice(0, 600);
             const yearMatch = description.match(/(?:18|19|20)\d{2}/);
             const poster = extractPoster(card, pageUrl);
             const rating = extractRating(card);
 
-            found.set(media.type + ':' + media.id, {
+            // Приоритет — ссылка на сам фильм, а не /cast/, /reviews/ и т.п.
+            const path = new URL(href, pageUrl).pathname.replace(/\/+$/, '');
+            const isCanonical = path === '/' + media.type + '/' + media.id;
+            const rank = (isCanonical ? 10 : 0) + score + (poster ? 2 : 0);
+            const key = media.type + ':' + media.id;
+            const previous = found.get(key);
+            const fallbackTitle = (media.type === 'series' ? 'Сериал №' : 'Фильм №') + media.id;
+
+            if (previous && previous._rank >= rank) return;
+
+            found.set(key, {
                 ...media,
-                title,
-                year: yearMatch ? Number(yearMatch[0]) : null,
-                rating,
-                poster
+                title: title || previous?.title || fallbackTitle,
+                year: yearMatch ? Number(yearMatch[0]) : (previous?.year || null),
+                rating: rating ?? previous?.rating ?? null,
+                poster: poster || previous?.poster || '',
+                _rank: rank
             });
         });
 
@@ -216,7 +249,13 @@
             image.loading = 'lazy';
             image.referrerPolicy = 'no-referrer';
             image.alt = '';
-            image.addEventListener('error', () => image.remove(), { once: true });
+            image.addEventListener('error', () => {
+                if (movie.posterFallback && image.src !== movie.posterFallback) {
+                    image.src = movie.posterFallback;
+                } else {
+                    image.remove();
+                }
+            });
             poster.appendChild(image);
         }
         const details = document.createElement('div');
@@ -262,6 +301,33 @@
         setStatus(movies.length ? 'Найдено: ' + movies.length : 'Совпадений не найдено');
     }
 
+    // Для каждого найденного ID уточняем данные непосредственно у Кинопоиска.
+    // Результаты остаются видны, пока карточки постепенно обновляются.
+    async function enrichResults(movies, searchId) {
+        await Promise.allSettled(movies.map(async movie => {
+            if (movie._metadataLoaded) return;
+            movie._metadataLoaded = true;
+            try {
+                const response = await chrome.runtime.sendMessage({
+                    action: 'getSearchMovieMetadata',
+                    payload: { id: movie.id, type: movie.type }
+                });
+                if (searchId !== requestNumber || !response?.ok) return;
+                const meta = response.metadata;
+                if (meta?.title) movie.title = cleanText(meta.title);
+                if (meta?.year) movie.year = meta.year;
+                if (meta?.rating != null) movie.rating = meta.rating;
+                const officialPoster = safePoster(meta?.poster, movie.kpUrl);
+                const fallback = safePoster(meta?.posterFallback, movie.kpUrl);
+                if (officialPoster) movie.poster = officialPoster;
+                movie.posterFallback = fallback && fallback !== officialPoster ? fallback : '';
+                renderResults(movies);
+            } catch {
+                // DOM-заголовок/постер остаётся запасным вариантом.
+            }
+        }));
+    }
+
     async function runSearch(query) {
         const currentRequest = ++requestNumber;
         resultsBox.hidden = false;
@@ -271,6 +337,7 @@
         const cached = cache.get(query.toLocaleLowerCase());
         if (cached && Date.now() - cached.savedAt < CACHE_LIFETIME) {
             renderResults(cached.items);
+            void enrichResults(cached.items, currentRequest);
             return;
         }
         const abort = new AbortController();
@@ -318,6 +385,7 @@
             cache.set(query.toLocaleLowerCase(), { items: movies, savedAt: Date.now() });
             if (cache.size > 20) cache.delete(cache.keys().next().value);
             renderResults(movies);
+            void enrichResults(movies, currentRequest);
         } catch (error) {
             if (currentRequest !== requestNumber || error.name === 'AbortError') return;
             itemsBox.replaceChildren();
