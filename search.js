@@ -687,11 +687,12 @@
         const canExpand = query.length >= 4 && !/\d\s*$/.test(query);
         const variants = [query];
         if (canExpand) {
-            variants.push(query + ' 2', query + ' 3');
+            // Сначала разные номерные части — они обычно дают больше
+            // уникальных ID, чем альтернативные названия тех же фильмов.
+            for (let n = 2; n <= 10; n++) variants.push(query + ' ' + n);
             if (query.trim().split(/\s+/).length === 1) {
                 variants.push('Двойной ' + query, 'Тройной ' + query);
             }
-            for (let n = 4; n <= 10; n++) variants.push(query + ' ' + n);
         }
         let cursor = 0;
         let primaryFinished = false;
