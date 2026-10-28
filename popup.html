@@ -26,6 +26,24 @@
       <section class="screen main-screen" id="mainScreen" aria-label="Главный экран">
         <div class="screen-scroll">
           <main class="main-content">
+            <section class="title-search-section" aria-label="Поиск по названию">
+              <form class="title-search-form" id="titleSearchForm" role="search" autocomplete="off">
+                <span class="title-search-icon" aria-hidden="true">🔎</span>
+                <input id="titleSearchInput" type="search" name="q" placeholder="Название фильма или сериала" aria-label="Название фильма или сериала" maxlength="100" spellcheck="false">
+                <button id="titleSearchClear" class="title-search-clear" type="button" aria-label="Очистить поиск" hidden>✕</button>
+              </form>
+              <div id="titleSearchResults" class="title-search-results" hidden>
+                <div id="titleSearchStatus" class="title-search-status" role="status" aria-live="polite"></div>
+                <div id="titleSearchItems" class="title-search-items"></div>
+                <a id="titleSearchOnKinopoisk" class="title-search-external" href="https://www.kinopoisk.ru/" target="_blank" rel="noopener noreferrer">Все результаты на Кинопоиске ↗</a>
+              </div>
+            </section>
+
+            <div class="action-grid">
+              <button class="btn-primary has-tooltip" id="kinopoiskFilm" type="button" data-tooltip="Перейти к фильмам на Кинопоиске"><span class="icon">🎬</span> Фильмы</button>
+              <button class="btn-primary has-tooltip" id="kinopoiskSerial" type="button" data-tooltip="Перейти к сериалам на Кинопоиске"><span class="icon">📺</span> Сериалы</button>
+            </div>
+
             <button class="filters-toggle" id="filtersToggle" type="button" aria-expanded="false">
               <span>Фильтры случайного выбора</span>
               <span class="toggle-chevron">▼</span>
@@ -48,11 +66,6 @@
               <div class="filter-buttons">
                 <button class="btn-clear" id="clearFiltersBtn" type="button" title="Очистить фильтры">🗑️ Очистить фильтры</button>
               </div>
-            </div>
-
-            <div class="action-grid">
-              <button class="btn-primary has-tooltip" id="kinopoiskFilm" type="button" data-tooltip="Перейти к фильмам на Кинопоиске"><span class="icon">🎬</span> Фильмы</button>
-              <button class="btn-primary has-tooltip" id="kinopoiskSerial" type="button" data-tooltip="Перейти к сериалам на Кинопоиске"><span class="icon">📺</span> Сериалы</button>
             </div>
 
             <div class="main-buttons">
@@ -160,6 +173,7 @@
   </div>
 
   <script src="popup.js"></script>
+  <script src="search.js"></script>
   <script src="filters.js"></script>
   <script src="filters-ui.js"></script>
 </body>
