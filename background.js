@@ -44,6 +44,12 @@ const MOVIE_PREVIEW_CARD_QUERY = `
       }
       rating { kinopoisk { value isActive count __typename } __typename }
       poster { avatarsUrl fallbackUrl __typename }
+      gallery {
+        posters {
+          kpVertical: vertical { avatarsUrl fallbackUrl }
+          hdVertical: vertical(override: OTT_WHEN_EXISTS) { avatarsUrl fallbackUrl }
+        }
+      }
       ...MoviePreviewUserData @include(if: $withUserData)
       __typename
     }
