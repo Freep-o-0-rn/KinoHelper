@@ -297,38 +297,76 @@ async function findPosterOnMoviePage(payload) {
   const media = normalizeMediaPayload(payload);
   const address = KINOPOISK_BASE + '/' + media.type + '/' + media.id + '/';
   const response = await fetch(address, {
-    credentials: 'include', signal: AbortSignal.timeout(9000)
+    credentials: 'include',
+    signal: AbortSignal.timeout(9000)
   });
   if (!response.ok) throw new Error('Страница фильма: HTTP ' + response.status);
   const html = await response.text();
-  const hosts = new Set(['avatars.mds.yandex.net', 'st.kp.yandex.net']);
-  const candidateUrls = [];
-  function add(raw) {
-    const value = String(raw || '').replace(/&amp;/g, '&')
-      .replace(/\\u002F/gi, '/').replace(/\\\//g, '/');
+
+  function verified(raw) {
     try {
-      const u = new URL(value, address);
-      if (u.protocol === 'https:' && hosts.has(u.hostname) &&
-          !candidateUrls.includes(u.href)) candidateUrls.push(u.href);
-    } catch {}
+      let value = String(raw || '')
+        .replace(/\\u002[fF]/g, '/')
+        .replace(/\\\//g, '/')
+        .replace(/&amp;/g, '&')
+        .replace(/&#x2F;|&#47;/gi, '/')
+        .replace(/&quot;/g, '"')
+        .trim();
+      if (value.startsWith('//')) value = 'https:' + value;
+      const src = new URL(value, address);
+      if (src.protocol !== 'https:') return null;
+      if (!['avatars.mds.yandex.net', 'st.kp.yandex.net'].includes(src.hostname)) return null;
+      if (!(/\/get-kinopoisk-image\//.test(src.pathname) ||
+            /\/images\/film_(?:iphone|big)\//.test(src.pathname))) return null;
+      return src.href;
+    } catch {
+      return null;
+    }
   }
-  // Meta tags are the most reliable representation in static HTML.
-  for (const tag of html.match(/<meta\b[^>]*>/gi) || []) {
+
+  // Сначала специальные метатеги, затем изображение с классом постера.
+  const metaTags = html.match(/<meta\b[^>]*>/gi) || [];
+  for (const tag of metaTags) {
     const attrs = {};
-    for (const m of tag.matchAll(/([\w-]+)\s*=\s*(["'])(.*?)\2/g)) {
-      attrs[m[1].toLowerCase()] = m[3];
+    for (const match of tag.matchAll(/([\w:-]+)\s*=\s*(["'])(.*?)\2/g)) {
+      attrs[match[1].toLowerCase()] = match[3];
     }
     if (['og:image', 'twitter:image'].includes(attrs.property || attrs.name)) {
-      add(attrs.content);
+      const image = verified(attrs.content);
+      if (image) return { poster: image, origin: 'meta' };
     }
   }
-  // Newer pages may provide the poster only in JSON hydration.
-  const normalized = html.replace(/\\u002F/gi, '/').replace(/\\\//g, '/')
-    .replace(/\\u0026/gi, '&');
-  const urls = normalized.match(/https?:\/\/(?:avatars\.mds\.yandex\.net|st\.kp\.yandex\.net)\/[^"'\\\s<>]{15,500}/gi) || [];
-  const posterUrls = urls.filter(url => /poster|kinopoisk-image|film_big/i.test(url));
-  for (const url of posterUrls.slice(0, 25)) add(url.replace(/[),;]+$/, ''));
-  return { poster: candidateUrls[0] || null, count: candidateUrls.length };
+
+  // В SSR постер может храниться как <img class="film-poster">.
+  for (const match of html.matchAll(/<img\b[^>]*>/gi)) {
+    const tag = match[0];
+    if (!/film-poster|poster|постер/i.test(tag)) continue;
+    const links = [
+      ...tag.matchAll(/\b(?:src|data-src|srcset)\s*=\s*(["'])(.*?)\1/gi)
+    ];
+    for (const link of links) {
+      const image = verified(link[2].split(/\s+\d+[wx](?:,|$)/)[0]);
+      if (image) return { poster: image, origin: 'poster-img' };
+    }
+  }
+
+  // Наконец, ищем картинки внутри сериализованного JSON SSR.
+  const unescaped = html
+    .replace(/\\u002[fF]/g, '/')
+    .replace(/\\\//g, '/');
+  const patterns = [
+    /(?:kpVertical|hdVertical|poster|posters)[\s\S]{0,550}?(?:https?:)?\/\/avatars\.mds\.yandex\.net\/get-kinopoisk-image\/[\w/.-]+/gi,
+    /(?:https?:)?\/\/avatars\.mds\.yandex\.net\/get-kinopoisk-image\/[\w/.-]+/gi
+  ];
+  for (const pattern of patterns) {
+    const matches = unescaped.match(pattern) || [];
+    for (const candidate of matches.slice(0, 20)) {
+      const url = candidate.match(/(?:https?:)?\/\/avatars\.mds\.yandex\.net\/get-kinopoisk-image\/[\w/.-]+/i)?.[0];
+      const image = verified(url);
+      if (image) return { poster: image, origin: 'ssr' };
+    }
+  }
+  return { poster: null, origin: 'not-found' };
 }
 
 const imageDataCache = new Map();
