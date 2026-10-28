@@ -7,6 +7,9 @@
     const SEARCH_DELAY = 350;
     const MIN_QUERY_LENGTH = 2;
     const MAX_RESULTS = 30;
+    const QUICK_RESULT_TARGET = 10;
+    const SEARCH_CONCURRENCY = 5;
+    const POSTER_CONCURRENCY = 2;
     const CACHE_LIFETIME = 10 * 60 * 1000;
     const STORAGE_CACHE_KEY = 'kinoHelperSearchCacheV1';
     const STORAGE_CACHE_LIMIT = 12;
@@ -389,7 +392,7 @@
         return item;
     }
 
-    function renderResults(movies) {
+    function renderResults(movies, searching = false) {
         // Повторно используем DOM карточек, чтобы не сбрасывать постеры
         // во время появления новых результатов из параллельного поиска.
         const nodes = movies.map(movie => {
@@ -402,7 +405,9 @@
         const orderChanged = nodes.length !== itemsBox.children.length ||
             nodes.some((node, index) => itemsBox.children[index] !== node);
         if (orderChanged) itemsBox.replaceChildren(...nodes);
-        setStatus(movies.length ? 'Найдено: ' + movies.length : 'Совпадений не найдено');
+        setStatus(movies.length
+            ? 'Найдено: ' + movies.length + (searching ? ' · ищем ещё…' : '')
+            : (searching ? 'Ищем фильмы и сериалы…' : 'Совпадений не найдено'));
     }
 
     // Лимит одновременно загружаемых постеров; не перегружаем сервис.
@@ -415,7 +420,7 @@
         });
     }
     function pumpPosterQueue() {
-        while (posterJobsActive < 3 && posterJobQueue.length) {
+        while (posterJobsActive < POSTER_CONCURRENCY && posterJobQueue.length) {
             const job = posterJobQueue.shift();
             posterJobsActive++;
             Promise.resolve().then(job.task)
@@ -498,6 +503,8 @@
             movie._posterQueued = true;
             void queuePoster(async () => {
                 movie._posterQueued = false;
+                if (searchId !== requestNumber ||
+                    movie._posterNode?.isConnected === false) return;
                 movie._posterAttempts = (movie._posterAttempts || 0) + 1;
                 await loadPoster(movie, searchId);
             });
@@ -645,12 +652,12 @@
                 .sort((a, b) => rank(b) - rank(a) ||
                     (b.rating || 0) - (a.rating || 0))
                 .slice(0, MAX_RESULTS);
-            renderResults(sorted);
+            renderResults(sorted, true);
             // Не кэшируем промежуточную выдачу: если пользователь изменил
             // запрос во время поиска продолжений, нельзя сохранять неполный список.
             // Показываем результаты и запускаем постеры сразу после каждой
             // новой порции, не дожидаясь всех запросов продолжений.
-            void enrichResults(sorted, currentRequest);
+            startPosterDownloads(sorted, currentRequest);
         }
 
         async function htmlLookup(text) {
@@ -674,52 +681,55 @@
         diagnostics.api = 'подсказки отключены (HTTP 400); данные карточек по ID';
         updateDiagnostics();
 
-        const htmlTask = (async () => {
-            let movies = await htmlLookup(query);
-            if (currentRequest !== requestNumber) return;
-            // Не открываем служебную вкладку при вводе текста.
-            // Пустой прямой HTML-ответ оставляем пустым.
-            if (currentRequest !== requestNumber) return;
-            merge(movies, 'HTML');
-
-            // При малом числе совпадений проверяем реальные страницы поиска
-            // продолжений, а не создаём вымышленные фильмы или ID.
-            if (results.size < 12 && query.length >= 4 &&
-                !/\d\s*$/.test(query)) {
-                // Для коротких названий, например «Форсаж», тоже ищем
-                // реальные продолжения. Не предполагаем, что они есть:
-                // добавляем только фильмы с подтверждённым ID из выдачи.
-                const variants = Array.from(
-                    { length: 9 }, (_, n) => query + ' ' + (n + 2)
-                );
-                // Некоторые продолжения называются не «Название 2»,
-                // а «Двойной название» / «Тройной название».
-                if (query.split(/\s+/).length === 1) {
-                    variants.push('Двойной ' + query, 'Тройной ' + query);
-                }
-                // До пяти сетевых запросов одновременно. Первые завершившиеся
-                // сразу пополняют выдачу, не ожидая медленные ответы других.
-                let cursor = 0;
-                const workers = Array.from(
-                    { length: Math.min(5, variants.length) },
-                    async () => {
-                        while (cursor < variants.length &&
-                            currentRequest === requestNumber &&
-                            !abort.signal.aborted && results.size < 18) {
-                            const variant = variants[cursor++];
-                            const entries = await htmlLookup(variant);
-                            if (currentRequest !== requestNumber) return;
-                            // Продолжения должны содержать исходную строку
-                            // в названии, а ID подтверждается Кинопоиском.
-                            merge(entries.filter(movie =>
-                                normalize(movie.title).includes(needle)
-                            ), 'HTML-продолжения');
-                        }
-                    }
-                );
-                await Promise.allSettled(workers);
+        // Основной запрос и продолжения запускаются сразу, а не
+        // последовательно. Ответ каждого запроса немедленно пополняет выдачу.
+        // При 10 релевантных результатах оставшуюся работу прекращаем.
+        const canExpand = query.length >= 4 && !/\d\s*$/.test(query);
+        const variants = [query];
+        if (canExpand) {
+            variants.push(query + ' 2', query + ' 3');
+            if (query.trim().split(/\s+/).length === 1) {
+                variants.push('Двойной ' + query, 'Тройной ' + query);
             }
-        })();
+            for (let n = 4; n <= 10; n++) variants.push(query + ' ' + n);
+        }
+        let cursor = 0;
+        let primaryFinished = false;
+        const relevantCount = () => [...results.values()]
+            .filter(movie => normalize(movie.title).includes(needle)).length;
+        const targetReached = () =>
+            primaryFinished && relevantCount() >= QUICK_RESULT_TARGET;
+
+        const workers = Array.from(
+            { length: Math.min(SEARCH_CONCURRENCY, variants.length) },
+            async () => {
+                while (cursor < variants.length &&
+                    currentRequest === requestNumber &&
+                    !abort.signal.aborted && !targetReached()) {
+                    const variant = variants[cursor++];
+                    const isPrimary = variant === query;
+                    const entries = await htmlLookup(variant);
+                    if (currentRequest !== requestNumber) return;
+                    const accepted = isPrimary
+                        ? entries
+                        : entries.filter(movie =>
+                            normalize(movie.title).includes(needle)
+                        );
+                    merge(accepted, isPrimary ? 'HTML' : 'HTML-продолжения');
+                    if (isPrimary) primaryFinished = true;
+
+                    // Уже показали достаточно фильмов, включая основной поиск.
+                    // Прерываем оставшиеся поисковые HTTP-запросы.
+                    // Загрузка постеров идёт отдельными сообщениями и не
+                    // зависит от AbortController поисковой выдачи.
+                    if (targetReached() && !abort.signal.aborted) {
+                        abort.abort();
+                        break;
+                    }
+                }
+            }
+        );
+        const htmlTask = Promise.allSettled(workers);
 
         await htmlTask;
         if (currentRequest !== requestNumber) return;
@@ -737,6 +747,7 @@
             cache.set(cacheKey, { items: movies, savedAt: Date.now() });
             if (cache.size > 20) cache.delete(cache.keys().next().value);
             renderResults(movies);
+            void enrichResults(movies, currentRequest);
             void saveSessionResults(cacheKey, movies);
         }
         if (currentRequest === requestNumber) controller = null;
