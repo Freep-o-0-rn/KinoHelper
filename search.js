@@ -435,15 +435,23 @@
 
     function startPosterDownloads(movies, searchId) {
         movies.forEach(movie => {
-            if (!movie.posterDataUrl && !movie._posterLoading) {
-                void queuePoster(() => loadPoster(movie, searchId));
-            }
+            if (movie.posterDataUrl || movie._posterLoading ||
+                movie._posterQueued || (movie._posterAttempts || 0) >= 2) return;
+            movie._posterQueued = true;
+            void queuePoster(async () => {
+                movie._posterQueued = false;
+                movie._posterAttempts = (movie._posterAttempts || 0) + 1;
+                await loadPoster(movie, searchId);
+            });
         });
     }
 
     // После обновления данных меняем существующие DOM-узлы, не перерисовывая
     // список: иначе картинки теряют родителя во время асинхронной загрузки.
     async function enrichResults(movies, searchId) {
+        // Картинки начинаем получать сразу, не дожидаясь очереди GraphQL
+        // для заголовков и рейтингов остальных фильмов.
+        startPosterDownloads(movies, searchId);
         const toEnrich = movies.filter(movie => !movie._metadataLoaded).slice(0, 8);
         await Promise.allSettled(toEnrich.map(async movie => {
             try {
