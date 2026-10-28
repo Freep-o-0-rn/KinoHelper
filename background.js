@@ -1457,3 +1457,47 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   return false;
 });
+
+
+// Переключение способа открытия расширения: popup / боковая панель.
+// Не затрагивает поиск, историю, темы и правила фильтров.
+const DISPLAY_MODE_STORAGE_KEY = 'kinoHelperDisplayMode';
+const normalizeDisplayMode = value => value === 'sidepanel' ? 'sidepanel' : 'popup';
+
+async function applyDisplayMode(mode) {
+  if (mode === 'sidepanel') {
+    await chrome.sidePanel.setOptions({ path: 'sidepanel.html', enabled: true });
+    // В Chrome popup имеет приоритет над открытием Side Panel по значку.
+    await chrome.action.setPopup({ popup: '' });
+    await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+  } else {
+    await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
+    await chrome.action.setPopup({ popup: 'popup.html' });
+  }
+}
+
+// Последовательное применение защищает от гонки при старте service worker
+// и при быстром переключении режима в настройках.
+let displayModeChange = chrome.storage.local.get(DISPLAY_MODE_STORAGE_KEY)
+  .then(data => applyDisplayMode(
+    normalizeDisplayMode(data[DISPLAY_MODE_STORAGE_KEY])
+  ))
+  .catch(error => console.warn('[KinoHelper] Восстановление режима:', error));
+
+function changeDisplayMode(mode) {
+  displayModeChange = displayModeChange.catch(() => {}).then(async () => {
+    await applyDisplayMode(mode);
+    await chrome.storage.local.set({ [DISPLAY_MODE_STORAGE_KEY]: mode });
+    return mode;
+  });
+  return displayModeChange;
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.action !== 'setKinoHelperDisplayMode') return false;
+  const mode = normalizeDisplayMode(message?.mode);
+  changeDisplayMode(mode)
+    .then(() => sendResponse({ ok: true, mode }))
+    .catch(error => sendResponse({ ok: false, error: error.message }));
+  return true;
+});
