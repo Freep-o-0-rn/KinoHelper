@@ -380,7 +380,7 @@
     // Для каждого найденного ID уточняем данные непосредственно у Кинопоиска.
     // Результаты остаются видны, пока карточки постепенно обновляются.
     async function enrichResults(movies, searchId) {
-        await Promise.allSettled(movies.map(async movie => {
+        await Promise.allSettled(movies.filter(movie => !movie._metadataLoaded).slice(0, 8).map(async movie => {
             if (movie._metadataLoaded) return;
             try {
                 const response = await chrome.runtime.sendMessage({
@@ -424,7 +424,7 @@
             diagnostics.source = 'кэш';
             updateDiagnostics();
             renderResults(cached.items);
-            void enrichResults(cached.items.slice(0, 8), currentRequest);
+            void enrichResults(cached.items, currentRequest);
             return;
         }
 
@@ -580,8 +580,7 @@
         } else {
             cache.set(cacheKey, { items: movies, savedAt: Date.now() });
             renderResults(movies);
-            void enrichResults(movies.filter(movie =>
-                !movie._metadataLoaded).slice(0, 8), currentRequest);
+            void enrichResults(movies, currentRequest);
         }
         if (currentRequest === requestNumber) controller = null;
     }
