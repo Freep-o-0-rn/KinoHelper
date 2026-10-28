@@ -112,7 +112,9 @@
             add('https://st.kp.yandex.net/images/film_big/' + movie.id + '.jpg');
         }
 
-        return urls.filter(url => !failedPosters.has(url));
+        // Адреса, которые не показал <img>, всё равно передаются фоновому
+        // загрузчику. Не вычёркиваем их глобально после первой ошибки.
+        return urls;
     }
 
     function extractPoster(card, baseUrl) {
