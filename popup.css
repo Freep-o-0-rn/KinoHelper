@@ -1199,7 +1199,7 @@ button.btn-convert:active:not(:disabled) {
   display: flex;
   flex-direction: column;
   gap: 7px;
-  max-height: 268px;
+  max-height: 316px;
   min-height: 0;
   padding: 9px;
   overflow-x: hidden;
