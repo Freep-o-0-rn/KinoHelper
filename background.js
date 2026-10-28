@@ -291,6 +291,7 @@ const titleSuggestCache = new Map();
 const TITLE_SUGGEST_TTL = 2 * 60 * 1000;
 const TITLE_SUGGEST_MAX_CACHE = 30;
 const TITLE_SEARCH_MAX = 30;
+let suggestApiUnavailable = false;
 
 async function findPosterOnMoviePage(payload) {
   const media = normalizeMediaPayload(payload);
@@ -417,7 +418,10 @@ async function fetchTitleSuggestions(keyword) {
         signal: AbortSignal.timeout(7000)
       }
     );
-    if (!response.ok) throw new Error('Поиск Кинопоиска: HTTP ' + response.status);
+    if (!response.ok) {
+      if (response.status === 400) suggestApiUnavailable = true;
+      throw new Error('Поиск Кинопоиска: HTTP ' + response.status);
+    }
     const result = await response.json();
     const top = result?.data?.suggest?.top;
     if (!top || result?.errors?.length) {
@@ -450,6 +454,7 @@ function suggestRank(item, query) {
 }
 
 async function searchMovieTitles(payload) {
+  if (suggestApiUnavailable) throw new Error('SuggestSearch: HTTP 400 (недоступен в этой сессии)');
   const query = String(payload?.query || '').replace(/\s+/g, ' ').trim();
   if (query.length < 2 || query.length > 100) {
     throw new Error('Название должно содержать от 2 до 100 символов');
