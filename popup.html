@@ -119,6 +119,18 @@
                   <option value="bright">Яркая</option>
                 </select>
               </label>
+
+              <div class="display-mode-setting">
+                <div class="display-mode-copy">
+                  <div class="display-mode-title">Боковая панель</div>
+                  <div class="display-mode-description">Включено — расширение открывается сбоку. Выключено — обычное popup-окно.</div>
+                </div>
+                <label class="display-mode-switch" title="Переключить способ открытия">
+                  <input id="displayModeToggle" type="checkbox" aria-label="Открывать КиноПомощник в боковой панели">
+                  <span class="display-mode-switch-track" aria-hidden="true"></span>
+                </label>
+              </div>
+              <div id="displayModeStatus" class="display-mode-status" role="status" aria-live="polite"></div>
             </section>
 
             <section class="settings-section">
@@ -176,5 +188,6 @@
   <script src="search.js"></script>
   <script src="filters.js"></script>
   <script src="filters-ui.js"></script>
+  <script src="display-mode.js"></script>
 </body>
 </html>
