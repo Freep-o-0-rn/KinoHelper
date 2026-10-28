@@ -300,28 +300,34 @@ async function findPosterOnMoviePage(payload) {
   });
   if (!response.ok) throw new Error('Страница фильма: HTTP ' + response.status);
   const html = await response.text();
-  const tags = html.match(/<meta\b[^>]+>/gi) || [];
-  const attributes = tag => {
+  const hosts = new Set(['avatars.mds.yandex.net', 'st.kp.yandex.net']);
+  const candidateUrls = [];
+  function add(raw) {
+    const value = String(raw || '').replace(/&amp;/g, '&')
+      .replace(/\\u002F/gi, '/').replace(/\\\//g, '/');
+    try {
+      const u = new URL(value, address);
+      if (u.protocol === 'https:' && hosts.has(u.hostname) &&
+          !candidateUrls.includes(u.href)) candidateUrls.push(u.href);
+    } catch {}
+  }
+  // Meta tags are the most reliable representation in static HTML.
+  for (const tag of html.match(/<meta\b[^>]*>/gi) || []) {
     const attrs = {};
     for (const m of tag.matchAll(/([\w-]+)\s*=\s*(["'])(.*?)\2/g)) {
-      attrs[m[1].toLowerCase()] = m[3].replace(/&amp;/g, '&');
+      attrs[m[1].toLowerCase()] = m[3];
     }
-    return attrs;
-  };
-  for (const tag of tags) {
-    const a = attributes(tag);
-    if (['og:image', 'twitter:image'].includes(a.property || a.name)) {
-      const value = String(a.content || '');
-      try {
-        const img = new URL(value, address);
-        if (img.protocol === 'https:' &&
-            ['avatars.mds.yandex.net', 'st.kp.yandex.net'].includes(img.hostname)) {
-          return { poster: img.href };
-        }
-      } catch {}
+    if (['og:image', 'twitter:image'].includes(attrs.property || attrs.name)) {
+      add(attrs.content);
     }
   }
-  return { poster: null };
+  // Newer pages may provide the poster only in JSON hydration.
+  const normalized = html.replace(/\\u002F/gi, '/').replace(/\\\//g, '/')
+    .replace(/\\u0026/gi, '&');
+  const urls = normalized.match(/https?:\/\/(?:avatars\.mds\.yandex\.net|st\.kp\.yandex\.net)\/[^"'\\\s<>]{15,500}/gi) || [];
+  const posterUrls = urls.filter(url => /poster|kinopoisk-image|film_big/i.test(url));
+  for (const url of posterUrls.slice(0, 25)) add(url.replace(/[),;]+$/, ''));
+  return { poster: candidateUrls[0] || null, count: candidateUrls.length };
 }
 
 const imageDataCache = new Map();
