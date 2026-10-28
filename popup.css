@@ -1339,3 +1339,22 @@ button.btn-convert:active:not(:disabled) {
 .title-search-external:hover {
   text-decoration: underline;
 }
+
+
+/* Необязательная диагностика поиска; не меняет основной визуальный стиль. */
+.title-search-diagnostics {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.title-search-diagnostics summary {
+  cursor: pointer;
+  user-select: none;
+}
+#titleSearchDiagnosticText {
+  padding: 5px 4px 2px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+}
