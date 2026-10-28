@@ -594,17 +594,32 @@
 
             // При малом числе совпадений проверяем реальные страницы поиска
             // продолжений, а не создаём вымышленные фильмы или ID.
-            if (results.size < 6 && query.split(/\s+/).length >= 2 &&
+            if (results.size < 12 && query.length >= 4 &&
                 !/\d\s*$/.test(query)) {
-                const variants = [2, 3, 4, 5, 6].map(i => query + ' ' + i);
-                // Три одновременных запроса без постоянных фоновых вкладок.
+                // Для коротких названий, например «Форсаж», тоже ищем
+                // реальные продолжения. Не предполагаем, что они есть:
+                // добавляем только фильмы с подтверждённым ID из выдачи.
+                const variants = Array.from(
+                    { length: 9 }, (_, n) => query + ' ' + (n + 2)
+                );
+                // Некоторые продолжения называются не «Название 2»,
+                // а «Двойной название» / «Тройной название».
+                if (query.split(/\s+/).length === 1) {
+                    variants.push('Двойной ' + query, 'Тройной ' + query);
+                }
                 for (let i = 0; i < variants.length; i += 3) {
                     const batches = await Promise.all(
                         variants.slice(i, i + 3).map(htmlLookup)
                     );
                     if (currentRequest !== requestNumber) return;
-                    for (const entries of batches) merge(entries, 'HTML-продолжения');
-                    if (results.size >= 10) break;
+                    for (const entries of batches) {
+                        // Не засоряем список посторонними фильмами,
+                        // которые Кинопоиск предложил как похожие.
+                        merge(entries.filter(movie =>
+                            normalize(movie.title).includes(needle)
+                        ), 'HTML-продолжения');
+                    }
+                    if (results.size >= 18) break;
                 }
             }
         })();
