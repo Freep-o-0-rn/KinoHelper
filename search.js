@@ -17,6 +17,17 @@
     const status = document.getElementById('titleSearchStatus');
     const itemsBox = document.getElementById('titleSearchItems');
     const openSearchButton = document.getElementById('titleSearchOnKinopoisk');
+    const diagnosticBox = document.getElementById('titleSearchDiagnosticText');
+    const diagnostics = { source: '', api: '', poster: '' };
+    function updateDiagnostics() {
+        if (!diagnosticBox) return;
+        diagnosticBox.textContent = [
+            diagnostics.source && 'Источник: ' + diagnostics.source,
+            diagnostics.api && 'GraphQL: ' + diagnostics.api,
+            diagnostics.poster && 'Постер: ' + diagnostics.poster
+        ].filter(Boolean).join('\n') || 'Нет данных';
+    }
+
 
     if (!form || !input || !clearButton || !resultsBox ||
         !status || !itemsBox || !openSearchButton) return;
@@ -273,23 +284,55 @@
         const poster = document.createElement('div');
         poster.className = 'title-search-poster';
         const sources = getPosterSources(movie);
-        if (sources.length) {
+        if (movie.posterDataUrl || sources.length) {
             const image = document.createElement('img');
-            image.loading = 'lazy';
+            image.loading = 'eager';
             image.referrerPolicy = 'no-referrer';
             image.alt = '';
             let index = 0;
+            async function tryProxy() {
+                for (const src of sources.slice(0, 3)) {
+                    try {
+                        const response = await chrome.runtime.sendMessage({
+                            action: 'loadSearchPoster',
+                            payload: { url: src }
+                        });
+                        if (response?.ok && response.dataUrl) {
+                            movie.posterDataUrl = response.dataUrl;
+                            image.src = movie.posterDataUrl;
+                            diagnostics.poster = 'загружен через фоновый процесс';
+                            updateDiagnostics();
+                            return;
+                        }
+                        diagnostics.poster = response?.error || 'не удалось загрузить изображение';
+                    } catch (error) {
+                        diagnostics.poster = error.message;
+                    }
+                }
+                diagnostics.poster = diagnostics.poster || 'адрес изображения не отвечает';
+                updateDiagnostics();
+                image.remove();
+            }
             image.addEventListener('error', () => {
-                failedPosters.add(sources[index]);
-                index += 1;
+                if (movie.posterDataUrl) {
+                    diagnostics.poster = 'не удалось отобразить встроенное изображение';
+                    updateDiagnostics();
+                    image.remove();
+                    return;
+                }
+                if (index < sources.length) failedPosters.add(sources[index]);
+                index++;
                 if (index < sources.length) {
                     image.src = sources[index];
                 } else {
-                    image.remove();
+                    void tryProxy();
                 }
             });
-            image.src = sources[0];
+            image.src = movie.posterDataUrl || sources[0];
             poster.appendChild(image);
+        } else {
+            diagnostics.poster = 'Кинопоиск не вернул URL постера для ID ' + movie.id;
+            updateDiagnostics();
         }
         const details = document.createElement('div');
         details.className = 'title-search-details';
