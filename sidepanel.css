@@ -1,0 +1,93 @@
+/* Chrome Side Panel: тот же UI и те же темы, что в popup.
+   Меняется только размер рабочей области и прокрутка. */
+html,
+body {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+}
+
+body.side-panel-host,
+.side-panel-host .app-shell {
+  width: 100%;
+  min-width: 0;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  max-height: none;
+}
+
+.side-panel-host .app-shell {
+  overflow: hidden;
+}
+
+.side-panel-host .screen-stage,
+.side-panel-host .screen {
+  width: 100%;
+  min-width: 0;
+}
+
+.side-panel-host .screen-scroll,
+.side-panel-host .history-items {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-hover) transparent;
+}
+
+.side-panel-host .screen-scroll::-webkit-scrollbar,
+.side-panel-host .history-items::-webkit-scrollbar {
+  width: 5px;
+}
+
+.side-panel-host .screen-scroll::-webkit-scrollbar-thumb,
+.side-panel-host .history-items::-webkit-scrollbar-thumb {
+  background: var(--border-hover);
+  border-radius: 10px;
+}
+
+.side-panel-host .main-content,
+.side-panel-host .settings-content {
+  width: 100%;
+  max-width: 540px;
+  min-height: 100%;
+  margin-inline: auto;
+  padding: 16px;
+  gap: 12px;
+}
+
+.side-panel-host .title-search-results {
+  max-height: min(62dvh, 620px);
+}
+
+.side-panel-host .history-items {
+  max-height: 280px;
+}
+
+.side-panel-host .filters.active {
+  max-height: min(68dvh, 640px);
+  overflow-y: auto;
+}
+
+.side-panel-host .app-header {
+  flex-shrink: 0;
+}
+
+.side-panel-host .settings-screen,
+.side-panel-host .main-screen {
+  height: 100%;
+}
+
+@media (min-width: 420px) {
+  .side-panel-host .main-content,
+  .side-panel-host .settings-content {
+    padding: 18px 20px;
+  }
+  .side-panel-host .title-search-poster {
+    width: 55px;
+    height: 78px;
+    flex-basis: 55px;
+  }
+}
