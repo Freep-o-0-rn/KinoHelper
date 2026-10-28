@@ -383,7 +383,7 @@ async function loadSearchPoster(payload) {
   const result = await fetch(address.href, {
     credentials: 'omit',
     cache: 'force-cache',
-    signal: AbortSignal.timeout(10000)
+    signal: AbortSignal.timeout(6500)
   });
   if (!result.ok) throw new Error('Постер: HTTP ' + result.status);
   const mime = (result.headers.get('content-type') || '').split(';')[0].trim();
@@ -391,7 +391,7 @@ async function loadSearchPoster(payload) {
     throw new Error('Постер: неожиданный тип ' + (mime || 'unknown'));
   }
   const bytes = new Uint8Array(await result.arrayBuffer());
-  if (!bytes.length || bytes.length > 750000) {
+  if (!bytes.length || bytes.length > 1800000) {
     throw new Error('Недопустимый размер изображения');
   }
   let binary = '';
