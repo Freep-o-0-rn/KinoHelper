@@ -91,3 +91,89 @@ body.side-panel-host,
     flex-basis: 55px;
   }
 }
+
+
+/* Декоративный анимированный слой только в Side Panel.
+   Четыре штатные темы наследуются из popup.css. */
+.side-panel-host {
+  --kino-shape: rgba(93, 108, 192, .38);
+  --kino-dot: rgba(93, 108, 192, .30);
+  --kino-halo: rgba(145, 163, 236, .13);
+}
+
+.side-panel-host.bright-theme {
+  --kino-shape: rgba(165, 101, 160, .42);
+  --kino-dot: rgba(165, 101, 160, .32);
+  --kino-halo: rgba(214, 131, 169, .12);
+}
+
+.side-panel-host.dark-theme {
+  /* Точно та же мягкая прозрачность, что в согласованном предпросмотре. */
+  --kino-shape: rgba(154, 164, 237, .23);
+  --kino-dot: rgba(171, 156, 238, .24);
+  --kino-halo: rgba(131, 100, 220, .13);
+}
+
+.side-panel-host .screen-stage {
+  isolation: isolate;
+  background: var(--bg);
+}
+
+.side-panel-host .kino-ambient {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+.side-panel-host .kino-ambient canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.side-panel-host .kino-ambient-glow {
+  position: absolute;
+  width: 280px;
+  height: 280px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--kino-halo), transparent 68%);
+  filter: blur(8px);
+  animation: kino-ambient-glide 17s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+.side-panel-host .kino-ambient-glow.first {
+  left: -120px;
+  top: 24%;
+}
+
+.side-panel-host .kino-ambient-glow.second {
+  right: -95px;
+  bottom: 4%;
+  width: 225px;
+  height: 225px;
+  animation-duration: 19s;
+  animation-direction: alternate-reverse;
+}
+
+.side-panel-host .screen {
+  z-index: 1;
+}
+
+@keyframes kino-ambient-glide {
+  from { transform: translate(-15px, 15px); }
+  to { transform: translate(45px, -75px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .side-panel-host .kino-ambient-glow {
+    animation: none;
+    transform: none;
+  }
+}
