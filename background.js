@@ -62,29 +62,30 @@ const MOVIE_PREVIEW_CARD_QUERY = `
 // Запрос подсказок Кинопоиска возвращает несколько фильмов вместе с
 // корректными постерами, годом и рейтингом без поиска ссылок в DOM.
 const TITLE_SUGGEST_QUERY = `
-  query SuggestSearch($keyword: String!, $limit: Int, $yandexCityId: Int) {
+  query SuggestSearch($keyword: String!, $yandexCityId: Int, $limit: Int, $withUserData: Boolean!) {
     suggest(keyword: $keyword) {
-      top(limit: $limit, yandexCityId: $yandexCityId) {
-        movies {
-          movie {
-            id
-            __typename
-            title { russian original }
-            rating { kinopoisk { value } }
-            gallery {
-              posters {
-                kpVertical: vertical { avatarsUrl fallbackUrl }
-                hdVertical: vertical(override: OTT_WHEN_EXISTS) { avatarsUrl fallbackUrl }
-              }
-            }
-            ... on Film { productionYear }
-            ... on TvSeries { releaseYears { start end } }
-            ... on MiniSeries { releaseYears { start end } }
-            ... on TvShow { releaseYears { start end } }
-          }
-        }
+      top(yandexCityId: $yandexCityId, limit: $limit) {
+        topResult { global { ...SuggestMovieItem __typename } }
+        movies { movie { ...SuggestMovieItem __typename } }
       }
     }
+  }
+  fragment SuggestMovieItem on Movie {
+    id
+    __typename
+    title { russian original }
+    rating { kinopoisk { value } }
+    gallery {
+      posters {
+        kpVertical: vertical { avatarsUrl fallbackUrl }
+        hdVertical: vertical(override: OTT_WHEN_EXISTS) { avatarsUrl fallbackUrl }
+      }
+    }
+    userData @include(if: $withUserData) { isPlannedToWatch }
+    ... on Film { productionYear }
+    ... on TvSeries { releaseYears { start end } }
+    ... on MiniSeries { releaseYears { start end } }
+    ... on TvShow { releaseYears { start end } }
   }
 `;
 
@@ -285,6 +286,43 @@ const TITLE_SUGGEST_TTL = 2 * 60 * 1000;
 const TITLE_SUGGEST_MAX_CACHE = 30;
 const TITLE_SEARCH_MAX = 30;
 
+const imageDataCache = new Map();
+const IMAGE_CACHE_MAX = 40;
+async function loadSearchPoster(payload) {
+  const raw = String(payload?.url || '').trim();
+  const address = new URL(raw);
+  const host = address.hostname.toLowerCase();
+  if (address.protocol !== 'https:' ||
+      !['avatars.mds.yandex.net', 'st.kp.yandex.net'].includes(host)) {
+    throw new Error('Недопустимый источник постера');
+  }
+  if (imageDataCache.has(address.href)) return imageDataCache.get(address.href);
+  const result = await fetch(address.href, {
+    credentials: 'omit',
+    cache: 'force-cache',
+    signal: AbortSignal.timeout(10000)
+  });
+  if (!result.ok) throw new Error('Постер: HTTP ' + result.status);
+  const mime = (result.headers.get('content-type') || '').split(';')[0].trim();
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(mime)) {
+    throw new Error('Постер: неожиданный тип ' + (mime || 'unknown'));
+  }
+  const bytes = new Uint8Array(await result.arrayBuffer());
+  if (!bytes.length || bytes.length > 750000) {
+    throw new Error('Недопустимый размер изображения');
+  }
+  let binary = '';
+  for (let start = 0; start < bytes.length; start += 8192) {
+    binary += String.fromCharCode(...bytes.subarray(start, start + 8192));
+  }
+  const dataUrl = 'data:' + mime + ';base64,' + btoa(binary);
+  imageDataCache.set(address.href, dataUrl);
+  if (imageDataCache.size > IMAGE_CACHE_MAX) {
+    imageDataCache.delete(imageDataCache.keys().next().value);
+  }
+  return dataUrl;
+}
+
 function convertSuggestedMovie(movie) {
   const id = Number(movie?.id);
   if (!Number.isSafeInteger(id) || id <= 0) return null;
@@ -322,9 +360,16 @@ async function fetchTitleSuggestions(keyword) {
       {
         ...ratingRequestOptions(
           'SuggestSearch',
-          { keyword, limit: TITLE_SEARCH_MAX, yandexCityId: 6 },
+          { keyword, limit: TITLE_SEARCH_MAX, yandexCityId: 6, withUserData: false },
           TITLE_SUGGEST_QUERY
         ),
+        headers: {
+          ...ratingRequestOptions('SuggestSearch', {}, '').headers,
+          'x-search-request-id': String(Date.now()) + String(Math.floor(Math.random() * 1000000)),
+          'x-request-id': String(Date.now()) + '-' + String(Math.floor(Math.random() * 1000000)),
+          'x-kp-testids': '414549,436857,436979,1615440',
+          'Accept': '*/*'
+        },
         signal: AbortSignal.timeout(12000)
       }
     );
@@ -335,9 +380,9 @@ async function fetchTitleSuggestions(keyword) {
       const explanation = result?.errors?.map(e => e.message).filter(Boolean).join('; ');
       throw new Error(explanation || 'Кинопоиск не вернул список подсказок');
     }
-    return (top.movies || [])
-      .map(item => convertSuggestedMovie(item?.movie))
-      .filter(Boolean);
+    const entries = [...(top.movies || []).map(item => item?.movie)];
+    if (top.topResult?.global?.id) entries.unshift(top.topResult.global);
+    return entries.map(convertSuggestedMovie).filter(Boolean);
   });
 }
 
@@ -385,9 +430,21 @@ async function searchMovieTitles(payload) {
   // «Очень страшное кино» → также «Очень страшное кино 2», 3, 4 и т.д.
   const words = query.split(/\s+/);
   if (words.length >= 3 && all.size < 12) {
-    const broad = words.slice(0, -1).join(' ');
-    if (broad.length >= 4 && broad.toLowerCase() !== query.toLowerCase()) {
-      await mergeMatches(broad);
+    const variants = [
+      words.slice(0, -1).join(' '),
+      words.slice(1).join(' ')
+    ].filter(term => term.length >= 4 && term.toLowerCase() !== key);
+    for (const term of [...new Set(variants)].slice(0, 2)) {
+      await mergeMatches(term);
+      if (all.size >= TITLE_SEARCH_MAX) break;
+    }
+    // Поиск по точным названиям продолжений, не подставляя фиктивных ID.
+    // Каждая часть попадает в результат только при наличии ответа Кинопоиска.
+    if (!/\d\s*$/.test(query) && all.size < 8) {
+      for (const sequel of [2, 3, 4, 5, 6]) {
+        await mergeMatches(query + ' ' + sequel);
+        if (all.size >= TITLE_SEARCH_MAX) break;
+      }
     }
   }
 
@@ -1252,6 +1309,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "endWatchSession") {
     clearSession(message.tabId)
       .then(() => sendResponse({ ok: true }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.action === "loadSearchPoster") {
+    loadSearchPoster(message.payload)
+      .then(dataUrl => sendResponse({ ok: true, dataUrl }))
       .catch(error => sendResponse({ ok: false, error: error.message }));
     return true;
   }
