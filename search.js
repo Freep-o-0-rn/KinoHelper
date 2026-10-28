@@ -411,7 +411,7 @@
                             movie.poster = safePoster(pagePoster.poster, movie.kpUrl);
                             renderResults(movies);
                         } else if (searchId === requestNumber) {
-                            diagnostics.poster = pagePoster?.error || 'нет изображения в метаданных фильма';
+                            diagnostics.poster = pagePoster?.error || 'Страница фильма не содержит og:image';
                             updateDiagnostics();
                         }
                     } catch (error) {
@@ -419,8 +419,11 @@
                         updateDiagnostics();
                     }
                 }
-            } catch {
-                // DOM-заголовок/постер остаётся запасным вариантом.
+            } catch (error) {
+                if (searchId === requestNumber) {
+                    diagnostics.poster = 'Ошибка получения данных фильма: ' + error.message;
+                    updateDiagnostics();
+                }
             }
         }));
     }
@@ -550,23 +553,8 @@
         const htmlTask = (async () => {
             let movies = await htmlLookup(query);
             if (currentRequest !== requestNumber) return;
-            if (!movies.length) {
-                try {
-                    const response = await chrome.runtime.sendMessage({
-                        action: 'fetchTitleSearchPage',
-                        payload: { url: searchPageUrl(query) }
-                    });
-                    if (response?.ok && currentRequest === requestNumber) {
-                        movies = parseSearchPage(
-                            response.page.html, response.page.url, query
-                        );
-                    } else if (!response?.ok) {
-                        errors.push(response?.error || 'HTML-вкладка не загрузилась');
-                    }
-                } catch (error) {
-                    errors.push(error.message);
-                }
-            }
+            // Не открываем служебную вкладку при вводе текста.
+            // Пустой прямой HTML-ответ оставляем пустым.
             if (currentRequest !== requestNumber) return;
             merge(movies, 'HTML');
 
