@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "КиноПомощник",
-  "version": "1.530",
+  "version": "1.531",
   "description": "Быстрый доступ к фильмам и сериалам с удобными фильтрами",
   "action": {
     "default_popup": "popup.html",
@@ -26,7 +26,9 @@
     "https://www.kinopoisk.ru/*",
     "https://graphql.kinopoisk.ru/*",
     "https://www.kinokino.vip/*",
-    "https://flcksbr.top/*"
+    "https://flcksbr.top/*",
+    "https://avatars.mds.yandex.net/*",
+    "https://st.kp.yandex.net/*"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"
