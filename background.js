@@ -431,7 +431,11 @@ function suggestRank(item, query) {
   const needle = norm(query);
   if (!needle || !title) return 0;
   if (title === needle) return 1000;
-  if (title.startsWith(needle + ' ')) return 900;
+  if (title.startsWith(needle + ' ')) {
+    const ending = title.slice(needle.length).trim();
+    const number = /^\d{1,2}$/.test(ending) ? Number(ending) : null;
+    return number !== null ? 900 - number : 850;
+  }
   if (title.startsWith(needle)) return 800;
   if (title.includes(needle)) return 600;
   const tokens = needle.split(' ').filter(word => word.length > 1);
