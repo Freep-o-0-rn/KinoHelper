@@ -4,7 +4,6 @@
   "version": "1.536",
   "description": "Быстрый доступ к фильмам и сериалам с удобными фильтрами",
   "action": {
-    "default_popup": "popup.html",
     "default_title": "КиноПомощник"
   },
   "background": {
