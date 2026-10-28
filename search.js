@@ -287,103 +287,60 @@
         return button;
     }
 
+    function updateMovieCard(movie) {
+        const title = movie._titleNode;
+        const meta = movie._metaNode;
+        if (!title || !meta) return;
+        title.textContent = movie.title;
+        title.title = movie.title;
+        const typeName = movie.type === 'series' ? 'Сериал' : 'Фильм';
+        meta.textContent = typeName + (movie.year ? ' · ' + movie.year : '');
+        if (movie.rating != null) {
+            const rating = document.createElement('span');
+            rating.className = 'title-search-rating';
+            rating.textContent = '★ ' + Number(movie.rating).toFixed(1);
+            meta.append(' · ', rating);
+        }
+    }
+
     function renderItem(movie) {
         const item = document.createElement('div');
         item.className = 'title-search-item';
 
         const poster = document.createElement('div');
         poster.className = 'title-search-poster';
-        const sources = getPosterSources(movie);
-        if (movie.posterDataUrl || sources.length) {
-            const image = document.createElement('img');
-            image.loading = 'lazy';
-            image.referrerPolicy = 'no-referrer';
-            image.alt = '';
-            let index = 0;
-            let fallbackStarted = false;
-            let failed = false;
-            async function tryProxy() {
-                if (fallbackStarted || failed) return;
-                fallbackStarted = true;
-                for (const src of sources) {
-                    if (image.isConnected === false) return;
-                    try {
-                        const response = await chrome.runtime.sendMessage({
-                            action: 'loadSearchPoster',
-                            payload: { url: src }
-                        });
-                        if (response?.ok && response.dataUrl) {
-                            movie.posterDataUrl = response.dataUrl;
-                            image.src = response.dataUrl;
-                            diagnostics.poster = 'загружен через фоновый процесс';
-                            updateDiagnostics();
-                            return;
-                        }
-                        diagnostics.poster = response?.error || 'изображение не ответило';
-                        updateDiagnostics();
-                    } catch (error) {
-                        diagnostics.poster = error.message;
-                        updateDiagnostics();
-                    }
-                }
-                failed = true;
-                image.remove();
-                diagnostics.poster = 'все адреса недоступны (ID ' + movie.id + ')';
-                updateDiagnostics();
-            }
-            image.addEventListener('error', () => {
-                if (movie.posterDataUrl) {
-                    diagnostics.poster = 'ошибка отображения изображения';
-                    updateDiagnostics();
-                    image.remove();
-                    return;
-                }
-                if (index < sources.length) failedPosters.add(sources[index]);
-                index += 1;
-                if (index < sources.length) image.src = sources[index];
-                else void tryProxy();
-            });
-            image.src = movie.posterDataUrl || sources[0];
-            poster.appendChild(image);
-        } else {
-            diagnostics.poster = 'нет URL изображения для ID ' + movie.id;
-            updateDiagnostics();
-        }
         const details = document.createElement('div');
         details.className = 'title-search-details';
         const title = document.createElement('div');
         title.className = 'title-search-title';
-        title.textContent = movie.title;
-        title.title = movie.title;
-
         const meta = document.createElement('div');
         meta.className = 'title-search-meta';
-        const typeName = movie.type === 'series' ? 'Сериал' : 'Фильм';
-        meta.textContent = typeName + (movie.year ? ' · ' + movie.year : '');
-        if (movie.rating != null) {
-            const rating = document.createElement('span');
-            rating.className = 'title-search-rating';
-            rating.textContent = '★ ' + movie.rating.toFixed(1);
-            meta.append(' · ', rating);
-        }
-        if (typeof window.historyContains === 'function' &&
-            window.historyContains(movie.watchUrl)) {
-            const watched = document.createElement('div');
-            watched.className = 'title-search-watched';
-            watched.textContent = 'Уже в истории';
-            details.append(title, meta, watched);
-        } else {
-            details.append(title, meta);
-        }
-
         const actions = document.createElement('div');
         actions.className = 'title-search-actions';
         actions.append(
             makeAction('▶ Смотреть', 'watch', movie, true),
             makeAction('Кинопоиск', 'kinopoisk', movie, false)
         );
+        details.append(title, meta);
+        if (typeof window.historyContains === 'function' &&
+            window.historyContains(movie.watchUrl)) {
+            const watched = document.createElement('div');
+            watched.className = 'title-search-watched';
+            watched.textContent = 'Уже в истории';
+            details.appendChild(watched);
+        }
         details.appendChild(actions);
         item.append(poster, details);
+        movie._posterNode = poster;
+        movie._titleNode = title;
+        movie._metaNode = meta;
+        updateMovieCard(movie);
+        if (movie.posterDataUrl) {
+            const image = document.createElement('img');
+            image.alt = '';
+            image.src = movie.posterDataUrl;
+            poster.appendChild(image);
+        }
         return item;
     }
 
@@ -392,55 +349,137 @@
         setStatus(movies.length ? 'Найдено: ' + movies.length : 'Совпадений не найдено');
     }
 
-    // Для каждого найденного ID уточняем данные непосредственно у Кинопоиска.
-    // Результаты остаются видны, пока карточки постепенно обновляются.
+    // Лимит одновременно загружаемых постеров; не перегружаем сервис.
+    let posterJobsActive = 0;
+    const posterJobQueue = [];
+    function queuePoster(task) {
+        return new Promise(resolve => {
+            posterJobQueue.push({ task, resolve });
+            pumpPosterQueue();
+        });
+    }
+    function pumpPosterQueue() {
+        while (posterJobsActive < 3 && posterJobQueue.length) {
+            const job = posterJobQueue.shift();
+            posterJobsActive++;
+            Promise.resolve().then(job.task)
+                .catch(() => {})
+                .finally(() => {
+                    posterJobsActive--;
+                    job.resolve();
+                    pumpPosterQueue();
+                });
+        }
+    }
+
+    async function loadPoster(movie, searchId) {
+        if (movie._posterLoading || movie.posterDataUrl) return;
+        movie._posterLoading = true;
+        const errors = [];
+        const current = () =>
+            searchId === requestNumber && movie._posterNode?.isConnected !== false;
+        try {
+            // Запрашиваем действительный URL страницы фильма, если
+            // поисковая выдача и метаданные его не содержали.
+            if (!movie.poster && !movie.posterFallback) {
+                try {
+                    const response = await chrome.runtime.sendMessage({
+                        action: 'findPosterOnMoviePage',
+                        payload: { id: movie.id, type: movie.type }
+                    });
+                    if (!current()) return;
+                    if (response?.ok && response.poster) {
+                        movie.poster = safePoster(response.poster, movie.kpUrl);
+                    } else {
+                        errors.push(response?.error || 'нет постера в HTML');
+                    }
+                } catch (error) {
+                    errors.push(error.message);
+                }
+            }
+            const sources = getPosterSources(movie);
+            for (const url of sources.slice(0, 6)) {
+                if (!current()) return;
+                try {
+                    const response = await chrome.runtime.sendMessage({
+                        action: 'loadSearchPoster',
+                        payload: { url }
+                    });
+                    if (!current()) return;
+                    if (!response?.ok || !response.dataUrl) {
+                        errors.push(response?.error || 'изображение не получено');
+                        continue;
+                    }
+                    movie.posterDataUrl = response.dataUrl;
+                    const image = document.createElement('img');
+                    image.alt = '';
+                    image.loading = 'lazy';
+                    image.src = response.dataUrl;
+                    movie._posterNode.replaceChildren(image);
+                    diagnostics.poster = 'загружено для «' + movie.title + '»';
+                    updateDiagnostics();
+                    return;
+                } catch (error) {
+                    errors.push(error.message);
+                }
+            }
+            if (current()) {
+                diagnostics.poster = movie.title + ': ' +
+                    [...new Set(errors)].slice(0, 3).join('; ');
+                updateDiagnostics();
+            }
+        } finally {
+            movie._posterLoading = false;
+        }
+    }
+
+    function startPosterDownloads(movies, searchId) {
+        movies.forEach(movie => {
+            if (!movie.posterDataUrl && !movie._posterLoading) {
+                void queuePoster(() => loadPoster(movie, searchId));
+            }
+        });
+    }
+
+    // После обновления данных меняем существующие DOM-узлы, не перерисовывая
+    // список: иначе картинки теряют родителя во время асинхронной загрузки.
     async function enrichResults(movies, searchId) {
-        await Promise.allSettled(movies.filter(movie => !movie._metadataLoaded).slice(0, 8).map(async movie => {
-            if (movie._metadataLoaded) return;
+        const toEnrich = movies.filter(movie => !movie._metadataLoaded).slice(0, 8);
+        await Promise.allSettled(toEnrich.map(async movie => {
             try {
                 const response = await chrome.runtime.sendMessage({
                     action: 'getSearchMovieMetadata',
                     payload: { id: movie.id, type: movie.type }
                 });
-                // Не обновляем результаты старого запроса и не помечаем
-                // карточку завершённой, если пользователь уже изменил поиск.
-                if (searchId !== requestNumber || !response?.ok) return;
-                const meta = response.metadata;
-                if (!meta) return;
-                movie._metadataLoaded = true;
-                if (meta?.title) movie.title = cleanText(meta.title);
-                if (meta?.year) movie.year = meta.year;
-                if (meta?.rating != null) movie.rating = meta.rating;
-                const officialPoster = safePoster(meta?.poster, movie.kpUrl);
-                const fallback = safePoster(meta?.posterFallback, movie.kpUrl);
-                if (officialPoster) movie.poster = officialPoster;
-                movie.posterFallback = fallback && fallback !== officialPoster ? fallback : '';
-                renderResults(movies);
-                if (!movie.poster && !movie.posterFallback && searchId === requestNumber) {
-                    try {
-                        const pagePoster = await chrome.runtime.sendMessage({
-                            action: 'findPosterOnMoviePage',
-                            payload: { id: movie.id, type: movie.type }
-                        });
-                        if (pagePoster?.ok && pagePoster.poster && searchId === requestNumber) {
-                            movie.poster = safePoster(pagePoster.poster, movie.kpUrl);
-                            renderResults(movies);
-                        } else if (searchId === requestNumber) {
-                            diagnostics.poster = pagePoster?.error || 'на странице фильма не найден постер';
-                            updateDiagnostics();
-                        }
-                    } catch (error) {
-                        diagnostics.poster = error.message;
+                if (searchId !== requestNumber) return;
+                if (!response?.ok || !response.metadata) {
+                    if (!response?.ok) {
+                        diagnostics.api = 'данные карточек: ' +
+                            (response?.error || 'запрос не удался');
                         updateDiagnostics();
                     }
+                    return;
                 }
+                const meta = response.metadata;
+                movie._metadataLoaded = true;
+                if (meta.title) movie.title = cleanText(meta.title);
+                if (meta.year) movie.year = meta.year;
+                if (meta.rating != null) movie.rating = meta.rating;
+                if (safePoster(meta.poster, movie.kpUrl)) {
+                    movie.poster = safePoster(meta.poster, movie.kpUrl);
+                }
+                if (safePoster(meta.posterFallback, movie.kpUrl)) {
+                    movie.posterFallback = safePoster(meta.posterFallback, movie.kpUrl);
+                }
+                updateMovieCard(movie);
             } catch (error) {
                 if (searchId === requestNumber) {
-                    diagnostics.poster = 'Ошибка получения данных фильма: ' + error.message;
+                    diagnostics.api = 'данные карточек: ' + error.message;
                     updateDiagnostics();
                 }
             }
         }));
+        if (searchId === requestNumber) startPosterDownloads(movies, searchId);
     }
 
     async function runSearch(query) {
