@@ -391,7 +391,8 @@
                     throw new Error(suggestions?.error || 'Недоступен поиск подсказок');
                 }
                 if (Array.isArray(suggestions.movies) && suggestions.movies.length) {
-                    const movies = suggestions.movies.slice(0, MAX_RESULTS);
+                    const movies = suggestions.movies.slice(0, MAX_RESULTS)
+                        .map(movie => ({ ...movie, _metadataLoaded: true }));
                     cache.set(query.toLocaleLowerCase(), { items: movies, savedAt: Date.now() });
                     if (cache.size > 20) cache.delete(cache.keys().next().value);
                     renderResults(movies);
