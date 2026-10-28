@@ -24,6 +24,11 @@
     </header>
 
     <div class="screen-stage">
+      <div class="kino-ambient" aria-hidden="true">
+        <span class="kino-ambient-glow first"></span>
+        <span class="kino-ambient-glow second"></span>
+        <canvas id="kinoAmbientCanvas"></canvas>
+      </div>
       <section class="screen main-screen" id="mainScreen" aria-label="Главный экран">
         <div class="screen-scroll">
           <main class="main-content">
@@ -190,5 +195,6 @@
   <script src="filters.js"></script>
   <script src="filters-ui.js"></script>
   <script src="display-mode.js"></script>
+  <script src="sidepanel-ambient.js"></script>
 </body>
 </html>
