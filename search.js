@@ -642,8 +642,8 @@
                     (b.rating || 0) - (a.rating || 0))
                 .slice(0, MAX_RESULTS);
             renderResults(sorted);
-            cache.set(cacheKey, { items: sorted, savedAt: Date.now() });
-            if (cache.size > 20) cache.delete(cache.keys().next().value);
+            // Не кэшируем промежуточную выдачу: если пользователь изменил
+            // запрос во время поиска продолжений, нельзя сохранять неполный список.
             // Показываем результаты и запускаем постеры сразу после каждой
             // новой порции, не дожидаясь всех запросов продолжений.
             void enrichResults(sorted, currentRequest);
@@ -731,6 +731,7 @@
         } else {
             // Карточки уже показаны по мере поступления результатов.
             cache.set(cacheKey, { items: movies, savedAt: Date.now() });
+            if (cache.size > 20) cache.delete(cache.keys().next().value);
             renderResults(movies);
             void saveSessionResults(cacheKey, movies);
         }
