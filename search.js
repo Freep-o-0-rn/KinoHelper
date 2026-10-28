@@ -306,14 +306,17 @@
     async function enrichResults(movies, searchId) {
         await Promise.allSettled(movies.map(async movie => {
             if (movie._metadataLoaded) return;
-            movie._metadataLoaded = true;
             try {
                 const response = await chrome.runtime.sendMessage({
                     action: 'getSearchMovieMetadata',
                     payload: { id: movie.id, type: movie.type }
                 });
+                // Не обновляем результаты старого запроса и не помечаем
+                // карточку завершённой, если пользователь уже изменил поиск.
                 if (searchId !== requestNumber || !response?.ok) return;
                 const meta = response.metadata;
+                if (!meta) return;
+                movie._metadataLoaded = true;
                 if (meta?.title) movie.title = cleanText(meta.title);
                 if (meta?.year) movie.year = meta.year;
                 if (meta?.rating != null) movie.rating = meta.rating;
