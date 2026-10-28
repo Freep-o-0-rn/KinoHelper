@@ -360,7 +360,7 @@ function convertSuggestedMovie(movie) {
 }
 
 async function fetchTitleSuggestions(keyword) {
-  return runRatingRequest(async () => {
+  {
     const response = await fetch(
       ratingGraphqlUrl('SuggestSearch'),
       {
@@ -376,7 +376,7 @@ async function fetchTitleSuggestions(keyword) {
           'x-kp-testids': '414549,436857,436979,1615440',
           'Accept': '*/*'
         },
-        signal: AbortSignal.timeout(12000)
+        signal: AbortSignal.timeout(7000)
       }
     );
     if (!response.ok) throw new Error('Поиск Кинопоиска: HTTP ' + response.status);
@@ -389,7 +389,7 @@ async function fetchTitleSuggestions(keyword) {
     const entries = [...(top.movies || []).map(item => item?.movie)];
     if (top.topResult?.global?.id) entries.unshift(top.topResult.global);
     return entries.map(convertSuggestedMovie).filter(Boolean);
-  });
+  }
 }
 
 function suggestRank(item, query) {
@@ -416,55 +416,64 @@ async function searchMovieTitles(payload) {
   const cached = titleSuggestCache.get(key);
   if (cached && Date.now() - cached.time < TITLE_SUGGEST_TTL) return cached.items;
 
-  const all = new Map();
-  const errors = [];
-  async function mergeMatches(keyword) {
-    try {
-      const movies = await fetchTitleSuggestions(keyword);
-      movies.forEach(movie => {
-        const id = movie.type + ':' + movie.id;
-        if (!all.has(id)) all.set(id, movie);
-      });
-    } catch (error) {
-      errors.push(error.message);
+  // Общее правило заголовков устанавливается один раз для всей пачки
+  // параллельных запросов, а не для каждого фильма по отдельности.
+  return runRatingRequest(async () => {
+    const all = new Map();
+    const errors = [];
+    async function mergeMatches(keyword) {
+      try {
+        const movies = await fetchTitleSuggestions(keyword);
+        movies.forEach(movie => {
+          const id = movie.type + ':' + movie.id;
+          const old = all.get(id);
+          if (!old) {
+            all.set(id, movie);
+          } else {
+            all.set(id, {
+              ...old, poster: old.poster || movie.poster,
+              posterFallback: old.posterFallback || movie.posterFallback,
+              rating: old.rating ?? movie.rating,
+              year: old.year || movie.year
+            });
+          }
+        });
+      } catch (error) {
+        errors.push(keyword + ': ' + error.message);
+      }
     }
-  }
 
-  await mergeMatches(query);
-
-  // Дополнительный запрос с укороченной фразой помогает искать серии:
-  // «Очень страшное кино» → также «Очень страшное кино 2», 3, 4 и т.д.
-  const words = query.split(/\s+/);
-  if (words.length >= 3 && all.size < 12) {
-    const variants = [
-      words.slice(0, -1).join(' '),
-      words.slice(1).join(' ')
-    ].filter(term => term.length >= 4 && term.toLowerCase() !== key);
-    for (const term of [...new Set(variants)].slice(0, 2)) {
-      await mergeMatches(term);
-      if (all.size >= TITLE_SEARCH_MAX) break;
-    }
-    // Поиск по точным названиям продолжений, не подставляя фиктивных ID.
-    // Каждая часть попадает в результат только при наличии ответа Кинопоиска.
-    if (!/\d\s*$/.test(query) && all.size < 8) {
-      for (const sequel of [2, 3, 4, 5, 6]) {
-        await mergeMatches(query + ' ' + sequel);
+    await mergeMatches(query);
+    const words = query.split(/\s+/);
+    if (words.length >= 3 && all.size < 12) {
+      const variations = [
+        words.slice(0, -1).join(' '),
+        words.slice(1).join(' ')
+      ].filter(term => term.length >= 4 && term.toLowerCase() !== key);
+      if (!/\d\s*$/.test(query)) {
+        for (const n of [2, 3, 4, 5, 6]) variations.push(query + ' ' + n);
+      }
+      // Не перегружаем API: максимум семь дополнительных запросов,
+      // три одновременно, только при недостаточной исходной выдаче.
+      const unique = [...new Set(variations)].slice(0, 7);
+      for (let i = 0; i < unique.length; i += 3) {
+        await Promise.all(unique.slice(i, i + 3).map(mergeMatches));
         if (all.size >= TITLE_SEARCH_MAX) break;
       }
     }
-  }
 
-  if (!all.size && errors.length) throw new Error(errors[0]);
-  const items = [...all.values()]
-    .sort((a, b) => suggestRank(b, query) - suggestRank(a, query) ||
-      ((b.rating || 0) - (a.rating || 0)))
-    .slice(0, TITLE_SEARCH_MAX);
+    if (!all.size && errors.length) throw new Error(errors[0]);
+    const items = [...all.values()]
+      .sort((a, b) => suggestRank(b, query) - suggestRank(a, query) ||
+        ((b.rating || 0) - (a.rating || 0)))
+      .slice(0, TITLE_SEARCH_MAX);
 
-  titleSuggestCache.set(key, { items, time: Date.now() });
-  if (titleSuggestCache.size > TITLE_SUGGEST_MAX_CACHE) {
-    titleSuggestCache.delete(titleSuggestCache.keys().next().value);
-  }
-  return items;
+    titleSuggestCache.set(key, { items, time: Date.now() });
+    if (titleSuggestCache.size > TITLE_SUGGEST_MAX_CACHE) {
+      titleSuggestCache.delete(titleSuggestCache.keys().next().value);
+    }
+    return items;
+  });
 }
 
 const searchMetadataCache = new Map();
