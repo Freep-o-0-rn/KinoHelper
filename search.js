@@ -6,7 +6,7 @@
     const WATCH_ORIGIN = 'https://www.kinokino.vip';
     const SEARCH_DELAY = 450;
     const MIN_QUERY_LENGTH = 2;
-    const MAX_RESULTS = 10;
+    const MAX_RESULTS = 30;
     const CACHE_LIFETIME = 2 * 60 * 1000;
     const cache = new Map();
 
@@ -65,6 +65,35 @@
         } catch {
             return '';
         }
+    }
+
+    // У Яндекс.Аватаров GraphQL иногда возвращает URL без суффикса размера.
+    // Для <img> нужен /280x420 (либо /orig). Проверяем несколько вариантов.
+    const failedPosters = new Set();
+    function getPosterSources(movie) {
+        const urls = [];
+        const add = raw => {
+            const normalized = safePoster(raw, movie.kpUrl);
+            if (!normalized) return;
+            const url = new URL(normalized);
+            const pathname = url.pathname.replace(/\/+$/, '');
+            const isAvatar = url.hostname === 'avatars.mds.yandex.net' &&
+                /^\/get-[^/]+\/[^/]+\/[^/]+/.test(pathname);
+            if (isAvatar) {
+                const isSized = /\/(?:orig|\d+x\d+)$/i.test(pathname);
+                const base = isSized ? pathname.replace(/\/(?:orig|\d+x\d+)$/i, '') : pathname;
+                // Маленькие изображения лучше для компактного popup.
+                for (const size of ['280x420', '300x450', 'orig']) {
+                    const candidate = url.origin + base + '/' + size;
+                    if (!urls.includes(candidate)) urls.push(candidate);
+                }
+            } else if (!urls.includes(url.href)) {
+                urls.push(url.href);
+            }
+        };
+        add(movie.poster);
+        add(movie.posterFallback);
+        return urls.filter(url => !failedPosters.has(url));
     }
 
     function extractPoster(card, baseUrl) {
@@ -243,19 +272,23 @@
 
         const poster = document.createElement('div');
         poster.className = 'title-search-poster';
-        if (movie.poster) {
+        const sources = getPosterSources(movie);
+        if (sources.length) {
             const image = document.createElement('img');
-            image.src = movie.poster;
             image.loading = 'lazy';
             image.referrerPolicy = 'no-referrer';
             image.alt = '';
+            let index = 0;
             image.addEventListener('error', () => {
-                if (movie.posterFallback && image.src !== movie.posterFallback) {
-                    image.src = movie.posterFallback;
+                failedPosters.add(sources[index]);
+                index += 1;
+                if (index < sources.length) {
+                    image.src = sources[index];
                 } else {
                     image.remove();
                 }
             });
+            image.src = sources[0];
             poster.appendChild(image);
         }
         const details = document.createElement('div');
@@ -346,6 +379,29 @@
         const abort = new AbortController();
         controller = abort;
         try {
+            // Основной источник: несколько реальных совпадений из подсказок
+            // Кинопоиска с названием, рейтингом, годом и постером.
+            try {
+                const suggestions = await chrome.runtime.sendMessage({
+                    action: 'searchMovieTitles',
+                    payload: { query }
+                });
+                if (currentRequest !== requestNumber) return;
+                if (!suggestions?.ok) {
+                    throw new Error(suggestions?.error || 'Недоступен поиск подсказок');
+                }
+                if (Array.isArray(suggestions.movies) && suggestions.movies.length) {
+                    const movies = suggestions.movies.slice(0, MAX_RESULTS);
+                    cache.set(query.toLocaleLowerCase(), { items: movies, savedAt: Date.now() });
+                    if (cache.size > 20) cache.delete(cache.keys().next().value);
+                    renderResults(movies);
+                    return;
+                }
+            } catch (error) {
+                if (currentRequest !== requestNumber) return;
+                console.warn('[KinoHelper search] Поиск подсказок недоступен, используем HTML:', error.message);
+            }
+
             let movies = null;
             let fetchError = null;
 
