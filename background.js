@@ -248,6 +248,71 @@ function getMoviePreviewMeta(movie) {
   };
 }
 
+// Публичные данные для карточек поиска. Берём по ID из того же GraphQL,
+// который уже используется для оценки, а не из ссылок «Актеры» поисковой выдачи.
+const searchMetadataCache = new Map();
+const SEARCH_META_TTL_MS = 30 * 60 * 1000;
+const SEARCH_META_MAX_CACHE = 100;
+
+async function getSearchMovieMetadata(payload) {
+  const media = normalizeMediaPayload(payload);
+  const key = media.type + ':' + media.id;
+  const cached = searchMetadataCache.get(key);
+  if (cached && Date.now() - cached.time < SEARCH_META_TTL_MS) {
+    return cached.data;
+  }
+
+  const data = await runRatingRequest(async () => {
+    const response = await fetch(
+      ratingGraphqlUrl("MoviePreviewCard"),
+      {
+        ...ratingRequestOptions(
+          "MoviePreviewCard",
+          { movieId: media.id, actorsLimit: 0, withUserData: false },
+          MOVIE_PREVIEW_CARD_QUERY
+        ),
+        signal: AbortSignal.timeout(12000)
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error("Кинопоиск вернул HTTP " + response.status);
+    }
+
+    const result = await response.json();
+    const movie = result?.data?.movie;
+    if (!movie || result?.errors?.length) {
+      throw new Error("Не удалось получить карточку фильма");
+    }
+
+    const title = String(movie.title?.russian || movie.title?.original || "")
+      .replace(/\s+/g, " ").trim();
+
+    const yearValue = Number(movie.productionYear ?? movie.releaseYears?.start);
+    const year = Number.isInteger(yearValue) && yearValue >= 1880 && yearValue <= 2200
+      ? yearValue : null;
+    const ratingValue = Number(movie.rating?.kinopoisk?.value);
+    const rating = Number.isFinite(ratingValue) && ratingValue > 0 && ratingValue <= 10
+      ? ratingValue : null;
+
+    return {
+      title: title || null,
+      year,
+      rating,
+      // Поля уже присутствуют в MOVIE_PREVIEW_CARD_QUERY.
+      poster: movie.poster?.avatarsUrl || movie.poster?.fallbackUrl || null
+    };
+  });
+
+  if (data.title || data.poster) {
+    searchMetadataCache.set(key, { data, time: Date.now() });
+    if (searchMetadataCache.size > SEARCH_META_MAX_CACHE) {
+      searchMetadataCache.delete(searchMetadataCache.keys().next().value);
+    }
+  }
+  return data;
+}
+
 async function getMovieRating(payload) {
   const media = normalizeMediaPayload(payload);
 
@@ -1028,6 +1093,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "endWatchSession") {
     clearSession(message.tabId)
       .then(() => sendResponse({ ok: true }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.action === "getSearchMovieMetadata") {
+    getSearchMovieMetadata(message.payload)
+      .then(metadata => sendResponse({ ok: true, metadata }))
       .catch(error => sendResponse({ ok: false, error: error.message }));
     return true;
   }
