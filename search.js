@@ -482,6 +482,8 @@
             if (current()) {
                 diagnostics.poster = movie.title + ': ' +
                     [...new Set(errors)].slice(0, 3).join('; ');
+                console.warn('[KinoHelper search] Постер не загружен:',
+                    movie.id, diagnostics.poster);
                 updateDiagnostics();
             }
         } finally {
@@ -526,6 +528,8 @@
                     if (!response?.ok) {
                         diagnostics.api = 'данные карточек: ' +
                             (response?.error || 'запрос не удался');
+                        console.warn('[KinoHelper search] Метаданные недоступны:',
+                            movie.id, diagnostics.api);
                         updateDiagnostics();
                     }
                     return;
