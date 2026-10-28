@@ -292,6 +292,38 @@ const TITLE_SUGGEST_TTL = 2 * 60 * 1000;
 const TITLE_SUGGEST_MAX_CACHE = 30;
 const TITLE_SEARCH_MAX = 30;
 
+async function findPosterOnMoviePage(payload) {
+  const media = normalizeMediaPayload(payload);
+  const address = KINOPOISK_BASE + '/' + media.type + '/' + media.id + '/';
+  const response = await fetch(address, {
+    credentials: 'include', signal: AbortSignal.timeout(9000)
+  });
+  if (!response.ok) throw new Error('Страница фильма: HTTP ' + response.status);
+  const html = await response.text();
+  const tags = html.match(/<meta\b[^>]+>/gi) || [];
+  const attributes = tag => {
+    const attrs = {};
+    for (const m of tag.matchAll(/([\w-]+)\s*=\s*(["'])(.*?)\2/g)) {
+      attrs[m[1].toLowerCase()] = m[3].replace(/&amp;/g, '&');
+    }
+    return attrs;
+  };
+  for (const tag of tags) {
+    const a = attributes(tag);
+    if (['og:image', 'twitter:image'].includes(a.property || a.name)) {
+      const value = String(a.content || '');
+      try {
+        const img = new URL(value, address);
+        if (img.protocol === 'https:' &&
+            ['avatars.mds.yandex.net', 'st.kp.yandex.net'].includes(img.hostname)) {
+          return { poster: img.href };
+        }
+      } catch {}
+    }
+  }
+  return { poster: null };
+}
+
 const imageDataCache = new Map();
 const IMAGE_CACHE_MAX = 40;
 async function loadSearchPoster(payload) {
@@ -1324,6 +1356,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "endWatchSession") {
     clearSession(message.tabId)
       .then(() => sendResponse({ ok: true }))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.action === "findPosterOnMoviePage") {
+    findPosterOnMoviePage(message.payload)
+      .then(details => sendResponse({ ok: true, ...details }))
       .catch(error => sendResponse({ ok: false, error: error.message }));
     return true;
   }
