@@ -412,90 +412,178 @@
         resultsBox.hidden = false;
         itemsBox.replaceChildren();
         setStatus('Ищем фильмы и сериалы…');
+        diagnostics.source = '';
+        diagnostics.api = '';
+        diagnostics.poster = '';
+        updateDiagnostics();
         openSearchButton.href = searchPageUrl(query);
-        const cached = cache.get(query.toLocaleLowerCase());
+
+        const cacheKey = query.toLocaleLowerCase('ru');
+        const cached = cache.get(cacheKey);
         if (cached && Date.now() - cached.savedAt < CACHE_LIFETIME) {
+            diagnostics.source = 'кэш';
+            updateDiagnostics();
             renderResults(cached.items);
-            void enrichResults(cached.items, currentRequest);
+            void enrichResults(cached.items.slice(0, 8), currentRequest);
             return;
         }
+
         const abort = new AbortController();
         controller = abort;
-        try {
-            // Основной источник: несколько реальных совпадений из подсказок
-            // Кинопоиска с названием, рейтингом, годом и постером.
+        const results = new Map();
+        const sources = new Set();
+        const errors = [];
+        const normalize = value => cleanText(value).toLocaleLowerCase('ru')
+            .replace(/ё/g, 'е').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+        const needle = normalize(query);
+
+        function rank(movie) {
+            const title = normalize(movie.title);
+            if (title === needle) return 1000;
+            if (title.startsWith(needle + ' ')) return 900;
+            if (title.startsWith(needle)) return 800;
+            if (title.includes(needle)) return 600;
+            const words = needle.split(' ').filter(word => word.length > 1);
+            return words.length
+                ? 400 * words.filter(word => title.includes(word)).length / words.length
+                : 0;
+        }
+
+        function merge(items, source) {
+            if (currentRequest !== requestNumber || !Array.isArray(items)) return;
+            for (const movie of items) {
+                if (!movie || !movie.id || !['film', 'series'].includes(movie.type)) continue;
+                const key = movie.type + ':' + movie.id;
+                const prev = results.get(key);
+                if (!prev) {
+                    results.set(key, { ...movie });
+                } else {
+                    results.set(key, {
+                        ...prev,
+                        ...(movie.title && !/^(?:фильм|сериал) №/i.test(movie.title) ?
+                            { title: movie.title } : {}),
+                        year: movie.year || prev.year,
+                        rating: movie.rating ?? prev.rating,
+                        poster: movie.poster || prev.poster,
+                        posterFallback: movie.posterFallback || prev.posterFallback,
+                        _metadataLoaded: Boolean(movie._metadataLoaded || prev._metadataLoaded),
+                        posterDataUrl: prev.posterDataUrl
+                    });
+                }
+            }
+            if (items.length) sources.add(source);
+            diagnostics.source = [...sources].join(' + ') || 'нет результатов';
+            updateDiagnostics();
+            const sorted = [...results.values()]
+                .sort((a, b) => rank(b) - rank(a) ||
+                    (b.rating || 0) - (a.rating || 0))
+                .slice(0, MAX_RESULTS);
+            renderResults(sorted);
+            if (sorted.length) {
+                cache.set(cacheKey, { items: sorted, savedAt: Date.now() });
+                if (cache.size > 20) cache.delete(cache.keys().next().value);
+            }
+        }
+
+        async function htmlLookup(text) {
+            if (abort.signal.aborted || currentRequest !== requestNumber) return [];
             try {
-                const suggestions = await chrome.runtime.sendMessage({
+                const response = await fetch(searchPageUrl(text), {
+                    credentials: 'include',
+                    signal: abort.signal
+                });
+                if (!response.ok) throw new Error('HTML: HTTP ' + response.status);
+                const html = await response.text();
+                return parseSearchPage(html, response.url, text);
+            } catch (error) {
+                if (error.name !== 'AbortError') errors.push(error.message);
+                return [];
+            }
+        }
+
+        const graphqlTask = (async () => {
+            try {
+                const response = await chrome.runtime.sendMessage({
                     action: 'searchMovieTitles',
                     payload: { query }
                 });
                 if (currentRequest !== requestNumber) return;
-                if (!suggestions?.ok) {
-                    throw new Error(suggestions?.error || 'Недоступен поиск подсказок');
-                }
-                if (Array.isArray(suggestions.movies) && suggestions.movies.length) {
-                    const movies = suggestions.movies.slice(0, MAX_RESULTS)
-                        .map(movie => ({ ...movie, _metadataLoaded: true }));
-                    cache.set(query.toLocaleLowerCase(), { items: movies, savedAt: Date.now() });
-                    if (cache.size > 20) cache.delete(cache.keys().next().value);
-                    renderResults(movies);
-                    return;
-                }
-            } catch (error) {
-                if (currentRequest !== requestNumber) return;
-                console.warn('[KinoHelper search] Поиск подсказок недоступен, используем HTML:', error.message);
-            }
-
-            let movies = null;
-            let fetchError = null;
-
-            // Быстрый путь: читаем HTML без открытия дополнительных вкладок.
-            try {
-                const response = await fetch(searchPageUrl(query), {
-                    credentials: 'include',
-                    signal: abort.signal
-                });
-                if (!response.ok) throw new Error('Кинопоиск вернул HTTP ' + response.status);
-                const html = await response.text();
-                if (currentRequest !== requestNumber) return;
-                const directResults = parseSearchPage(html, response.url, query);
-                if (directResults.length) movies = directResults;
-            } catch (error) {
-                if (error.name === 'AbortError') return;
-                fetchError = error;
-            }
-
-            if (currentRequest !== requestNumber) return;
-            if (!movies) {
-                // Для страниц, где результаты создаёт JavaScript, читаем DOM в
-                // кратковременной фоновой вкладке. Вкладка закрывается автоматически.
-                const response = await chrome.runtime.sendMessage({
-                    action: 'fetchTitleSearchPage',
-                    payload: { url: searchPageUrl(query) }
-                });
-                if (currentRequest !== requestNumber) return;
                 if (!response?.ok) {
-                    throw new Error(response?.error || fetchError?.message ||
-                        'Не удалось загрузить результаты Кинопоиска');
+                    throw new Error(response?.error || 'сервис не ответил');
                 }
-                movies = parseSearchPage(response.page.html, response.page.url, query);
-                if (!movies.length &&
-                    !/search_results|searchResults|search-results|Ничего не найдено|не найдено/i.test(response.page.html)) {
-                    throw new Error('Кинопоиск не предоставил список фильмов');
+                const movies = Array.isArray(response.movies) ? response.movies : [];
+                diagnostics.api = 'получено ' + movies.length;
+                updateDiagnostics();
+                merge(movies.map(movie => ({
+                    ...movie,
+                    _metadataLoaded: Boolean(movie.title && movie.poster && movie.rating != null)
+                })), 'GraphQL');
+            } catch (error) {
+                if (currentRequest !== requestNumber) return;
+                diagnostics.api = 'ошибка: ' + error.message;
+                updateDiagnostics();
+                errors.push(error.message);
+            }
+        })();
+
+        const htmlTask = (async () => {
+            let movies = await htmlLookup(query);
+            if (currentRequest !== requestNumber) return;
+            if (!movies.length) {
+                try {
+                    const response = await chrome.runtime.sendMessage({
+                        action: 'fetchTitleSearchPage',
+                        payload: { url: searchPageUrl(query) }
+                    });
+                    if (response?.ok && currentRequest === requestNumber) {
+                        movies = parseSearchPage(
+                            response.page.html, response.page.url, query
+                        );
+                    } else if (!response?.ok) {
+                        errors.push(response?.error || 'HTML-вкладка не загрузилась');
+                    }
+                } catch (error) {
+                    errors.push(error.message);
                 }
             }
+            if (currentRequest !== requestNumber) return;
+            merge(movies, 'HTML');
 
-            cache.set(query.toLocaleLowerCase(), { items: movies, savedAt: Date.now() });
-            if (cache.size > 20) cache.delete(cache.keys().next().value);
+            // При малом числе совпадений проверяем реальные страницы поиска
+            // продолжений, а не создаём вымышленные фильмы или ID.
+            if (results.size < 6 && query.split(/\s+/).length >= 2 &&
+                !/\d\s*$/.test(query)) {
+                const variants = [2, 3, 4, 5, 6].map(i => query + ' ' + i);
+                // Три одновременных запроса без постоянных фоновых вкладок.
+                for (let i = 0; i < variants.length; i += 3) {
+                    const batches = await Promise.all(
+                        variants.slice(i, i + 3).map(htmlLookup)
+                    );
+                    if (currentRequest !== requestNumber) return;
+                    for (const entries of batches) merge(entries, 'HTML-продолжения');
+                    if (results.size >= 10) break;
+                }
+            }
+        })();
+
+        await Promise.allSettled([graphqlTask, htmlTask]);
+        if (currentRequest !== requestNumber) return;
+        const movies = [...results.values()]
+            .sort((a, b) => rank(b) - rank(a) ||
+                (b.rating || 0) - (a.rating || 0))
+            .slice(0, MAX_RESULTS);
+
+        if (!movies.length) {
+            setStatus(errors.length
+                ? 'Не удалось получить результаты: ' + errors[0]
+                : 'Совпадений не найдено', Boolean(errors.length));
+        } else {
+            cache.set(cacheKey, { items: movies, savedAt: Date.now() });
             renderResults(movies);
-            void enrichResults(movies, currentRequest);
-        } catch (error) {
-            if (currentRequest !== requestNumber || error.name === 'AbortError') return;
-            itemsBox.replaceChildren();
-            setStatus('Поиск недоступен: ' + error.message, true);
-        } finally {
-            if (currentRequest === requestNumber) controller = null;
+            void enrichResults(movies.filter(movie =>
+                !movie._metadataLoaded).slice(0, 8), currentRequest);
         }
+        if (currentRequest === requestNumber) controller = null;
     }
 
     function handleInput() {
