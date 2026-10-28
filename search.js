@@ -414,7 +414,7 @@
                 if (officialPoster) movie.poster = officialPoster;
                 movie.posterFallback = fallback && fallback !== officialPoster ? fallback : '';
                 renderResults(movies);
-                if (!getPosterSources(movie).length && searchId === requestNumber) {
+                if (!movie.poster && !movie.posterFallback && searchId === requestNumber) {
                     try {
                         const pagePoster = await chrome.runtime.sendMessage({
                             action: 'findPosterOnMoviePage',
@@ -424,7 +424,7 @@
                             movie.poster = safePoster(pagePoster.poster, movie.kpUrl);
                             renderResults(movies);
                         } else if (searchId === requestNumber) {
-                            diagnostics.poster = pagePoster?.error || 'Страница фильма не содержит og:image';
+                            diagnostics.poster = pagePoster?.error || 'на странице фильма не найден постер';
                             updateDiagnostics();
                         }
                     } catch (error) {
