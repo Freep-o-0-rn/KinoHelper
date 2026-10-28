@@ -4,7 +4,7 @@
 
     const SEARCH_URL = 'https://www.kinopoisk.ru/index.php?kp_query=';
     const WATCH_ORIGIN = 'https://www.kinokino.vip';
-    const SEARCH_DELAY = 450;
+    const SEARCH_DELAY = 350;
     const MIN_QUERY_LENGTH = 2;
     const MAX_RESULTS = 30;
     const CACHE_LIFETIME = 2 * 60 * 1000;
@@ -306,6 +306,7 @@
     function renderItem(movie) {
         const item = document.createElement('div');
         item.className = 'title-search-item';
+        movie._cardNode = item;
 
         const poster = document.createElement('div');
         poster.className = 'title-search-poster';
@@ -345,7 +346,18 @@
     }
 
     function renderResults(movies) {
-        itemsBox.replaceChildren(...movies.map(renderItem));
+        // Повторно используем DOM карточек, чтобы не сбрасывать постеры
+        // во время появления новых результатов из параллельного поиска.
+        const nodes = movies.map(movie => {
+            if (movie._cardNode) {
+                updateMovieCard(movie);
+                return movie._cardNode;
+            }
+            return renderItem(movie);
+        });
+        const orderChanged = nodes.length !== itemsBox.children.length ||
+            nodes.some((node, index) => itemsBox.children[index] !== node);
+        if (orderChanged) itemsBox.replaceChildren(...nodes);
         setStatus(movies.length ? 'Найдено: ' + movies.length : 'Совпадений не найдено');
     }
 
@@ -452,7 +464,13 @@
         // Картинки начинаем получать сразу, не дожидаясь очереди GraphQL
         // для заголовков и рейтингов остальных фильмов.
         startPosterDownloads(movies, searchId);
-        const toEnrich = movies.filter(movie => !movie._metadataLoaded).slice(0, 8);
+        const toEnrich = movies.filter(movie =>
+            !movie._metadataLoaded && !movie._metadataQueued &&
+            (movie._metadataAttempts || 0) < 1).slice(0, 8);
+        toEnrich.forEach(movie => {
+            movie._metadataQueued = true;
+            movie._metadataAttempts = (movie._metadataAttempts || 0) + 1;
+        });
         await Promise.allSettled(toEnrich.map(async movie => {
             try {
                 const response = await chrome.runtime.sendMessage({
@@ -485,9 +503,10 @@
                     diagnostics.api = 'данные карточек: ' + error.message;
                     updateDiagnostics();
                 }
+            } finally {
+                movie._metadataQueued = false;
             }
         }));
-        if (searchId === requestNumber) startPosterDownloads(movies, searchId);
     }
 
     async function runSearch(query) {
@@ -537,27 +556,32 @@
 
         function merge(items, source) {
             if (currentRequest !== requestNumber || !Array.isArray(items)) return;
+            let changed = false;
             for (const movie of items) {
                 if (!movie || !movie.id || !['film', 'series'].includes(movie.type)) continue;
                 const key = movie.type + ':' + movie.id;
                 const prev = results.get(key);
                 if (!prev) {
                     results.set(key, { ...movie });
+                    changed = true;
                 } else {
-                    results.set(key, {
-                        ...prev,
-                        ...(movie.title && !/^(?:фильм|сериал) №/i.test(movie.title) ?
-                            { title: movie.title } : {}),
-                        year: movie.year || prev.year,
-                        rating: movie.rating ?? prev.rating,
-                        poster: movie.poster || prev.poster,
-                        posterFallback: movie.posterFallback || prev.posterFallback,
-                        _metadataLoaded: Boolean(movie._metadataLoaded || prev._metadataLoaded),
-                        posterDataUrl: prev.posterDataUrl
-                    });
+                    // Сохраняем ссылку на объект и DOM существующей карточки.
+                    // Кнопки просмотра, постер и загрузка по ID остаются прежними.
+                    const isValidTitle = movie.title &&
+                        !/^(?:фильм|сериал) №/i.test(movie.title);
+                    if (isValidTitle && (!prev.title ||
+                        /^(?:фильм|сериал) №/i.test(prev.title))) {
+                        prev.title = movie.title;
+                    }
+                    prev.year ||= movie.year;
+                    prev.rating ??= movie.rating;
+                    prev.poster ||= movie.poster;
+                    prev.posterFallback ||= movie.posterFallback;
+                    changed = true;
                 }
             }
             if (items.length) sources.add(source);
+            if (!changed) return;
             diagnostics.source = [...sources].join(' + ') || 'нет результатов';
             updateDiagnostics();
             const sorted = [...results.values()]
@@ -565,10 +589,11 @@
                     (b.rating || 0) - (a.rating || 0))
                 .slice(0, MAX_RESULTS);
             renderResults(sorted);
-            if (sorted.length) {
-                cache.set(cacheKey, { items: sorted, savedAt: Date.now() });
-                if (cache.size > 20) cache.delete(cache.keys().next().value);
-            }
+            cache.set(cacheKey, { items: sorted, savedAt: Date.now() });
+            if (cache.size > 20) cache.delete(cache.keys().next().value);
+            // Показываем результаты и запускаем постеры сразу после каждой
+            // новой порции, не дожидаясь всех запросов продолжений.
+            void enrichResults(sorted, currentRequest);
         }
 
         async function htmlLookup(text) {
@@ -615,20 +640,27 @@
                 if (query.split(/\s+/).length === 1) {
                     variants.push('Двойной ' + query, 'Тройной ' + query);
                 }
-                for (let i = 0; i < variants.length; i += 3) {
-                    const batches = await Promise.all(
-                        variants.slice(i, i + 3).map(htmlLookup)
-                    );
-                    if (currentRequest !== requestNumber) return;
-                    for (const entries of batches) {
-                        // Не засоряем список посторонними фильмами,
-                        // которые Кинопоиск предложил как похожие.
-                        merge(entries.filter(movie =>
-                            normalize(movie.title).includes(needle)
-                        ), 'HTML-продолжения');
+                // До пяти сетевых запросов одновременно. Первые завершившиеся
+                // сразу пополняют выдачу, не ожидая медленные ответы других.
+                let cursor = 0;
+                const workers = Array.from(
+                    { length: Math.min(5, variants.length) },
+                    async () => {
+                        while (cursor < variants.length &&
+                            currentRequest === requestNumber &&
+                            !abort.signal.aborted && results.size < 18) {
+                            const variant = variants[cursor++];
+                            const entries = await htmlLookup(variant);
+                            if (currentRequest !== requestNumber) return;
+                            // Продолжения должны содержать исходную строку
+                            // в названии, а ID подтверждается Кинопоиском.
+                            merge(entries.filter(movie =>
+                                normalize(movie.title).includes(needle)
+                            ), 'HTML-продолжения');
+                        }
                     }
-                    if (results.size >= 18) break;
-                }
+                );
+                await Promise.allSettled(workers);
             }
         })();
 
@@ -644,9 +676,9 @@
                 ? 'Не удалось получить результаты: ' + errors[0]
                 : 'Совпадений не найдено', Boolean(errors.length));
         } else {
+            // Карточки уже показаны по мере поступления результатов.
             cache.set(cacheKey, { items: movies, savedAt: Date.now() });
             renderResults(movies);
-            void enrichResults(movies, currentRequest);
         }
         if (currentRequest === requestNumber) controller = null;
     }
