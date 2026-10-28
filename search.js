@@ -458,7 +458,10 @@
         function rank(movie) {
             const title = normalize(movie.title);
             if (title === needle) return 1000;
-            if (title.startsWith(needle + ' ')) return 900;
+            if (title.startsWith(needle + ' ')) {
+                const ending = title.slice(needle.length).trim();
+                return /^\d{1,2}$/.test(ending) ? 900 - Number(ending) : 850;
+            }
             if (title.startsWith(needle)) return 800;
             if (title.includes(needle)) return 600;
             const words = needle.split(' ').filter(word => word.length > 1);
