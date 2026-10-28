@@ -401,6 +401,24 @@
                 if (officialPoster) movie.poster = officialPoster;
                 movie.posterFallback = fallback && fallback !== officialPoster ? fallback : '';
                 renderResults(movies);
+                if (!getPosterSources(movie).length && searchId === requestNumber) {
+                    try {
+                        const pagePoster = await chrome.runtime.sendMessage({
+                            action: 'findPosterOnMoviePage',
+                            payload: { id: movie.id, type: movie.type }
+                        });
+                        if (pagePoster?.ok && pagePoster.poster && searchId === requestNumber) {
+                            movie.poster = safePoster(pagePoster.poster, movie.kpUrl);
+                            renderResults(movies);
+                        } else if (searchId === requestNumber) {
+                            diagnostics.poster = pagePoster?.error || 'нет изображения в метаданных фильма';
+                            updateDiagnostics();
+                        }
+                    } catch (error) {
+                        diagnostics.poster = error.message;
+                        updateDiagnostics();
+                    }
+                }
             } catch {
                 // DOM-заголовок/постер остаётся запасным вариантом.
             }
