@@ -44,12 +44,6 @@ const MOVIE_PREVIEW_CARD_QUERY = `
       }
       rating { kinopoisk { value isActive count __typename } __typename }
       poster { avatarsUrl fallbackUrl __typename }
-      gallery {
-        posters {
-          kpVertical: vertical { avatarsUrl fallbackUrl }
-          hdVertical: vertical(override: OTT_WHEN_EXISTS) { avatarsUrl fallbackUrl }
-        }
-      }
       ...MoviePreviewUserData @include(if: $withUserData)
       __typename
     }
@@ -64,6 +58,19 @@ const MOVIE_PREVIEW_CARD_QUERY = `
     __typename
   }
 `;
+
+// Оценки используют проверенную схему v1.527 без полей постеров.
+// Расширенные поля применяются только при загрузке карточек поиска.
+const MOVIE_SEARCH_METADATA_QUERY = MOVIE_PREVIEW_CARD_QUERY.replace(
+  "      ...MoviePreviewUserData @include(if: $withUserData)",
+  `      gallery {
+        posters {
+          kpVertical: vertical { avatarsUrl fallbackUrl }
+          hdVertical: vertical(override: OTT_WHEN_EXISTS) { avatarsUrl fallbackUrl }
+        }
+      }
+      ...MoviePreviewUserData @include(if: $withUserData)`
+);
 
 // Запрос подсказок Кинопоиска возвращает несколько фильмов вместе с
 // корректными постерами, годом и рейтингом без поиска ссылок в DOM.
@@ -574,27 +581,35 @@ async function getSearchMovieMetadata(payload) {
   }
 
   const data = await runRatingRequest(async () => {
-    const response = await fetch(
-      ratingGraphqlUrl("MoviePreviewCard"),
-      {
-        ...ratingRequestOptions(
-          "MoviePreviewCard",
-          { movieId: media.id, actorsLimit: 0, withUserData: false },
-          MOVIE_PREVIEW_CARD_QUERY
-        ),
-        signal: AbortSignal.timeout(12000)
+    const fetchMetadata = async query => {
+      const response = await fetch(
+        ratingGraphqlUrl("MoviePreviewCard"),
+        {
+          ...ratingRequestOptions(
+            "MoviePreviewCard",
+            { movieId: media.id, actorsLimit: 0, withUserData: false },
+            query
+          ),
+          signal: AbortSignal.timeout(12000)
+        }
+      );
+      if (!response.ok) throw new Error("Кинопоиск вернул HTTP " + response.status);
+      const result = await response.json();
+      if (result?.errors?.length) {
+        throw new Error(result.errors.map(error => error.message).filter(Boolean).join("; ") || "Ошибка GraphQL");
       }
-    );
+      return result?.data?.movie;
+    };
 
-    if (!response.ok) {
-      throw new Error("Кинопоиск вернул HTTP " + response.status);
+    // Если расширенные поля gallery недоступны, используем базовый запрос.
+    let movie;
+    try {
+      movie = await fetchMetadata(MOVIE_SEARCH_METADATA_QUERY);
+    } catch (error) {
+      console.warn("[KinoHelper] Дополнительные поля постера недоступны:", error.message);
+      movie = await fetchMetadata(MOVIE_PREVIEW_CARD_QUERY);
     }
-
-    const result = await response.json();
-    const movie = result?.data?.movie;
-    if (!movie || result?.errors?.length) {
-      throw new Error("Не удалось получить карточку фильма");
-    }
+    if (!movie) throw new Error("Не удалось получить карточку фильма");
 
     const title = String(movie.title?.russian || movie.title?.original || "")
       .replace(/\s+/g, " ").trim();
