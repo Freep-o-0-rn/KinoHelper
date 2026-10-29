@@ -324,7 +324,8 @@ async function showRatingCard(media) {
     if (sequence !== ratingLoadSequence || currentRatingContext !== context) return null;
 
     if (!response?.ok) {
-        setRatingStatus('Не удалось загрузить оценку. Проверьте авторизацию на Кинопоиске', 'error');
+        const reason = String(response?.error || '').trim().slice(0, 180);
+        setRatingStatus(reason ? `Не удалось загрузить оценку: ${reason}` : 'Не удалось загрузить оценку. Попробуйте ещё раз', 'error');
         setRatingButtonsDisabled(false);
         return response || null;
     }
