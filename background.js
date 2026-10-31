@@ -1616,8 +1616,12 @@ async function saveResumeProgress(payload, sender) {
       !Array.isArray(store[RESUME_STORAGE_KEY])
       ? { ...store[RESUME_STORAGE_KEY] } : {};
     const older = entries[key];
-    const completed = item.event === 'ended' &&
+    const completedAtEnd = item.event === 'ended' &&
       item.played >= 30 && item.position >= item.duration - 5;
+    // After the ended event, pause/pagehide must not resurrect the same film.
+    // A verified restart near the beginning allows an intentional rewatch.
+    const completed = completedAtEnd ||
+      Boolean(older?.completed && item.position >= item.duration * 0.1);
 
     // If playback restarted from the beginning after completion, a new
     // verified session creates a fresh unfinished entry.
@@ -1713,8 +1717,20 @@ chrome.permissions.onRemoved.addListener(permissions => {
     void scheduleResumeRegistration();
   }
 });
-chrome.runtime.onInstalled.addListener(() => { void scheduleResumeRegistration(); });
-chrome.runtime.onStartup.addListener(() => { void scheduleResumeRegistration(); });
+async function registerAndInjectResume() {
+  const granted = await scheduleResumeRegistration();
+  if (granted) await injectResumeIntoOpenTabs();
+}
+chrome.runtime.onInstalled.addListener(() => {
+  void registerAndInjectResume().catch(error =>
+    console.warn('[KinoHelper] Не удалось подключить плееры после обновления:', error));
+});
+chrome.runtime.onStartup.addListener(() => {
+  void registerAndInjectResume().catch(error =>
+    console.warn('[KinoHelper] Не удалось подключить плееры после запуска:', error));
+});
+// Also register on service-worker wake; injection into already running tabs
+// happens on install, startup, and first-time permission grant.
 void scheduleResumeRegistration();
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
