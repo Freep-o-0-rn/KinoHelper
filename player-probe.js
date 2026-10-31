@@ -105,6 +105,7 @@
         });
         for (const release of cleaners) release();
         return {
+            pageVisibility: document.visibilityState || 'неизвестно',
             iframeCount: document.querySelectorAll('iframe').length,
             videos: records.map(v => {
                 const movement = v.min != null && v.max != null
@@ -192,13 +193,18 @@
 
         for (const frame of successes) {
             lines.push('Фрейм ' + frame.id + ' (' + frame.host + ')');
+            lines.push('  Видимость фрейма: ' + (frame.pageVisibility || 'неизвестно'));
             if (!frame.videos.length) {
                 lines.push('  Видео не найдено · вложенных iframe: ' + frame.iframeCount);
             }
             for (const video of frame.videos) {
                 const valid = video.readyState >= 2 && video.duration >= 60;
+                const confirmed = valid && video.movement >= 1 &&
+                    video.everPlaying && video.timeupdates > 0 &&
+                    video.seekingEvents === 0;
                 const status = !valid ? 'не готов/неактивен' :
-                    video.movement >= 1 ? 'изменение подтверждено' :
+                    confirmed ? 'воспроизведение подтверждено' :
+                    video.movement >= 1 ? 'время менялось, но воспроизведение не подтверждено' :
                     video.paused && !video.everPlaying ? 'пауза весь замер' :
                     'время НЕ изменилось';
                 lines.push('  Видео ' + (video.index + 1) + ': ' +
@@ -285,9 +291,15 @@
             result.hidden = false;
             copy.hidden = false;
             const count = successes.reduce((sum, f) => sum + f.videos.length, 0);
-            status.textContent = count
-                ? 'Готово. Проверь поле «изменение подтверждено» для основного видео.'
-                : 'Готово. Видео не найдено в доступных фреймах — посмотри домены iframe в отчёте.';
+            const confirmed = successes.some(frame => frame.videos.some(video =>
+                video.readyState >= 2 && video.duration >= 60 &&
+                video.everPlaying && video.movement >= 1 &&
+                video.timeupdates > 0 && video.seekingEvents === 0));
+            status.textContent = confirmed
+                ? 'Воспроизведение подтверждено: таймкод изменялся.'
+                : count
+                    ? 'Видео обнаружено, но реальное воспроизведение не подтверждено. Включи ▶ и повтори проверку.'
+                    : 'Готово. Видео не найдено в доступных фреймах — посмотри домены iframe в отчёте.';
         } catch (error) {
             status.textContent = 'Ошибка проверки: ' + String(error.message || error);
         } finally {
