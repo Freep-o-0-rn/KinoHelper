@@ -755,6 +755,12 @@ async function setMovieRating(payload) {
   });
 }
 
+function notifyWatchSessionChanged(tabId) {
+  // Сеанс уже сохранён в storage.session; UI перечитает актуальное состояние.
+  chrome.runtime.sendMessage({ action: 'kinoWatchSessionChanged', tabId })
+    .catch(() => {}); // Если popup/панель закрыты, это нормально.
+}
+
 async function getSession(tabId) {
   const key = sessionKey(tabId);
   const data = await chrome.storage.session.get(key);
@@ -767,6 +773,7 @@ async function saveSession(tabId, session) {
 
 async function clearSession(tabId) {
   await chrome.storage.session.remove(sessionKey(tabId));
+  notifyWatchSessionChanged(tabId);
 }
 
 async function startSession({ tabId, returnUrl, watchUrl, type, id, title = '' }) {
@@ -796,6 +803,7 @@ async function startSession({ tabId, returnUrl, watchUrl, type, id, title = '' }
 
   await saveSession(tabId, session);
   await rememberWatchOrigin(watchUrl);
+  notifyWatchSessionChanged(tabId);
   return session;
 }
 
@@ -878,6 +886,7 @@ async function handleCommittedNavigation(details) {
     lastNavigationAt: now,
     recognizedOrigins: [...nextOrigins]
   });
+  notifyWatchSessionChanged(details.tabId);
 }
 
 chrome.runtime.onInstalled.addListener(() => {
