@@ -36,7 +36,7 @@
     }
     function safeText(value) {
       const s = String(value || '').replace(/\s+/g, ' ').trim();
-      if (!s || s.length > 64) return '';
+      if (!s || s.length > 64 || /https?:\/\/|(?:token|auth|key|secret)=/i.test(s)) return '';
       const hint = /(?:сезон|серия|серии|эпизод|season|episode|series|^s\d{1,3}e\d{1,3}$|^\d{1,3}\s*[xх×]\s*\d{1,3}$|^\d{1,3}$)/i;
       return hint.test(s) ? s : '';
     }
@@ -248,10 +248,16 @@
   }
   async function take(isAfter) {
     if (busy) return;
+    if (isAfter && !before) {
+      status.textContent = 'Сначала сделай снимок до переключения.';
+      return;
+    }
     busy = true;
     beforeBtn.disabled = afterBtn.disabled = true;
-    status.textContent = 'Читаю элементы переключателя в доступных фреймах…';
+    status.textContent = 'Через 3 секунды сделаю снимок. Вернись к плееру и раскрой меню в левом верхнем углу.';
     try {
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      status.textContent = 'Считываю элементы плеера…';
       const value = await capture();
       if (isAfter) {
         if (!before) throw Error('Сначала сделай первый снимок.');
