@@ -90,9 +90,9 @@ test('actual playback time never derived from checkpoint position', () => {
 
 test('profile link validation accepts personal ID but rejects foreign host', () => {
   assert.equal(core.validateProfile(
-    'https://www.kinopoisk.ru/user/7143359/movies/voted-watched/'),'7143359');
-  assert.equal(core.validateProfile('7143359'),'7143359');
-  assert.equal(core.validateProfile('https://evil.test/user/7143359/'),'');
+    'https://www.kinopoisk.ru/user/1234567/movies/voted-watched/'),'1234567');
+  assert.equal(core.validateProfile('1234567'),'1234567');
+  assert.equal(core.validateProfile('https://evil.test/user/1234567/'),'');
 });
 
 // Verify actual background aggregation code (not a copied algorithm).
