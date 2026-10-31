@@ -114,7 +114,10 @@
         const items = existing ? old.filter(item => keyOf(item) !== key) : [next, ...old];
         if (!existing && items.length > MAX_ITEMS) return false;
         const ok = save(items);
-        if (ok && !existing) enqueueHydration(next);
+        if (ok && !existing) {
+            if (movie.posterDataUrl) adoptPoster(next, movie.posterDataUrl);
+            enqueueHydration(next);
+        }
         return ok;
     }
 
@@ -149,6 +152,7 @@
         const key = keyOf(movie);
         if (!key || !contains(movie) || typeof dataUrl !== 'string' ||
             !/^data:image\/(?:jpeg|png|webp|gif);base64,/i.test(dataUrl)) return;
+        if (posterCache.get(key) === dataUrl) return;
         posterCache.set(key, dataUrl);
         if (posterCache.size > 30) posterCache.delete(posterCache.keys().next().value);
         renderList();
