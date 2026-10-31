@@ -2286,3 +2286,7 @@ function statsRememberCompletion(key, completed) {
   statsCatalogQueue = result.catch(() => {});
   return result;
 }
+
+
+// Alarm-driven profile sync, isolated from the movie playback logic.
+importScripts('stats-account.js','stats-import-worker.js');
