@@ -17,6 +17,7 @@
   let formerTime = 0;
   let awaitingMedia = false;
   let mediaChanged = false;
+  let previousVideoTime = null;
   let activeVideo = null;
   let lastTime = null;
   let lastTick = 0;
@@ -87,39 +88,51 @@
     const key = choice?.key || '';
     const now = Date.now();
     if (selectionKey !== key) {
-      // On an episode switch the old video may still be playing while the
-      // selector already shows the next episode. Do not attach its timecode.
-      // Preserve the previous episode through transient blank selections
-      // shown while a dropdown or the stream is reloading.
-      const previouslySelected = Boolean(lastNonEmptySelection &&
-        key && lastNonEmptySelection !== key);
+      const previousWasKnown = Boolean(lastNonEmptySelection);
+      const switchedEpisode = Boolean(previousWasKnown && key &&
+        lastNonEmptySelection !== key);
+
+      // Capture the former stream when the selection first disappears.
+      // Do not overwrite it when the new episode selector later appears;
+      // that was the reason 1.554 could remain stuck on the old episode.
+      if (selectionKey || !previousWasKnown) {
+        formerVideo = activeVideo || video;
+        formerSrc = formerVideo?.currentSrc || '';
+        formerTime = Number(formerVideo?.currentTime) || 0;
+        previousVideoTime = formerTime;
+        mediaChanged = false;
+      }
+      if (switchedEpisode) awaitingMedia = true;
+      else if (key && (!previousWasKnown ||
+          key === lastNonEmptySelection)) awaitingMedia = false;
+
       if (key) lastNonEmptySelection = key;
-      formerVideo = activeVideo || video;
-      formerSrc = formerVideo?.currentSrc || '';
-      formerTime = Number(formerVideo?.currentTime) || 0;
-      awaitingMedia = previouslySelected && Boolean(key);
-      mediaChanged = false;
       selectionKey = key;
       selectionSince = now;
       activeVideo = video;
-      trackedMediaToken = 0;
-      lastKnownMediaSrc = '';
       resetMovement();
     }
+
     if (!choice) return null;
     if (video && activeVideo !== video) {
       if (awaitingMedia) mediaChanged = true;
       activeVideo = video;
       resetMovement();
     }
+
     if (awaitingMedia && video) {
-      const src = video.currentSrc || '';
-      if ((formerSrc && src && src !== formerSrc) ||
-          (formerTime > 12 && video.currentTime + 10 < formerTime) ||
-          (mediaChanged && video.readyState >= 2)) {
+      const source = video.currentSrc || '';
+      const t = Number(video.currentTime);
+      const resetToBeginning = Number.isFinite(t) &&
+        Number.isFinite(previousVideoTime) &&
+        previousVideoTime - t >= 1.0 && t <= 90;
+      const sourceChanged = Boolean(formerSrc && source && formerSrc !== source);
+      const oldVideoReplaced = mediaChanged && video.readyState >= 2;
+      if (resetToBeginning || sourceChanged || oldVideoReplaced) {
         awaitingMedia = false;
         resetMovement();
       }
+      previousVideoTime = t;
     }
     if (awaitingMedia || now - selectionSince < 1300) return null;
     return choice;
@@ -192,7 +205,8 @@
           'loadedmetadata','durationchange','loadstart','emptied']) {
           video.addEventListener(event, () => {
             if (event === 'loadstart' || event === 'emptied') {
-              if (video === formerVideo && awaitingMedia) mediaChanged = true;
+              if (video === formerVideo && (awaitingMedia || !selectionKey))
+                mediaChanged = true;
               if (video === activeVideo) resetMovement();
               return;
             }
@@ -209,7 +223,11 @@
     for (const video of videos) if (!video.isConnected) videos.delete(video);
   }
 
-  const observer = new MutationObserver(discover);
+  const observer = new MutationObserver(() => {
+    discover();
+    // Observe the selector before the player swaps its video source.
+    observeSelection(primary());
+  });
   if (document.documentElement)
     observer.observe(document.documentElement, {subtree: true, childList: true});
   discover();
