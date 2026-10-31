@@ -229,6 +229,104 @@
     await chrome.storage.local.set({kinoStatsRatingsV1:all});
   }
 
+
+  // Reuse the existing authorized MoviePreviewCard request. It checks a
+  // known movie ID and returns the current Kinopoisk account's actual vote;
+  // this is NOT scraping the user's whole public profile.
+  let ratingsSyncActive = false;
+  async function syncKnownRatings() {
+    if (ratingsSyncActive) return;
+    ratingsSyncActive = true;
+    const button = els('statsRatingsSync');
+    const status = els('statsStatus');
+    button.disabled = true;
+    button.textContent = 'Проверяем оценки…';
+    try {
+      const keys = ['kinoPlaybackProgressV1','kinoSeriesEpisodeProgressV1',
+        'kinoStatsLibraryV1','kinoStatsProfileId','kinoStatsRatingScanV1'];
+      const data = await chrome.storage.local.get(keys);
+      const media = new Map();
+      for (const [key,item] of Object.entries(safeObject(data.kinoPlaybackProgressV1))) {
+        if (/^film:[1-9]\d{0,12}$/.test(key))
+          media.set(key, Number(item?.updatedAt)||0);
+      }
+      for (const [key,item] of Object.entries(safeObject(data.kinoSeriesEpisodeProgressV1))) {
+        const match = /^series:([1-9]\d{0,12}):\d{1,3}:\d{1,3}$/.exec(key);
+        if (!match) continue;
+        const id = 'series:' + match[1];
+        media.set(id,Math.max(media.get(id)||0,Number(item?.updatedAt)||0));
+      }
+      for (const [key,item] of Object.entries(safeObject(data.kinoStatsLibraryV1))) {
+        const film = /^film:[1-9]\d{0,12}$/.test(key) ? key : '';
+        const series = /^series:([1-9]\d{0,12}):\d{1,3}:\d{1,3}$/.exec(key);
+        const id = film || (series ? 'series:' + series[1] : '');
+        if (id) media.set(id,Math.max(media.get(id)||0,Number(item?.updatedAt)||0));
+      }
+      const account = String(data.kinoStatsProfileId || '') || '__local__';
+      const scans = {...safeObject(data.kinoStatsRatingScanV1)};
+      const scanned = {...safeObject(scans[account])};
+      const oneDay = 86400000;
+      const entries = [...media.entries()].sort((a,b)=>b[1]-a[1])
+        .filter(([key])=>!Number.isFinite(scanned[key]) ||
+          Date.now()-scanned[key]>oneDay)
+        .slice(0,12);
+      if (!media.size) {
+        status.textContent = 'Сначала посмотри фильм или серию через KinoHelper.';
+        return;
+      }
+      if (!entries.length) {
+        status.textContent = 'Все известные оценки недавно проверены. Можно повторить завтра.';
+        return;
+      }
+      let verified = 0, withoutVote = 0, processed = 0;
+      let interrupted = '';
+      for (const [mediaKey] of entries) {
+        const [type,id] = mediaKey.split(':');
+        let response;
+        try {
+          response = await chrome.runtime.sendMessage({
+            action:'getMovieRating',payload:{type,id}
+          });
+        } catch (error) {
+          interrupted = 'Ошибка связи с Кинопоиском: ' + error.message;
+          break;
+        }
+        if (!response?.ok) {
+          interrupted = 'Не удалось загрузить оценки; повтори попытку позднее.';
+          break;
+        }
+        if (!response.authorized) {
+          interrupted = 'Для импорта оценок войди в свой аккаунт Кинопоиска.';
+          break;
+        }
+        processed++;
+        scanned[mediaKey] = Date.now();
+        const rating = Number(response.rating);
+        if (Number.isInteger(rating) && rating >= 1 && rating <= 10) {
+          await recordConfirmedRating({type,id,rating});
+          verified++;
+        } else {
+          withoutVote++;
+        }
+        status.textContent = 'Проверено: ' + processed + ' / ' + entries.length +
+          ' · оценок найдено: ' + verified;
+      }
+      scans[account] = scanned;
+      await chrome.storage.local.set({kinoStatsRatingScanV1:scans});
+      status.textContent = (processed ? 'Проверено ' + processed +
+        ' фильмов/сериалов; найдено оценок: ' + verified +
+        (withoutVote ? ', без оценки: ' + withoutVote : '') + '. ' : '') +
+        (interrupted || 'Для остальных произведений нажми кнопку ещё раз.');
+      await reload();
+    } catch (error) {
+      status.textContent = 'Синхронизация не удалась: ' + error.message;
+    } finally {
+      ratingsSyncActive = false;
+      button.disabled = false;
+      button.textContent = '↻ Обновить оценки известных фильмов';
+    }
+  }
+
   async function setProfile() {
     const raw = els('statsProfileInput').value;
     if (!raw.trim()) {
@@ -272,6 +370,7 @@
   button.addEventListener('click',()=>toggle(!currentlyOpen));
   back.addEventListener('click',()=>toggle(false));
   els('statsProfileSave').addEventListener('click',()=>void setProfile());
+  els('statsRatingsSync').addEventListener('click',()=>void syncKnownRatings());
   els('statsProfileInput').addEventListener('keydown',e=>{
     if(e.key === 'Enter') void setProfile();
   });
