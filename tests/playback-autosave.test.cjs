@@ -14,18 +14,27 @@ const observer = fs.readFileSync(path.join(__dirname, '..', 'playback-tracker.js
 
 function makeBackground() {
   const data = {};
+  const sessionData = {};
   const registered = new Map();
   let granted = true;
   let tab = { id: 7, url: 'https://brogiro.cfd/film/447301/?secret=DO_NOT_SAVE',
     title: 'Астрал' };
   const event = () => ({ addListener() {} });
   const chrome = {
-    runtime: { id: 'kino-test', onInstalled: event(), onStartup: event(),
+    runtime: { id: 'kino-test',
+      getURL: path => 'chrome-extension://kino-test/' + path,
+      onInstalled: event(), onStartup: event(),
       onMessage: event() },
     permissions: { contains: async () => granted, onAdded: event(), onRemoved: event() },
-    tabs: { get: async () => tab, query: async () => [tab] },
-    storage: { local: { get: async key => ({ [key]: data[key] }),
-      set: async object => Object.assign(data, object) } },
+    tabs: { get: async () => tab, query: async () => [tab],
+      onRemoved: event() },
+    storage: {
+      local: { get: async key => ({ [key]: data[key] }),
+        set: async object => Object.assign(data, object) },
+      session: { get: async key => ({ [key]: sessionData[key] }),
+        set: async object => Object.assign(sessionData, object),
+        remove: async key => { delete sessionData[key]; } }
+    },
     scripting: {
       getRegisteredContentScripts: async () => [...registered.values()],
       registerContentScripts: async entries =>
@@ -44,12 +53,16 @@ function makeBackground() {
     WATCH_BASE: 'https://www.kinokino.vip',
     FALLBACK_WATCH_BASE: 'https://flcksbr.top',
     KINOPOISK_BASE: 'https://www.kinopoisk.ru',
-    getSession: async () => null,
+    getSession: async () => ({
+      id: '447301', type: 'film', title: 'Астрал',
+      startedAt: Date.now(), recognizedOrigins: ['https://brogiro.cfd'],
+      currentUrl: tab.url
+    }),
     parseMedia
   };
   vm.createContext(context);
-  vm.runInContext(background + '\nthis.resumeAPI = { saveResumeProgress };', context);
-  return { api: context.resumeAPI, data, registered,
+  vm.runInContext(background + '\nthis.resumeAPI = { saveResumeProgress, armResumeForTab, readPendingResume, acknowledgeResume };', context);
+  return { api: context.resumeAPI, data, sessionData, registered,
     setTab: next => { tab = next; },
     revoke: () => { granted = false; } };
 }
@@ -94,16 +107,15 @@ test('only trusted player iframe with identified film may write', async () => {
   assert.equal(data.kinoPlaybackProgressV1, undefined);
 });
 
-test('dynamic content script is registered only for the permitted iframe host', async () => {
-  const { registered } = makeBackground();
-  for (let i = 0; i < 10 && !registered.size; i++) {
-    await new Promise(resolve => setImmediate(resolve));
-  }
-  const entry = registered.get('kino-playback-tracker-v1');
-  assert.ok(entry);
-  assert.deepEqual(Array.from(entry.matches), ['https://theatre.stravers.live/*']);
-  assert.deepEqual(Array.from(entry.js), ['playback-tracker.js']);
-  assert.equal(entry.persistAcrossSessions, true);
+test('manifest auto-injects both tracker and seek only into the known iframe host', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..',
+    'manifest.json'), 'utf8'));
+  assert.ok(manifest.host_permissions.includes('https://theatre.stravers.live/*'));
+  assert.ok(manifest.host_permissions.includes('https://brogiro.cfd/*'));
+  assert.deepEqual(manifest.content_scripts[0].js,
+    ['playback-tracker.js', 'playback-resume.js']);
+  assert.equal(manifest.content_scripts[0].all_frames, true);
+  assert.equal(manifest.optional_host_permissions, undefined);
 });
 
 test('observer skips invalid ad video and sends real progress and pause', () => {
@@ -169,4 +181,34 @@ test('revoking optional host permission immediately prevents new progress writes
   const second = await api.saveResumeProgress({ ...payload, currentTime: 170 }, sender);
   assert.equal(second.ok, false);
   assert.equal(data.kinoPlaybackProgressV1['film:447301'].position, 150);
+});
+
+
+test('resuming protects the previous checkpoint until the player confirms a seek', async () => {
+  const { api, data, sessionData } = makeBackground();
+  data.kinoPlaybackProgressV1 = {
+    'film:447301': { type: 'film', id: '447301', title: 'Астрал',
+      position: 150, duration: 600, updatedAt: Date.now(), completed: false }
+  };
+  const extension = { id: 'kino-test',
+    url: 'chrome-extension://kino-test/sidepanel.html' };
+  const playerSender = { id: 'kino-test',
+    url: 'https://theatre.stravers.live/player',
+    tab: { id: 7 }, frameId: 333 };
+  const armed = await api.armResumeForTab(7, '447301', extension);
+  assert.equal(armed.ok, true);
+  assert.equal((await api.readPendingResume(playerSender)).position, 150);
+  const initial = await api.saveResumeProgress({
+    currentTime: 4, duration: 600, playedSeconds: 5, event: 'playing'
+  }, playerSender);
+  assert.equal(initial.ok, false);
+  assert.equal(data.kinoPlaybackProgressV1['film:447301'].position, 150);
+  assert.equal((await api.acknowledgeResume(playerSender, 3)).ok, false);
+  assert.equal((await api.acknowledgeResume(playerSender, 151)).ok, true);
+  assert.equal(Object.keys(sessionData).length, 0);
+  const next = await api.saveResumeProgress({
+    currentTime: 172, duration: 600, playedSeconds: 15, event: 'playing'
+  }, playerSender);
+  assert.equal(next.ok, true);
+  assert.equal(data.kinoPlaybackProgressV1['film:447301'].position, 172);
 });
