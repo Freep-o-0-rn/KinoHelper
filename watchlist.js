@@ -289,28 +289,38 @@
 
         // Из GraphQL получаем год и исходный URL постера. Жанр —
         // из уже существующего парсера страницы Кинопоиска.
+        const tasks = [];
         if (!current.year || !current.posterUrl) {
-            try {
-                const reply = await chrome.runtime.sendMessage({
-                    action: 'getSearchMovieMetadata',
-                    payload: { id: current.id, type: current.type }
-                });
-                if (reply?.ok && reply.metadata) {
-                    const m = reply.metadata;
-                    updateMetadata(current, {
-                        year: m.year,
-                        title: m.title,
-                        posterUrl: validPoster(m.poster) || validPoster(m.posterFallback)
+            tasks.push((async () => {
+                try {
+                    const reply = await chrome.runtime.sendMessage({
+                        action: 'getSearchMovieMetadata',
+                        payload: { id: current.id, type: current.type }
                     });
-                }
-            } catch { /* Отсутствие метаданных не блокирует закладку. */ }
+                    if (reply?.ok && reply.metadata) {
+                        const m = reply.metadata;
+                        updateMetadata(current, {
+                            year: m.year,
+                            title: m.title,
+                            posterUrl: validPoster(m.poster) || validPoster(m.posterFallback)
+                        });
+                    }
+                } catch { /* Отсутствие метаданных не блокирует закладку. */ }
+            })());
         }
         if (!current.genres.length && window.KinoMovieDetails?.get) {
-            try {
-                const details = await window.KinoMovieDetails.get(current);
-                if (details?.genres?.length) updateMetadata(current, { genres: details.genres });
-            } catch { /* Кинопоиск может не предоставить жанр. */ }
+            tasks.push((async () => {
+                try {
+                    const details = await window.KinoMovieDetails.get(current);
+                    if (details?.genres?.length) updateMetadata(current, { genres: details.genres });
+                } catch { /* Кинопоиск может не предоставить жанр. */ }
+            })());
         }
+        // Готовый URL постера можно загрузить сразу, не ожидая жанры.
+        if (current.posterUrl && !posterCache.has(keyOf(item))) {
+            tasks.push(requestPoster(current));
+        }
+        await Promise.allSettled(tasks);
         if (!posterCache.has(keyOf(item))) {
             const latest = getAll().find(entry => keyOf(entry) === keyOf(item));
             if (latest) await requestPoster(latest);
