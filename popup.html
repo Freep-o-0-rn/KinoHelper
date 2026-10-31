@@ -28,6 +28,7 @@
           <main class="main-content">
             <section class="context-card info" id="contextCard" aria-label="Текущий фильм или состояние">
               <div id="message" class="info" aria-live="polite">Выберите фильтры и нажмите «Случайный»</div>
+              <div class="current-episode-info" id="currentEpisodeInfo" role="status" aria-live="polite" hidden></div>
               <button class="watchlist-current-action" id="watchlistCurrentAction" type="button" hidden aria-pressed="false">☆ В «Буду смотреть»</button>
 
               <section class="movie-details" id="movieDetails" aria-label="Информация о фильме" hidden>
@@ -227,6 +228,7 @@
   <script src="movie-details.js"></script>
   <script src="watchlist.js"></script>
   <script src="resume-ui.js"></script>
+  <script src="episode-ui.js"></script>
   <script src="popup.js"></script>
   <script src="search.js"></script>
   <script src="filters.js"></script>
