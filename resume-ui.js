@@ -5,12 +5,15 @@
   const PROGRESS_KEY = 'kinoPlaybackProgressV1';
   const SERIES_KEY = 'kinoSeriesEpisodeProgressV1';
   const HISTORY_KEY = 'kinopoiskHistory';
+  const DISMISS_KEY = 'kinoLastViewDismissedV1';
   const panel = document.getElementById('resumeLast');
   const lastTitle = document.getElementById('resumeLastTitle');
   const lastMeta = document.getElementById('resumeLastMeta');
   const lastProgress = document.getElementById('resumeLastProgress');
   const lastOpen = document.getElementById('resumeLastOpen');
-  if (!panel || !lastTitle || !lastMeta || !lastProgress || !lastOpen) return;
+  const closeLast = document.getElementById('resumeLastClose');
+  if (!panel || !lastTitle || !lastMeta || !lastProgress || !lastOpen ||
+      !closeLast) return;
 
   let progress = Object.create(null);
   let episodeProgress = Object.create(null);
@@ -21,6 +24,11 @@
   // response must not briefly reveal it while a player tab is loading.
   let checkingActiveTab = true;
   let selected = null;
+  // Dismiss only the currently displayed title/episode, without deleting
+  // history or checkpoints. Shared across popup and Side Panel for this
+  // Chrome session, so re-renders cannot make it reappear.
+  let dismissedIdentity = '';
+  let dismissReadComplete = false;
   let storageReadSequence = 0;
   let tabReadSequence = 0;
 
@@ -207,6 +215,25 @@
     }
   }
 
+  function lastIdentity(candidate) {
+    const media = candidate?.media;
+    if (!media) return '';
+    const saved = candidate.saved;
+    return media.type === 'series' && saved?.type === 'series'
+      ? 'series:' + media.id + ':' + saved.season + ':' + saved.episode
+      : media.key;
+  }
+
+  async function readDismissal() {
+    try {
+      const record = await chrome.storage.session.get(DISMISS_KEY);
+      dismissedIdentity = typeof record?.[DISMISS_KEY] === 'string'
+        ? record[DISMISS_KEY] : '';
+    } catch { /* Hiding still works locally when session storage is unavailable. */ }
+    dismissReadComplete = true;
+    renderLast();
+  }
+
   function recentCandidates() {
     // Preserve the user's own history ordering and timestamp, even when the
     // entry was imported from an earlier extension version.
@@ -238,13 +265,15 @@
     // "Последний просмотр" card there — including on /film/<id> URLs
     // whose iframe is actually a series. This guard also applies to
     // asynchronous storage updates every five seconds.
-    if (checkingActiveTab || activeWatchPage) {
+    if (checkingActiveTab || activeWatchPage || !dismissReadComplete) {
       selected = null;
       panel.hidden = true;
       return;
     }
+    // Do not fall back to older media when the latest card is dismissed.
     const latest = recentCandidates().find(item => item.media.key !== currentKey);
-    selected = latest || null;
+    selected = latest && lastIdentity(latest) !== dismissedIdentity
+      ? latest : null;
     panel.hidden = !selected;
     if (!selected) return;
 
@@ -359,6 +388,16 @@
     render();
   }
 
+  closeLast.addEventListener('click', () => {
+    if (!selected) return;
+    dismissedIdentity = lastIdentity(selected);
+    selected = null;
+    panel.hidden = true;
+    // Session-scoped suppression, not permanent deletion of playback data.
+    void chrome.storage.session.set({ [DISMISS_KEY]: dismissedIdentity })
+      .catch(() => {});
+  });
+
   lastOpen.addEventListener('click', () => {
     const value = selected;
     if (!value) return;
@@ -376,6 +415,12 @@
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && (changes[PROGRESS_KEY] || changes[SERIES_KEY]))
       void readStorage();
+    if (area === 'session' && changes[DISMISS_KEY]) {
+      dismissedIdentity = typeof changes[DISMISS_KEY].newValue === 'string'
+        ? changes[DISMISS_KEY].newValue : '';
+      dismissReadComplete = true;
+      renderLast();
+    }
   });
 
   chrome.tabs.onActivated.addListener(() => void updateActive());
@@ -399,6 +444,7 @@
 
   window.KinoResumeUI = { updateHistory, readStorage, updateActive,
     resumeTargetFor };
+  void readDismissal();
   void readStorage();
   void updateActive();
 })();
