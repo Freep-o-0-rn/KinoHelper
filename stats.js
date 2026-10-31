@@ -12,6 +12,11 @@
     'kinoStatsProfileId', 'kinoStatsProfileImportV1', 'kinoStatsImportJobV2'];
   const palette = { film: '#f36a35', series: '#8a6aea', other: '#a9b0bb' };
   const els = id => document.getElementById(id);
+  const versionNode = els('appVersion');
+  if (versionNode) {
+    const version = chrome.runtime.getManifest?.().version;
+    versionNode.textContent = version ? 'v' + version : '';
+  }
   let currentlyOpen = false;
   let lastData = null;
   let loadingId = 0;
@@ -100,10 +105,10 @@
     host.appendChild(wrap);
   }
 
-  function makeLegend(container, data) {
+  function makeLegend(container, data, { showZeros = false } = {}) {
     container.replaceChildren();
     for (const row of data) {
-      if (!row.value) continue;
+      if (!row.value && !showZeros) continue;
       const line = document.createElement('div');
       line.className = 'stats-legend-row';
       const dot = document.createElement('span');
@@ -163,8 +168,8 @@
       {big:true,center:displayTime(model.totalSeconds),sub:'всего'});
     makeLegend(els('statsTimeLegend'),times);
     els('statsTimeNote').textContent = model.totalSeconds > 0
-      ? 'Учтено фактическое воспроизведение с версии 1.558; перемотки исключены.'
-      : 'Учёт времени начнётся при следующем просмотре. Старые таймкоды не пересчитываются.';
+      ? 'Время воспроизведения с момента включения статистики.'
+      : 'Время появится после начала просмотра.';
 
     const genres = genreRows(model);
     createSvgChart(els('statsGenresChart'), genres,'Любимые жанры',
@@ -172,8 +177,8 @@
         sub:genres[0]?.name || 'Нет данных'});
     makeLegend(els('statsGenresLegend'),genres);
     els('statsGenresNote').textContent = model.taggedTitles
-      ? 'По ' + model.taggedTitles + ' произведениям с известными жанрами. Одно произведение может иметь несколько жанров.'
-      : 'Жанры появятся по мере загрузки карточек просмотренных фильмов и сериалов.';
+      ? 'Жанры ' + model.taggedTitles + ' произведений.'
+      : 'Жанры появятся после загрузки фильмов.';
 
     const ratings = model.buckets.map(x=>({
       name:x.name,value:x.count,color:x.color,
@@ -182,12 +187,10 @@
     createSvgChart(els('statsRatingsChart'),ratings,'Мои оценки',
       {big:true,center:model.meanRating === null ? '—' :
         model.meanRating.toFixed(1),sub:'средняя'});
-    makeLegend(els('statsRatingsLegend'),ratings);
-    const source = importState?.pages ? ' (в том числе из выбранного профиля)' : '';
+    makeLegend(els('statsRatingsLegend'),ratings,{showZeros:true});
     els('statsRatingsNote').textContent = model.ratingsCount
-      ? model.ratingsCount + ' учтённых личных оценок' + source + '. ' +
-        'Полнота архива указана в прогрессе импорта.'
-      : 'Оценок пока нет. Открой фильм или импортируй оценки из профиля.';
+      ? 'Всего оценок: ' + model.ratingsCount
+      : 'Оценки появятся после синхронизации.';
 
     els('statsProfileLink').hidden = !model.profileId;
     if (model.profileId) {
@@ -265,15 +268,11 @@
     if (known) indicator.value=Math.min(done,total);
     else indicator.removeAttribute('value'); // native indeterminate progress
     const knownVotes=Number(job.importedVotes)||0;
-    const retry=Number.isFinite(job.nextAt)&&job.nextAt>Date.now() &&
-      ['paused','retry'].includes(job.state)
-      ? ' · Повторная попытка позднее, автоматически.' : '';
-    const phase=job.state==='completed'?'Импорт завершён; новые оценки проверяются ежедневно.'
-      : job.state==='paused'?'Доступ временно ограничен.'
-      : job.state==='retry'?'Временная ошибка загрузки.'
-      : 'Импорт выполняется в фоне, даже при закрытой панели.';
-    label.textContent=phase+' '+(job.message||'')+
-      ' · Учтено личных оценок: '+knownVotes+'.'+retry;
+    const phase=job.state==='completed'?'Все оценки загружены. Обновление — раз в сутки.'
+      : job.state==='paused'?'Кинопоиск ограничил доступ. Попробуем позже.'
+      : job.state==='retry'?'Ошибка соединения. Повторим позже.'
+      : 'Загружаем оценки в фоне. Панель можно закрыть.';
+    label.textContent=phase+' Найдено оценок: '+knownVotes+'.';
   }
 
   // Resolving /mykp/ never requires the user to enter a profile URL.
