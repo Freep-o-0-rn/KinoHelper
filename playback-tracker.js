@@ -45,8 +45,16 @@
     return candidates[0];
   }
 
+  function hasSeriesSelector() {
+    // Some series use /film/<id> URLs. Never save their episodes as a film.
+    const labels = [...document.querySelectorAll('button.select__item')]
+      .slice(0, 12).map(el => String(el.textContent || '').trim());
+    return labels.some(label => /^(?:Сезон|Season)\s*\d+$/i.test(label)) &&
+      labels.some(label => /^(?:Серия|Episode)\s*\d+$/i.test(label));
+  }
+
   function send(video, eventType) {
-    if (!chrome.runtime?.id || !viable(video)) return;
+    if (!chrome.runtime?.id || !viable(video) || hasSeriesSelector()) return;
     if (confirmedSamples < 2 || playedSeconds < 2) return;
     const time = video.currentTime;
     const duration = video.duration;
