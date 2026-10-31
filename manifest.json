@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "КиноПомощник",
-  "version": "1.544",
+  "version": "1.544.1",
   "description": "Быстрый доступ к фильмам и сериалам с удобными фильтрами",
   "action": {
     "default_title": "КиноПомощник"
@@ -35,5 +35,9 @@
   },
   "side_panel": {
     "default_path": "sidepanel.html"
-  }
+  },
+  "optional_host_permissions": [
+    "https://brogiro.cfd/*",
+    "https://theatre.stravers.live/*"
+  ]
 }
