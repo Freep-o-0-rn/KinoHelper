@@ -1743,7 +1743,8 @@ async function injectResumeIntoOpenTabs() {
       if (ids.length) {
         await chrome.scripting.executeScript({
           target: { tabId: tab.id, frameIds: ids },
-          files: ['playback-tracker.js', 'playback-resume.js'],
+          files: ['playback-tracker.js', 'playback-resume.js',
+            'series-progress-tracker.js'],
           world: 'ISOLATED'
         });
       }
