@@ -34,7 +34,8 @@ function node(tag = 'div', cls = '') {
   return element;
 }
 
-async function setup({ data = {}, history = [], current = 'https://www.kinopoisk.ru/' } = {}) {
+async function setup({ data = {}, seriesData = {}, history = [],
+  current = 'https://www.kinopoisk.ru/' } = {}) {
   const elements = {
     resumeLast: node('section'), resumeLastTitle: node(),
     resumeLastMeta: node(), resumeLastProgress: node(),
@@ -70,7 +71,9 @@ async function setup({ data = {}, history = [], current = 'https://www.kinopoisk
         onRemoved: { addListener(cb) { tabs.removed = cb; } }
       },
       storage: {
-        local: { get: async () => ({ kinoPlaybackProgressV1: data }) },
+        local: { get: async key => key === 'kinoSeriesEpisodeProgressV1'
+          ? { kinoSeriesEpisodeProgressV1: seriesData }
+          : { kinoPlaybackProgressV1: data } },
         onChanged: { addListener(cb) { changes.push(cb); } }
       }
     },
@@ -87,7 +90,8 @@ async function setup({ data = {}, history = [], current = 'https://www.kinopoisk
     updateHistory: context.window.KinoResumeUI.updateHistory,
     refresh: context.window.KinoResumeUI.readStorage,
     setTab(url) { tabUrl = url; },
-    setData(next) { data = next; } };
+    setData(next) { data = next; },
+    setSeriesData(next) { seriesData = next; } };
 }
 
 const movie = { type: 'film', id: '447301', title: 'Астрал',
@@ -175,4 +179,67 @@ test('series remains ordinary open action without a false seek request', async (
   assert.equal(ui.elements.resumeLastOpen.textContent, '▶ Открыть');
   ui.elements.resumeLastOpen.events.click();
   assert.equal(ui.openedOptions[0].resume, false);
+});
+
+
+const episode = { type: 'series', id: '404900',
+  season: 1, episode: 3, position: 300, duration: 1800,
+  title: 'Сериал', completed: false, updatedAt: 40000 };
+const seriesHistory = [{ title: 'Сериал', timestamp: 2000,
+  url: 'https://www.kinokino.vip/series/404900/' }];
+
+test('episode progress is isolated and shows season and episode in history', async () => {
+  const ui = await setup({
+    history: seriesHistory, seriesData: {
+      'series:404900:1:3': episode
+    }
+  });
+  const track = ui.rows[0].querySelector('.history-progress-track');
+  assert.equal(track.attrs['aria-valuenow'], '17');
+  assert.match(ui.rows[0].querySelector('.history-progress-label').textContent,
+    /Сезон 1 · Серия 3 · 5:00 \/ 30:00 · 17%/);
+  assert.match(ui.elements.resumeLastMeta.textContent,
+    /Сезон 1 · Серия 3 · Сохранено 5:00 \/ 30:00/);
+  assert.equal(ui.elements.resumeLastOpen.textContent, '▶ Открыть');
+  ui.elements.resumeLastOpen.events.click();
+  assert.equal(ui.openedOptions[0].resume, false);
+});
+
+test('switching episodes updates latest progress but preserves earlier episode', async () => {
+  const ui = await setup({
+    history: seriesHistory, seriesData: { 'series:404900:1:3': episode }
+  });
+  const newer = { ...episode, episode: 4, position: 105,
+    updatedAt: 50000 };
+  ui.setSeriesData({
+    'series:404900:1:3': episode,
+    'series:404900:1:4': newer
+  });
+  ui.changes[0]({ kinoSeriesEpisodeProgressV1: { newValue: true } }, 'local');
+  for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.match(ui.elements.resumeLastMeta.textContent,
+    /Сезон 1 · Серия 4/);
+  assert.equal(ui.rows[0].querySelector('.history-progress-track')
+    .attrs['aria-valuenow'], '6');
+});
+
+test('completed episode does not reappear in resume card', async () => {
+  const complete = { ...episode, completed: true };
+  const ui = await setup({
+    history: seriesHistory, seriesData: {
+      'series:404900:1:3': complete
+    }
+  });
+  assert.equal(ui.rows[0].querySelector('.history-progress-track')
+    .attrs['aria-valuenow'], '100');
+  assert.equal(ui.elements.resumeLast.hidden, true);
+});
+
+test('malformed series episode ID or mismatched series is ignored', async () => {
+  const ui = await setup({
+    history: seriesHistory, seriesData: {
+      'series:404900:1:3': { ...episode, id: 'other' }
+    }
+  });
+  assert.equal(ui.rows[0].querySelector('.history-progress-track'), null);
 });
