@@ -352,6 +352,13 @@
             rating.textContent = '★ ' + Number(movie.rating).toFixed(1);
             meta.append(' · ', rating);
         }
+        if (window.KinoWatchlist?.contains(movie)) {
+            window.KinoWatchlist.updateMetadata(movie, {
+                title: movie.title, year: movie.year, genres: movie.genres,
+                posterUrl: movie.poster || movie.posterFallback
+            });
+            if (movie.posterDataUrl) window.KinoWatchlist.adoptPoster(movie, movie.posterDataUrl);
+        }
         if (movie._genresNode) {
             const genres = Array.isArray(movie.genres) ? movie.genres : [];
             movie._genresNode.textContent = genres.length ? 'Жанр: ' + genres.join(', ') : '';
@@ -544,6 +551,7 @@
                         continue;
                     }
                     movie.posterDataUrl = response.dataUrl;
+                    window.KinoWatchlist?.adoptPoster(movie, response.dataUrl);
                     const image = document.createElement('img');
                     image.alt = '';
                     image.loading = 'lazy';
