@@ -1571,10 +1571,13 @@ async function resumeIdentifyFilm(tabId) {
       [resumeOrigin(WATCH_BASE), resumeOrigin(FALLBACK_WATCH_BASE),
         'https://brogiro.cfd'].includes(origin)) {
     const session = await getSession(tabId);
-    // A show may use a /film/<id> watch URL. A verified SERIES session
-    // overrides that route and must never create a film checkpoint.
-    if (session?.type === 'series' &&
-        session.currentUrl === tab.url) return null;
+    // Series players sometimes use /film/<id>. A verified series session or
+    // a still-valid player episode selection overrides that route.
+    if (session?.type === 'series' && session.currentUrl === tab.url)
+      return null;
+    const evidence = (await chrome.storage.session.get(episodeKey(tabId)))
+      [episodeKey(tabId)];
+    if (resolvedEpisode(evidence, direct.id)) return null;
     // An existing session for another movie must never attach its title.
     const title = session?.type === 'film' && String(session.id) === direct.id
       ? session.title : '';
@@ -1837,21 +1840,33 @@ function originOfEpisodeSender(sender) {
   return resumeOrigin(sender?.url);
 }
 
-async function trustedSeriesTab(tabId) {
+async function trustedSeriesTab(tabId, { playerConfirmed = false } = {}) {
   const tab = await chrome.tabs.get(tabId);
   if (!tab?.url) return null;
   const origin = resumeOrigin(tab.url);
-  if (![ 'https://brogiro.cfd', resumeOrigin(WATCH_BASE),
+  if (!['https://brogiro.cfd', resumeOrigin(WATCH_BASE),
     resumeOrigin(FALLBACK_WATCH_BASE)].includes(origin)) return null;
   const direct = parseMedia(tab.url);
-  if (direct && direct.type !== 'series') return null;
   const session = await getSession(tabId);
+
   if (direct?.type === 'series') {
-    // A stored session of another title indicates a stale/ambiguous tab.
     if (session && (session.type !== 'series' ||
         String(session.id) !== String(direct.id))) return null;
     return { id: String(direct.id), title: session?.title || tab.title || '' };
   }
+
+  if (direct?.type === 'film') {
+    // The provider uses /film/<id> even for confirmed series. Never infer
+    // a series merely from its URL/title. Require a fresh episode selection
+    // from the trusted player iframe (or its existing verified observation).
+    if (session?.currentUrl === tab.url && session.id != null &&
+        String(session.id) !== String(direct.id)) return null;
+    const observed = (await chrome.storage.session.get(episodeKey(tabId)))
+      [episodeKey(tabId)];
+    if (!playerConfirmed && !resolvedEpisode(observed, direct.id)) return null;
+    return { id: String(direct.id), title: session?.title || tab.title || '' };
+  }
+
   if (session?.type !== 'series' || !/^[1-9]\d{0,12}$/.test(String(session.id)) ||
       !Array.isArray(session.recognizedOrigins) ||
       !session.recognizedOrigins.includes(origin) ||
@@ -1889,7 +1904,12 @@ async function saveEpisodeObservation(payload, sender) {
   }
 
   const tabId = sender.tab.id;
-  const series = await trustedSeriesTab(tabId);
+  // The iframe's own selected season and episode are sufficient evidence
+  // to classify a /film/<id> route as a series for this particular tab.
+  const series = await trustedSeriesTab(tabId, {
+    playerConfirmed: !clearing &&
+      originOfEpisodeSender(sender) === 'https://theatre.stravers.live'
+  });
   if (!series) return { ok: false };
   const key = episodeKey(tabId);
   const stored = (await chrome.storage.session.get(key))[key];
