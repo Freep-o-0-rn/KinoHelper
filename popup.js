@@ -199,7 +199,7 @@ async function endWatchSession(tabId) {
     });
 }
 
-async function openTrackedWatchTab(watchUrl, returnUrl = null, title = '') {
+async function openTrackedWatchTab(watchUrl, returnUrl = null, title = '', { resume = false } = {}) {
     const resolvedReturnUrl = returnUrl || buildKinopoiskUrl(watchUrl);
 
     if (!resolvedReturnUrl) {
@@ -207,20 +207,33 @@ async function openTrackedWatchTab(watchUrl, returnUrl = null, title = '') {
     }
 
     const tab = await chrome.tabs.create({ url: 'about:blank', active: false });
-    await startWatchSessionForTab(tab.id, resolvedReturnUrl, watchUrl, title);
+    const started = await startWatchSessionForTab(tab.id, resolvedReturnUrl, watchUrl, title);
+    if (resume && started) {
+        const media = parseMediaUrl(watchUrl);
+        if (media?.type === 'film') {
+            const armed = await sendBackgroundMessage({
+                action: 'kinoResumeArm', tabId: tab.id, filmId: media.id
+            });
+            if (!armed?.ok) {
+                debugLog('Продолжение без перемотки:', armed?.reason || 'нет сохранённой позиции');
+            }
+        }
+    }
     await chrome.tabs.update(tab.id, { url: watchUrl, active: true });
     // Панель остаётся открытой: обновляем её сразу после выбора из истории.
     scheduleCurrentMovieRefresh(80, { force: true });
     return tab;
 }
 
-async function openHistoryUrl(url, title = '') {
+async function openHistoryUrl(url, title = '', { resume = false } = {}) {
     if (parseMediaUrl(url)) {
-        await openTrackedWatchTab(url, buildKinopoiskUrl(url), title);
+        await openTrackedWatchTab(url, buildKinopoiskUrl(url), title, { resume });
         return;
     }
     await chrome.tabs.create({ url });
 }
+// Expose only the existing trusted navigation helper to the resume UI.
+window.openHistoryUrl = openHistoryUrl;
 
 function hideMovieDetails() {
     movieDetailsLoadSequence += 1;
