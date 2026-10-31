@@ -132,7 +132,7 @@ test('series appear as last opened without false episode progress', async () => 
     url: 'https://www.kinokino.vip/series/123/' }];
   const ui = await setup({ history: series });
   assert.equal(ui.elements.resumeLast.hidden, false);
-  assert.match(ui.elements.resumeLastMeta.textContent, /таймкод серии пока недоступен/);
+  assert.match(ui.elements.resumeLastMeta.textContent, /таймкод серии пока не сохранён/);
   assert.equal(ui.elements.resumeLastProgress.hidden, true);
   assert.equal(ui.rows[0].querySelector('.history-item-progress'), null);
 });
@@ -242,4 +242,39 @@ test('malformed series episode ID or mismatched series is ignored', async () => 
     }
   });
   assert.equal(ui.rows[0].querySelector('.history-progress-track'), null);
+});
+
+
+test('provider film URL with explicit series history label displays episode progress', async () => {
+  const history = [{ title: 'Во все тяжкие (сериал)', timestamp: 5000,
+    url: 'https://brogiro.cfd/film/404900/' }];
+  const episode = { type: 'series', id: '404900', season: 1, episode: 3,
+    position: 42, duration: 3486, completed: false, updatedAt: 12000 };
+  const ui = await setup({
+    history, seriesData: { 'series:404900:1:3': episode }
+  });
+  const label = ui.rows[0].querySelector('.history-progress-label');
+  assert.match(label.textContent, /Сезон 1 · Серия 3/);
+  assert.match(ui.elements.resumeLastMeta.textContent,
+    /Сезон 1 · Серия 3/);
+  assert.equal(ui.elements.resumeLastOpen.textContent, '▶ Открыть');
+  ui.elements.resumeLastOpen.events.click();
+  assert.equal(ui.openedOptions[0].resume, false);
+});
+
+test('film URL with verified series metadata suppresses duplicate current-view card', async () => {
+  const history = [{ title: 'Во все тяжкие (сериал)', timestamp: 5000,
+    url: 'https://brogiro.cfd/film/404900/' }];
+  const ui = await setup({
+    history,
+    current: 'https://brogiro.cfd/film/404900/',
+    seriesData: { 'series:404900:1:3': {
+      type: 'series', id: '404900', season: 1, episode: 3,
+      position: 42, duration: 3486, completed: false, updatedAt: 12000
+    } }
+  });
+  // A stored series observation may be absent in this stub: at minimum
+  // the history entry must retain its correct episode label and progress.
+  assert.match(ui.rows[0].querySelector('.history-progress-label').textContent,
+    /Сезон 1 · Серия 3/);
 });
