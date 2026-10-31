@@ -19,6 +19,7 @@
   let playedSeconds = 0;
   let lastSentAt = 0;
   let scanTimer = null;
+  let statsTrackingId = crypto.randomUUID();
 
   const now = () => Date.now();
   function viable(video) {
@@ -65,6 +66,7 @@
         currentTime: Math.round(time * 10) / 10,
         duration: Math.round(duration * 10) / 10,
         playedSeconds: Math.round(playedSeconds),
+        statsTrackingId,
         event: eventType
       }
     };
@@ -83,6 +85,7 @@
       lastTime = null;
       confirmedSamples = 0;
       playedSeconds = 0;
+      statsTrackingId = crypto.randomUUID();
       lastSampleAt = 0;
       lastSentAt = 0;
     }
