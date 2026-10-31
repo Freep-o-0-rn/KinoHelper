@@ -134,8 +134,11 @@ test('observer skips invalid ad video and sends real progress and pause', () => 
     ...primary, duration: NaN, readyState: 0, videoWidth: 0,
     videoHeight: 0, paused: true, addEventListener() {}
   };
+  const documentEvents = {};
   const document = {
     documentElement: {},
+    hidden: false,
+    addEventListener(name, cb) { documentEvents[name] = cb; },
     querySelectorAll(selector) {
       return selector === 'video' ? [primary, empty] : [];
     }
@@ -175,6 +178,11 @@ test('observer skips invalid ad video and sends real progress and pause', () => 
   for (const callback of handlers.seeked || []) callback();
   assert.equal(messages[messages.length - 1].payload.event, 'seeked');
   assert.equal(messages[messages.length - 1].payload.currentTime, 120);
+  primary.currentTime = 122;
+  document.hidden = true;
+  documentEvents.visibilitychange();
+  assert.equal(messages[messages.length - 1].payload.event, 'hidden');
+  assert.equal(messages[messages.length - 1].payload.currentTime, 122);
 });
 
 
