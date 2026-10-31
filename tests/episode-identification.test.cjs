@@ -266,6 +266,29 @@ test('a lost episode selection clears stale metadata', async () => {
   assert.equal(await t.api.getEpisodeIdentity(7, t.extension), null);
 });
 
+test('real series in /film/<id> is confirmed by selected iframe episode', async () => {
+  const t = makeWorker();
+  t.tab.url = 'https://brogiro.cfd/film/123/';
+  t.setSession({ type: 'film', id: '123', title: 'Сериал 123',
+    currentUrl: t.tab.url });
+  assert.equal(await t.api.getEpisodeIdentity(7, t.extension), null);
+  const observed = await t.api.saveEpisodeObservation(
+    { season: 1, episode: 3 }, t.sender(457));
+  assert.equal(observed.ok, true);
+  const identity = await t.api.getEpisodeIdentity(7, t.extension);
+  assert.equal(identity?.seriesId, '123');
+  assert.equal(identity?.season, 1);
+  assert.equal(identity?.episode, 3);
+  assert.equal(JSON.stringify(t.sessionData).includes('PRIVATE'), false);
+});
+
+test('film-format URL alone does not grant access to series progress', async () => {
+  const t = makeWorker();
+  t.tab.url = 'https://brogiro.cfd/film/123/';
+  t.setSession({ type: 'film', id: '123', currentUrl: t.tab.url });
+  assert.equal(await t.api.getEpisodeIdentity(7, t.extension), null);
+});
+
 test('background refuses film tabs and untrusted sender origins', async () => {
   const t = makeWorker();
   const untrusted = await t.api.saveEpisodeObservation(
@@ -274,6 +297,7 @@ test('background refuses film tabs and untrusted sender origins', async () => {
   assert.equal(untrusted.ok, false);
   t.tab.url = 'https://brogiro.cfd/film/123/';
   t.setSession({ type: 'film', id: '123', currentUrl: t.tab.url });
-  assert.equal((await t.api.saveEpisodeObservation(
-    { season: 1, episode: 1 }, t.sender(0))).ok, false);
+  // A genuine player selection makes /film/ a valid series route.
+  // Without a selection, a film URL alone cannot create an episode identity.
+  assert.equal(await t.api.getEpisodeIdentity(7, t.extension), null);
 });
