@@ -16,6 +16,10 @@
   let episodeProgress = Object.create(null);
   let history = [];
   let currentKey = '';
+  let activeWatchPage = false;
+  // Hide the card until the first active-tab check completes. A storage
+  // response must not briefly reveal it while a player tab is loading.
+  let checkingActiveTab = true;
   let selected = null;
   let storageReadSequence = 0;
   let tabReadSequence = 0;
@@ -30,6 +34,17 @@
     } catch {
       return null;
     }
+  }
+
+  function isKnownWatchMediaPage(raw) {
+    try {
+      const url = new URL(raw);
+      // These are watch providers, not Kinopoisk's catalog pages.
+      return url.protocol === 'https:' &&
+        ['brogiro.cfd', 'www.kinokino.vip', 'flcksbr.top']
+          .includes(url.hostname.toLowerCase()) &&
+        Boolean(mediaFromUrl(raw));
+    } catch { return false; }
   }
 
   function validEntry(item) {
@@ -219,6 +234,15 @@
   }
 
   function renderLast() {
+    // "Сейчас смотрите" owns the player view. Never display a competing
+    // "Последний просмотр" card there — including on /film/<id> URLs
+    // whose iframe is actually a series. This guard also applies to
+    // asynchronous storage updates every five seconds.
+    if (checkingActiveTab || activeWatchPage) {
+      selected = null;
+      panel.hidden = true;
+      return;
+    }
     const latest = recentCandidates().find(item => item.media.key !== currentKey);
     selected = latest || null;
     panel.hidden = !selected;
@@ -284,18 +308,22 @@
 
   async function updateActive() {
     const seq = ++tabReadSequence;
+    checkingActiveTab = true;
+    panel.hidden = true;
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (seq !== tabReadSequence) return;
-      const media = mediaFromUrl(tab?.url);
-      // Only the watch tab is "currently watching". A Kinopoisk catalog
-      // page should not suppress a genuine last-view entry.
-      const isKinopoisk = /^https:\/\/www\.kinopoisk\.ru\//.test(tab?.url || '');
-      const currentIsWatchPage = media && !isKinopoisk;
-      let key = currentIsWatchPage ? media.key : '';
-      // Some watch providers redirect to a non-canonical URL. Recover a
-      // verified watch session only if its current URL still matches this tab.
-      if (!key && !isKinopoisk && Number.isInteger(tab?.id) &&
+
+      // Detect the *page*, not the media type: the video provider also
+      // serves series at /film/<id>. No iframe observation is required
+      // just to hide "Последний просмотр".
+      let watching = isKnownWatchMediaPage(tab?.url);
+      let key = watching ? mediaFromUrl(tab.url).key : '';
+
+      // For redirects to other domains, trust only a current watch session
+      // verified by the background worker, never an arbitrary /film/ URL.
+      const onKinopoisk = /^https:\/\/www\.kinopoisk\.ru\//.test(tab?.url || '');
+      if (!watching && !onKinopoisk && Number.isInteger(tab?.id) &&
           /^https:\/\//.test(tab?.url || '')) {
         try {
           const reply = await chrome.runtime.sendMessage({
@@ -306,26 +334,21 @@
           if (session?.currentUrl === tab.url &&
               ['film', 'series'].includes(session.type) &&
               /^[1-9]\d{0,12}$/.test(String(session.id))) {
+            watching = true;
             key = session.type + ':' + session.id;
           }
-        } catch { /* No valid session: do not guess film identity. */ }
+        } catch { /* No trusted watch session. */ }
       }
-      if (key.startsWith('film:') && Number.isInteger(tab?.id)) {
-        try {
-          const reply = await chrome.runtime.sendMessage({
-            action: 'kinoGetEpisodeIdentity', tabId: tab.id
-          });
-          if (seq !== tabReadSequence) return;
-          if (reply?.ok && String(reply.identity?.seriesId) ===
-              key.slice('film:'.length)) {
-            key = 'series:' + reply.identity.seriesId;
-          }
-        } catch { /* No verified episode observation. */ }
-      }
+
+      if (seq !== tabReadSequence) return;
+      activeWatchPage = watching;
+      checkingActiveTab = false;
       currentKey = key;
       renderLast();
     } catch {
       if (seq !== tabReadSequence) return;
+      activeWatchPage = false;
+      checkingActiveTab = false;
       currentKey = '';
       renderLast();
     }
@@ -360,9 +383,18 @@
     if (typeof info.url === 'string' || info.status === 'complete') void updateActive();
   });
   chrome.tabs.onRemoved.addListener(() => void updateActive());
+  chrome.runtime?.onMessage?.addListener(message => {
+    if (message?.action === 'kinoWatchSessionChanged' ||
+        message?.action === 'kinoEpisodeSelectionChanged') {
+      void updateActive();
+    }
+  });
   window.addEventListener('focus', () => {
     void updateActive();
     void readStorage();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) void updateActive();
   });
 
   window.KinoResumeUI = { updateHistory, readStorage, updateActive,
