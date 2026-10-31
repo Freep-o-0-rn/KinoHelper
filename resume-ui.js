@@ -78,6 +78,19 @@
     return 'Сезон ' + item.season + ' · Серия ' + item.episode;
   }
 
+  function displayMediaForEntry(entry) {
+    const media = mediaFromUrl(entry?.url);
+    if (!media || media.type !== 'film') return media;
+    // /film/<id> also hosts series on this provider. A verified episode
+    // checkpoint takes precedence. The explicit "(сериал)" history suffix
+    // is display-only; it must never authorize saving or restoring a video.
+    const labeledSeries = /\(\s*(?:сериал|series)\s*\)\s*$/i
+      .test(String(entry?.title || ''));
+    return latestSeriesEpisode(media.id) || labeledSeries
+      ? { ...media, type: 'series', key: 'series:' + media.id }
+      : media;
+  }
+
   function percentage(item) {
     // Без события завершения не показываем ложные 100% при округлении.
     return item.completed ? 100 :
@@ -126,7 +139,10 @@
   function decorateHistory() {
     const rows = document.querySelectorAll('.history-item[data-kino-media-key]');
     for (const row of rows) {
-      const key = row.dataset.kinoMediaKey;
+      const originalKey = row.dataset.kinoMediaKey;
+      const entry = history.find(value =>
+        mediaFromUrl(value?.url)?.key === originalKey);
+      const key = displayMediaForEntry(entry)?.key || originalKey;
       const media = /^series:([1-9]\d{0,12})$/.exec(key);
       const item = media ? latestSeriesEpisode(media[1]) : positionFor(key);
       let block = row.querySelector('.history-item-progress');
@@ -165,7 +181,7 @@
     const unique = new Map();
     for (const entry of history) {
       if (!entry || typeof entry.url !== 'string') continue;
-      const media = mediaFromUrl(entry.url);
+      const media = displayMediaForEntry(entry);
       if (!media || unique.has(media.key)) continue;
       const saved = savedForMedia(media, false);
       // A series with only completed episodes is not a resume candidate.
@@ -211,7 +227,7 @@
       updateTrack(track, saved);
     } else {
       lastMeta.textContent = selected.media.type === 'series'
-        ? 'Сериал · таймкод серии пока недоступен'
+        ? 'Сериал · таймкод серии пока не сохранён'
         : 'Фильм · таймкод пока не сохранён';
       lastProgress.hidden = true;
     }
@@ -280,6 +296,18 @@
             key = session.type + ':' + session.id;
           }
         } catch { /* No valid session: do not guess film identity. */ }
+      }
+      if (key.startsWith('film:') && Number.isInteger(tab?.id)) {
+        try {
+          const reply = await chrome.runtime.sendMessage({
+            action: 'kinoGetEpisodeIdentity', tabId: tab.id
+          });
+          if (seq !== tabReadSequence) return;
+          if (reply?.ok && String(reply.identity?.seriesId) ===
+              key.slice('film:'.length)) {
+            key = 'series:' + reply.identity.seriesId;
+          }
+        } catch { /* No verified episode observation. */ }
       }
       currentKey = key;
       renderLast();
