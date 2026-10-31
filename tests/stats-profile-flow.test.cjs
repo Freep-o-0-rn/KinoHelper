@@ -9,7 +9,7 @@ const parser = require('../stats-profile-import.js');
 const script = readFileSync(path.join(__dirname, '..', 'stats.js'),'utf8');
 class Node {
   constructor() {
-    this.events = {}; this.children = []; this.style = {};
+    this.events = {}; this.children = []; this.style = {}; this.dataset = {};
     this.hidden = false; this.value = ''; this.textContent = '';
     this.classList = { add(){}, remove(){}, toggle(){} };
   }
