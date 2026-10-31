@@ -7,7 +7,8 @@
   const JOB='kinoStatsImportJobV2';
   const RATINGS='kinoStatsRatingsV1';
   const LEGACY='kinoStatsProfileImportV1';
-  const PAGE_DELAY=60 * 1000;
+  // Chrome may delay alarms; 30 seconds is the conservative MV3 cadence.
+  const PAGE_DELAY=30 * 1000;
   const REFRESH_DELAY=24 * 60 * 60 * 1000;
   const MAX_PAGE=20000; // Security ceiling, not a per-session batch limit.
   const PROFILE=/^[1-9]\d{0,12}$/;
