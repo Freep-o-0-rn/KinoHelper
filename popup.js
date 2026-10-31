@@ -199,8 +199,15 @@ async function endWatchSession(tabId) {
     });
 }
 
-async function openTrackedWatchTab(watchUrl, returnUrl = null, title = '', { resume = false } = {}) {
-    const resolvedReturnUrl = returnUrl || buildKinopoiskUrl(watchUrl);
+async function openTrackedWatchTab(watchUrl, returnUrl = null, title = '',
+    { resume = false, resumeTarget = null } = {}) {
+    const urlMedia = parseMediaUrl(watchUrl);
+    const seriesTarget = resumeTarget?.kind === 'series' &&
+        urlMedia && String(urlMedia.id) === String(resumeTarget.id) &&
+        Number.isInteger(resumeTarget.season) && Number.isInteger(resumeTarget.episode);
+    const resolvedReturnUrl = seriesTarget
+        ? `${KINOPOISK_BASE}/series/${urlMedia.id}/`
+        : returnUrl || buildKinopoiskUrl(watchUrl);
 
     if (!resolvedReturnUrl) {
         return chrome.tabs.create({ url: watchUrl });
@@ -209,10 +216,18 @@ async function openTrackedWatchTab(watchUrl, returnUrl = null, title = '', { res
     const tab = await chrome.tabs.create({ url: 'about:blank', active: false });
     const started = await startWatchSessionForTab(tab.id, resolvedReturnUrl, watchUrl, title);
     if (resume && started) {
-        const media = parseMediaUrl(watchUrl);
-        if (media?.type === 'film') {
+        if (seriesTarget) {
             const armed = await sendBackgroundMessage({
-                action: 'kinoResumeArm', tabId: tab.id, filmId: media.id
+                action: 'kinoSeriesResumeArm', tabId: tab.id,
+                seriesId: String(urlMedia.id),
+                season: resumeTarget.season, episode: resumeTarget.episode
+            });
+            if (!armed?.ok) {
+                debugLog('Серия откроется без перемотки:', armed?.reason || 'нет контрольной точки');
+            }
+        } else if (urlMedia?.type === 'film' && resumeTarget?.kind !== 'series') {
+            const armed = await sendBackgroundMessage({
+                action: 'kinoResumeArm', tabId: tab.id, filmId: urlMedia.id
             });
             if (!armed?.ok) {
                 debugLog('Продолжение без перемотки:', armed?.reason || 'нет сохранённой позиции');
@@ -225,9 +240,10 @@ async function openTrackedWatchTab(watchUrl, returnUrl = null, title = '', { res
     return tab;
 }
 
-async function openHistoryUrl(url, title = '', { resume = false } = {}) {
+async function openHistoryUrl(url, title = '', { resume = false, resumeTarget = null } = {}) {
     if (parseMediaUrl(url)) {
-        await openTrackedWatchTab(url, buildKinopoiskUrl(url), title, { resume });
+        await openTrackedWatchTab(url, buildKinopoiskUrl(url), title,
+            { resume, resumeTarget });
         return;
     }
     await chrome.tabs.create({ url });
@@ -530,7 +546,11 @@ function addToHistory(title, url) {
 }
 
 function removeFromHistory(url) {
-    const history = getHistory().filter(item => item.url !== url);
+    const target = parseMediaUrl(url);
+    const history = getHistory().filter(item => {
+        const media = parseMediaUrl(item.url);
+        return target && media ? media.id !== target.id : item.url !== url;
+    });
     saveHistory(history);
     updateHistoryView();
 }
@@ -552,18 +572,28 @@ function setHistoryCollapsed(collapsed) {
 
 function updateHistoryView() {
     const history = getHistory();
+    // One row per Kinopoisk title, including providers that use both
+    // /film/<id> and /series/<id>. Raw imported history remains untouched.
+    const seen = new Set();
+    const displayed = history.filter(item => {
+        const media = parseMediaUrl(item.url);
+        const key = media ? 'media:' + media.id : 'url:' + item.url;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
 
-    if (!history.length) {
+    if (!displayed.length) {
         historySection.style.display = 'none';
         historyItems.innerHTML = '';
-        window.KinoResumeUI?.updateHistory(history);
+        window.KinoResumeUI?.updateHistory(displayed);
         return;
     }
 
     historySection.style.display = 'block';
     historyItems.innerHTML = '';
 
-    history.forEach(item => {
+    displayed.forEach(item => {
         const historyItem = document.createElement('div');
         historyItem.className = 'history-item';
         const media = parseMediaUrl(item.url);
@@ -577,7 +607,10 @@ function updateHistoryView() {
         title.textContent = item.title || 'Неизвестно';
         title.title = item.title || 'Неизвестно';
         title.addEventListener('click', () => {
-            void openHistoryUrl(item.url, item.title);
+            const target = window.KinoResumeUI?.resumeTargetFor(item) || null;
+            void openHistoryUrl(item.url, item.title, {
+                resume: Boolean(target), resumeTarget: target
+            });
         });
 
         const actions = document.createElement('div');
@@ -589,7 +622,10 @@ function updateHistoryView() {
         openButton.textContent = '▶';
         openButton.title = 'Открыть';
         openButton.addEventListener('click', () => {
-            void openHistoryUrl(item.url, item.title);
+            const target = window.KinoResumeUI?.resumeTargetFor(item) || null;
+            void openHistoryUrl(item.url, item.title, {
+                resume: Boolean(target), resumeTarget: target
+            });
         });
 
         const removeButton = document.createElement('button');
@@ -604,7 +640,7 @@ function updateHistoryView() {
         historyItem.append(main, actions);
         historyItems.appendChild(historyItem);
     });
-    window.KinoResumeUI?.updateHistory(history);
+    window.KinoResumeUI?.updateHistory(displayed);
 }
 
 function showMessage(text, type = 'info') {
