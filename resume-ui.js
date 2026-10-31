@@ -3,6 +3,7 @@
 (() => {
   'use strict';
   const PROGRESS_KEY = 'kinoPlaybackProgressV1';
+  const SERIES_KEY = 'kinoSeriesEpisodeProgressV1';
   const HISTORY_KEY = 'kinopoiskHistory';
   const panel = document.getElementById('resumeLast');
   const lastTitle = document.getElementById('resumeLastTitle');
@@ -12,6 +13,7 @@
   if (!panel || !lastTitle || !lastMeta || !lastProgress || !lastOpen) return;
 
   let progress = Object.create(null);
+  let episodeProgress = Object.create(null);
   let history = [];
   let currentKey = '';
   let selected = null;
@@ -44,6 +46,36 @@
     if (!/^film:\d+$/.test(key)) return null;
     const item = progress[key];
     return validEntry(item) && key === 'film:' + String(item.id) ? item : null;
+  }
+
+  function latestSeriesEpisode(seriesId, includeCompleted = true) {
+    if (!/^[1-9]\d{0,12}$/.test(String(seriesId))) return null;
+    const candidates = [];
+    for (const [key, entry] of Object.entries(episodeProgress)) {
+      if (!entry || entry.type !== 'series' || String(entry.id) !== String(seriesId) ||
+          !Number.isInteger(entry.season) || !Number.isInteger(entry.episode) ||
+          entry.season < 1 || entry.season > 250 ||
+          entry.episode < 1 || entry.episode > 250 ||
+          key !== 'series:' + seriesId + ':' + entry.season + ':' + entry.episode ||
+          !Number.isFinite(entry.position) || entry.position < 0 ||
+          !Number.isFinite(entry.duration) || entry.duration < 60 ||
+          entry.duration > 8 * 3600 ||
+          entry.position > entry.duration + 2 ||
+          !Number.isFinite(entry.updatedAt) || entry.updatedAt <= 0 ||
+          (!includeCompleted && entry.completed)) continue;
+      candidates.push(entry);
+    }
+    return candidates.sort((a,b) => b.updatedAt - a.updatedAt)[0] || null;
+  }
+
+  function savedForMedia(media, includeCompleted = true) {
+    return media?.type === 'series'
+      ? latestSeriesEpisode(media.id, includeCompleted)
+      : positionFor(media?.key);
+  }
+
+  function episodeLabel(item) {
+    return 'Сезон ' + item.season + ' · Серия ' + item.episode;
   }
 
   function percentage(item) {
@@ -95,7 +127,8 @@
     const rows = document.querySelectorAll('.history-item[data-kino-media-key]');
     for (const row of rows) {
       const key = row.dataset.kinoMediaKey;
-      const item = positionFor(key);
+      const media = /^series:([1-9]\d{0,12})$/.exec(key);
+      const item = media ? latestSeriesEpisode(media[1]) : positionFor(key);
       let block = row.querySelector('.history-item-progress');
       if (!item) {
         if (block) block.remove();
@@ -116,10 +149,13 @@
       const track = block.querySelector('.history-progress-track');
       if (track) updateTrack(track, item);
       const label = block.querySelector('.history-progress-label');
-      if (label) label.textContent = item.completed
-        ? '✓ Просмотрено · ' + formatTime(item.duration)
-        : formatTime(item.position) + ' / ' + formatTime(item.duration) +
-          ' · ' + pct + '%';
+      if (label) {
+        const prefix = item.type === 'series' ? episodeLabel(item) + ' · ' : '';
+        label.textContent = prefix + (item.completed
+          ? '✓ Просмотрено · ' + formatTime(item.duration)
+          : formatTime(item.position) + ' / ' + formatTime(item.duration) +
+            ' · ' + pct + '%');
+      }
     }
   }
 
@@ -131,9 +167,11 @@
       if (!entry || typeof entry.url !== 'string') continue;
       const media = mediaFromUrl(entry.url);
       if (!media || unique.has(media.key)) continue;
-      const saved = positionFor(media.key);
-      // Finished films are excluded from the last-view card. The historical
-      // entry still displays its 100% progress bar.
+      const saved = savedForMedia(media, false);
+      // A series with only completed episodes is not a resume candidate.
+      // Completed episodes remain visible (100%) in the history bar.
+      if (media.type === 'series' && !saved &&
+          latestSeriesEpisode(media.id, true)) continue;
       if (saved?.completed) continue;
       const activity = Math.max(
         Number.isFinite(entry.timestamp) ? entry.timestamp : 0,
@@ -160,7 +198,9 @@
     const saved = selected.saved;
     if (saved && saved.position >= 2) {
       const percent = percentage(saved);
-      lastMeta.textContent = 'Сохранено ' + formatTime(saved.position) + ' / ' +
+      lastMeta.textContent = (saved.type === 'series'
+        ? episodeLabel(saved) + ' · ' : '') +
+        'Сохранено ' + formatTime(saved.position) + ' / ' +
         formatTime(saved.duration) + ' · ' + percent + '%';
       lastProgress.hidden = false;
       let track = lastProgress.querySelector('.resume-last-track');
@@ -192,10 +232,17 @@
   async function readStorage() {
     const sequence = ++storageReadSequence;
     try {
-      const stored = (await chrome.storage.local.get(PROGRESS_KEY))[PROGRESS_KEY];
+      const [filmData, seriesData] = await Promise.all([
+        chrome.storage.local.get(PROGRESS_KEY),
+        chrome.storage.local.get(SERIES_KEY)
+      ]);
       if (sequence !== storageReadSequence) return;
+      const stored = filmData[PROGRESS_KEY];
+      const episodes = seriesData[SERIES_KEY];
       progress = stored && typeof stored === 'object' && !Array.isArray(stored)
         ? stored : Object.create(null);
+      episodeProgress = episodes && typeof episodes === 'object' && !Array.isArray(episodes)
+        ? episodes : Object.create(null);
       render();
     } catch (error) {
       console.warn('[KinoHelper resume] Прогресс временно недоступен:', error);
@@ -263,7 +310,8 @@
   });
 
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && changes[PROGRESS_KEY]) void readStorage();
+    if (area === 'local' && (changes[PROGRESS_KEY] || changes[SERIES_KEY]))
+      void readStorage();
   });
 
   chrome.tabs.onActivated.addListener(() => void updateActive());
