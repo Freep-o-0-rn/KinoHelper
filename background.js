@@ -1676,6 +1676,12 @@ async function saveResumeProgress(payload, sender) {
     origins: [RESUME_PLAYER_ORIGIN]
   });
   if (!allowed) return { ok: false, skipped: 'player access revoked' };
+  // A series may use a film-looking URL. An armed series restoration
+  // prevents any film progress from contaminating the same media ID.
+  const seriesPending = (await chrome.storage.session.get(seriesPendingKey(sender.tab.id)))
+    [seriesPendingKey(sender.tab.id)];
+  if (seriesPending && Date.now() - seriesPending.createdAt < SERIES_PENDING_TTL_MS)
+    return {ok:false,skipped:'series restoration active'};
   const film = await resumeIdentifyFilm(sender.tab.id);
   if (!film) return { ok: false, skipped: 'movie identification unavailable' };
   const pending = (await chrome.storage.session.get(pendingResumeKey(sender.tab.id)))
@@ -1970,6 +1976,123 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 
+// 1.555 — one-shot episode restoration, distinct from film checkpoints.
+// The extension UI arms a specific stored episode BEFORE navigating a new tab.
+// The iframe must select and verify that episode before touching currentTime.
+const SERIES_PENDING_PREFIX = 'kinoSeriesResumePending:';
+const SERIES_PENDING_TTL_MS = 120000;
+const seriesPendingKey = tabId => SERIES_PENDING_PREFIX + tabId;
+
+function episodeRecord(seriesId, season, episode, source) {
+  const key = 'series:' + seriesId + ':' + season + ':' + episode;
+  const item = source?.[key];
+  if (!item || item.type !== 'series' || item.completed ||
+      String(item.id) !== String(seriesId) ||
+      item.season !== season || item.episode !== episode ||
+      !Number.isFinite(item.position) || item.position < 10 ||
+      !Number.isFinite(item.duration) || item.duration < 60 ||
+      item.duration > 8 * 3600 || item.position > item.duration - 25)
+    return null;
+  return { key, position: item.position, duration: item.duration };
+}
+
+async function armSeriesResume(tabId, seriesId, season, episode, sender) {
+  if (sender?.id !== chrome.runtime.id ||
+      !sender?.url?.startsWith(chrome.runtime.getURL('')) ||
+      !Number.isInteger(tabId) || tabId < 0 ||
+      !/^[1-9]\d{0,12}$/.test(String(seriesId)) ||
+      !Number.isInteger(season) || season < 1 || season > 250 ||
+      !Number.isInteger(episode) || episode < 1 || episode > 250)
+    return { ok: false, reason: 'invalid resume request' };
+
+  const session = await getSession(tabId);
+  if (!session || String(session.id) !== String(seriesId) ||
+      Date.now() - session.startedAt > 60000 ||
+      !session.watchUrl || !['film','series'].includes(session.type)) {
+    return { ok: false, reason: 'watch session does not match series' };
+  }
+  const urlId = parseMedia(session.watchUrl);
+  if (!urlId || urlId.id !== String(seriesId)) {
+    return { ok: false, reason: 'watch address does not match series' };
+  }
+  const items = (await chrome.storage.local.get(SERIES_PROGRESS_KEY))[SERIES_PROGRESS_KEY];
+  const checkpoint = episodeRecord(seriesId, season, episode, items);
+  if (!checkpoint) return { ok: false, reason: 'no resumable episode checkpoint' };
+  await chrome.storage.session.set({
+    [seriesPendingKey(tabId)]: {
+      seriesId: String(seriesId), season, episode,
+      position: checkpoint.position, duration: checkpoint.duration,
+      createdAt: Date.now()
+    }
+  });
+  return { ok: true, position: checkpoint.position };
+}
+
+async function seriesPendingForFrame(sender) {
+  if (!resumeSourceIsTrusted(sender)) return null;
+  const tabId = sender.tab.id;
+  const key = seriesPendingKey(tabId);
+  const data = (await chrome.storage.session.get(key))[key];
+  if (!data) return null;
+  if (!Number.isFinite(data.createdAt) ||
+      Date.now() - data.createdAt >= SERIES_PENDING_TTL_MS) {
+    await chrome.storage.session.remove(key);
+    return null;
+  }
+  const tab = await chrome.tabs.get(tabId);
+  const route = parseMedia(tab?.url || '');
+  const session = await getSession(tabId);
+  // /film/ and /series/ are both used for series by this provider.
+  if (!route || route.id !== data.seriesId ||
+      !session || String(session.id) !== data.seriesId)
+    return null;
+  return data;
+}
+
+async function confirmSeriesSeek(sender, payload) {
+  const target = await seriesPendingForFrame(sender);
+  if (!target || Number(payload?.season) !== target.season ||
+      Number(payload?.episode) !== target.episode ||
+      !Number.isFinite(payload?.position) ||
+      Math.abs(payload.position - target.position) > 3 ||
+      !Number.isFinite(payload?.duration) ||
+      Math.abs(payload.duration - target.duration) >
+        Math.max(15, target.duration * 0.015)) return {ok:false};
+
+  // The independent episode detector must also confirm the *same* iframe
+  // is showing the intended season/episode.
+  if (!await episodeSourceMatches(sender.tab.id, sender.frameId,
+      target.seriesId, target.season, target.episode)) return {ok:false};
+
+  await chrome.storage.session.remove(seriesPendingKey(sender.tab.id));
+  return {ok:true};
+}
+
+chrome.tabs.onRemoved.addListener(tabId => {
+  void chrome.storage.session.remove(seriesPendingKey(tabId)).catch(() => {});
+});
+
+chrome.runtime.onMessage.addListener((message, sender, respond) => {
+  if (message?.action === 'kinoSeriesResumeArm') {
+    armSeriesResume(message.tabId, String(message.seriesId),
+      Number(message.season), Number(message.episode), sender)
+      .then(respond).catch(error => respond({ok:false,error:error.message}));
+    return true;
+  }
+  if (message?.action === 'kinoSeriesResumeGetPending') {
+    seriesPendingForFrame(sender)
+      .then(pending => respond({ok:Boolean(pending),pending}))
+      .catch(() => respond({ok:false}));
+    return true;
+  }
+  if (message?.action === 'kinoSeriesResumeAcknowledge') {
+    confirmSeriesSeek(sender, message.payload)
+      .then(respond).catch(() => respond({ok:false}));
+    return true;
+  }
+  return false;
+});
+
 // 1.553: Episode checkpoints are isolated from film progress. We write only
 // when the iframe's own confirmed selector AND the parent series ID agree.
 // No automatic series seeking/selecting in this stage.
@@ -2007,6 +2130,14 @@ async function saveSeriesEpisodeProgress(payload, sender) {
   });
   if (!granted) return { ok: false, skipped: 'player permission revoked' };
 
+  const pending = (await chrome.storage.session.get(seriesPendingKey(sender.tab.id)))
+    [seriesPendingKey(sender.tab.id)];
+  // While selecting an episode / seeking, never replace its saved checkpoint
+  // with initial playback from the provider's default episode.
+  if (pending && Number.isFinite(pending.createdAt) &&
+      Date.now() - pending.createdAt < SERIES_PENDING_TTL_MS) {
+    return {ok:false, skipped:'restoring episode selection'};
+  }
   const series = await trustedSeriesTab(sender.tab.id);
   if (!series) return { ok: false, skipped: 'not a known series tab' };
   if (!await episodeSourceMatches(sender.tab.id, sender.frameId,
