@@ -1751,12 +1751,31 @@ async function injectResumeIntoOpenTabs() {
   }
 }
 
+async function migrateLegacyResumeRegistration() {
+  // 1.545/1.546 registered this script dynamically. 1.547 uses the manifest.
+  // Remove the old registration to avoid extra work or duplicate injections.
+  const legacyId = 'kino-playback-tracker-v1';
+  try {
+    const old = await chrome.scripting.getRegisteredContentScripts({ ids: [legacyId] });
+    if (old.length) {
+      await chrome.scripting.unregisterContentScripts({ ids: [legacyId] });
+    }
+  } catch (error) {
+    console.warn('[KinoHelper] Не удалось удалить старую регистрацию:', error);
+  }
+}
+
+async function prepareResumeTracking() {
+  await migrateLegacyResumeRegistration();
+  await injectResumeIntoOpenTabs();
+}
+
 chrome.runtime.onInstalled.addListener(() => {
-  void injectResumeIntoOpenTabs().catch(error =>
+  void prepareResumeTracking().catch(error =>
     console.warn('[KinoHelper] Не удалось подключить отслеживание после обновления:', error));
 });
 chrome.runtime.onStartup.addListener(() => {
-  void injectResumeIntoOpenTabs().catch(error =>
+  void prepareResumeTracking().catch(error =>
     console.warn('[KinoHelper] Не удалось подключить отслеживание после запуска:', error));
 });
 
