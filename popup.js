@@ -354,6 +354,10 @@ async function submitRating(rating) {
         context.rating = rating;
         applyCurrentRating(rating);
         setRatingStatus(`Оценка ${rating} сохранена`, 'success');
+        // Only a server-confirmed vote is eligible for statistics.
+        void window.KinoStats?.recordConfirmedRating({
+            type: context.type, id: context.id, rating
+        }).catch(error => debugLog('Статистика оценки:', error));
     } else {
         applyCurrentRating(previousRating);
         const message = response?.authRequired
@@ -419,6 +423,12 @@ async function showRatingCard(media) {
 
     context.rating = Number.isInteger(Number(response.rating)) ? Number(response.rating) : null;
     applyCurrentRating(context.rating);
+    // A verified vote returned by the currently authorized account.
+    if (context.rating >= 1 && context.rating <= 10) {
+        void window.KinoStats?.recordConfirmedRating({
+            type: context.type, id: context.id, rating: context.rating
+        }).catch(error => debugLog('Статистика оценки:', error));
+    }
     setRatingStatus(context.rating ? 'Нажмите число, чтобы изменить оценку' : 'Нажмите число, чтобы поставить оценку', 'info');
     setRatingButtonsDisabled(false);
     return response;
@@ -656,6 +666,7 @@ function showMessage(text, type = 'info') {
 }
 
 function openSettings() {
+    window.KinoStats?.close();
     document.body.classList.add('settings-open');
     settingsButton.classList.add('active');
     settingsButton.dataset.tooltip = 'Вернуться в главное меню';
