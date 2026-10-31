@@ -107,7 +107,8 @@
     }
 
     if (confirmedSamples < 2 || playedSeconds < 2) return;
-    if (eventType === 'pause' || eventType === 'pagehide') {
+    if (eventType === 'pause' || eventType === 'pagehide' ||
+        eventType === 'hidden') {
       send(video, eventType);
     } else if (!video.paused && timestamp - lastSentAt >= SAVE_INTERVAL_MS) {
       send(video, 'playing');
@@ -153,6 +154,12 @@
     const primary = selectPrimary();
     if (primary) consider(primary, 'heartbeat');
   }, 2000);
+
+  // Persist the most recent position when leaving the tab, rather than
+  // relying on the final pagehide message reaching a terminating service worker.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && current) consider(current, 'hidden');
+  });
 
   window.addEventListener('pagehide', () => {
     if (current) consider(current, 'pagehide');
