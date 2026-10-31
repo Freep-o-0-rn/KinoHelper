@@ -106,3 +106,107 @@ test('marks completed episode without making next episode completed',async()=>{
   await m.save(1,4,60);
   assert.equal(m.local.kinoSeriesEpisodeProgressV1['series:404900:1:4'].completed,false);
 });
+
+
+test('video observer never assigns old stream progress to newly selected episode', async () => {
+  const tracker = fs.readFileSync(path.join(__dirname, '..',
+    'series-progress-tracker.js'), 'utf8');
+  const callbacks = {};
+  const messages = [];
+  let timeMs = 100000;
+  let videoTime = 0;
+  let source = 'blob:episode-3';
+  let episode = 3;
+  let selectorPresent = true;
+  const video = {
+    isConnected: true, duration: 1800, readyState: 4, paused: false,
+    seeking: false, ended: false, videoWidth: 854, videoHeight: 480,
+    playbackRate: 1,
+    get currentTime() { return videoTime; },
+    get currentSrc() { return source; },
+    getBoundingClientRect() { return { width: 854, height: 480 }; },
+    addEventListener(name, callback) { (callbacks[name] ||= []).push(callback); }
+  };
+  const btn = text => ({
+    textContent: text, hidden: false,
+    getAttribute() { return null; },
+    getBoundingClientRect() { return { width: 120, height: 32 }; }
+  });
+  const page = {
+    documentElement: {}, hidden: false,
+    addEventListener() {},
+    querySelectorAll(selector) {
+      if (selector === 'video') return [video];
+      if (selector === 'button.select__item') return selectorPresent ?
+        [btn('Сезон 1'), btn('Серия ' + episode)] : [];
+      return [];
+    }
+  };
+  const context = {
+    globalThis: {}, document: page, Date: { now: () => timeMs },
+    chrome: { runtime: { id:'kino-test',
+      sendMessage: async message => { messages.push(message); return {ok:true}; } } },
+    MutationObserver: class { observe() {} disconnect() {} },
+    setInterval() { return 1; }, clearInterval() {},
+    window: { addEventListener() {} }
+  };
+  vm.createContext(context);
+  vm.runInContext(tracker, context);
+  const step = count => {
+    for (let i=0; i<count; i++) {
+      timeMs += 250;
+      videoTime += 0.25;
+      for (const fn of callbacks.timeupdate || []) fn();
+    }
+  };
+  step(60);
+  const original = messages.length;
+  assert.ok(original >= 2);
+  assert.ok(messages.every(m=>m.payload.episode===3));
+  selectorPresent = false;
+  step(1);
+  selectorPresent = true;
+  episode = 4;
+  step(20);
+  assert.equal(messages.length, original);
+  // The new source and fresh playback validate the new episode.
+  source = 'blob:episode-4';
+  videoTime = 0;
+  step(60);
+  const next = messages.slice(original);
+  assert.ok(next.length >= 2);
+  assert.ok(next.every(m=>m.payload.episode===4));
+  assert.ok(next[0].payload.currentTime < 10);
+  assert.equal(JSON.stringify(messages).includes('blob:episode'), false);
+});
+
+test('without explicit selected season and episode, video time is not recorded', () => {
+  const tracker = fs.readFileSync(path.join(__dirname, '..',
+    'series-progress-tracker.js'), 'utf8');
+  const sent = [];
+  const handlers = {};
+  let clock = 100000;
+  let currentTime = 0;
+  const video = {
+    isConnected:true,readyState:4,duration:1500,paused:false,
+    seeking:false,ended:false,videoWidth:854,videoHeight:480,playbackRate:1,
+    get currentTime(){return currentTime;},
+    getBoundingClientRect(){return{width:854,height:480}},
+    addEventListener(event,cb){(handlers[event] ||= []).push(cb)}
+  };
+  const context={
+    globalThis:{},Date:{now:()=>clock},
+    document:{documentElement:{},hidden:false,addEventListener(){},
+      querySelectorAll:s=>s==='video'?[video]:[]},
+    chrome:{runtime:{id:'kino-test',sendMessage:async m=>sent.push(m)}},
+    MutationObserver:class{observe(){}disconnect(){}},
+    window:{addEventListener(){}},
+    setInterval(){return 1},clearInterval(){}
+  };
+  vm.runInNewContext(tracker,context);
+  for(let i=0;i<60;i++){
+    clock+=250;currentTime+=0.25;
+    for(const cb of handlers.timeupdate||[])cb();
+  }
+  assert.equal(sent.length,0);
+});
