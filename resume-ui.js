@@ -184,8 +184,27 @@
       const media = mediaFromUrl(tab?.url);
       // Only the watch tab is "currently watching". A Kinopoisk catalog
       // page should not suppress a genuine last-view entry.
-      const currentIsWatchPage = media && !/^https:\/\/www\.kinopoisk\.ru\//.test(tab.url);
-      currentKey = currentIsWatchPage ? media.key : '';
+      const isKinopoisk = /^https:\/\/www\.kinopoisk\.ru\//.test(tab?.url || '');
+      const currentIsWatchPage = media && !isKinopoisk;
+      let key = currentIsWatchPage ? media.key : '';
+      // Some watch providers redirect to a non-canonical URL. Recover a
+      // verified watch session only if its current URL still matches this tab.
+      if (!key && !isKinopoisk && Number.isInteger(tab?.id) &&
+          /^https:\/\//.test(tab?.url || '')) {
+        try {
+          const reply = await chrome.runtime.sendMessage({
+            action: 'getWatchSession', tabId: tab.id
+          });
+          if (seq !== tabReadSequence) return;
+          const session = reply?.ok ? reply.session : null;
+          if (session?.currentUrl === tab.url &&
+              ['film', 'series'].includes(session.type) &&
+              /^[1-9]\d{0,12}$/.test(String(session.id))) {
+            key = session.type + ':' + session.id;
+          }
+        } catch { /* No valid session: do not guess film identity. */ }
+      }
+      currentKey = key;
       renderLast();
     } catch {
       if (seq !== tabReadSequence) return;
