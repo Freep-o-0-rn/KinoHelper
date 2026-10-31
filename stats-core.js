@@ -52,6 +52,11 @@
         if (record.completed) completedEpisodeKeys.add(key);
       }
     }
+    // A provider may expose a verified series under /film/<id>. If both
+    // identities exist for the same Kinopoisk ID, series evidence wins.
+    for (const seriesKey of seriesMap.keys()) {
+      filmMap.delete('film:' + seriesKey.slice(7));
+    }
     finishedFilms = [...filmMap.values()].filter(e=>e.completed).length;
     unfinishedFilms = filmMap.size - finishedFilms;
     finishedEpisodes = completedEpisodeKeys.size;
@@ -59,8 +64,10 @@
     for (const [key, entry] of Object.entries(valid(watchTime) ? watchTime : {})) {
       if (!identity(key)) continue;
       const seconds = Math.min(num(entry?.seconds), 1e10);
-      if (key.startsWith('film:')) filmSeconds += seconds;
-      else seriesSeconds += seconds;
+      if (key.startsWith('series:') ||
+          (key.startsWith('film:') && seriesMap.has('series:' + key.slice(5))))
+        seriesSeconds += seconds;
+      else filmSeconds += seconds;
     }
     const rated = Object.values(valid(ratings) ? ratings : {})
       .map(item => Number(item?.rating))
