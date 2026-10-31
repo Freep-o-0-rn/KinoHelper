@@ -72,12 +72,17 @@
     const rated = Object.values(valid(ratings) ? ratings : {})
       .map(item => Number(item?.rating))
       .filter(x => Number.isInteger(x) && x >= 1 && x <= 10);
-    const buckets = [
-      { name: '9–10', count: rated.filter(x => x >= 9).length, color: '#2ba886' },
-      { name: '7–8', count: rated.filter(x => x >= 7 && x <= 8).length, color: '#83b95e' },
-      { name: '5–6', count: rated.filter(x => x >= 5 && x <= 6).length, color: '#efb34e' },
-      { name: '1–4', count: rated.filter(x => x <= 4).length, color: '#df7976' }
+    // Each personal vote is its own category, from 1 through 10.
+    // The color ramp goes from red (low) to green/teal (high).
+    const ratingColors = [
+      '#d65b72', '#df6e70', '#df8162', '#e69a57', '#e9b450',
+      '#d5bb57', '#acbb63', '#7ab575', '#45ad83', '#23a18c'
     ];
+    const ratingCounts = Array(10).fill(0);
+    for (const rating of rated) ratingCounts[rating - 1]++;
+    const buckets = ratingCounts.map((count, index) => ({
+      name: String(index + 1), count, color: ratingColors[index]
+    }));
     const genreCounts = new Map();
     let taggedTitles = 0;
     const eligible = new Set([...filmMap.keys(), ...seriesMap.keys()]);
