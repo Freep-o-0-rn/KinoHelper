@@ -84,8 +84,9 @@
     track.setAttribute('aria-valuenow', String(percent));
     track.setAttribute('aria-label', item.completed ?
       'Фильм просмотрен' : 'Прогресс фильма');
-    track.className = track.className.replace(/\\scomplete\\b/g, '') +
-      (item.completed ? ' complete' : '');
+    track.className = track.className.includes('resume-last-track')
+      ? 'resume-last-track' : 'history-progress-track';
+    if (item.completed) track.className += ' complete';
     const fill = track.querySelector('.resume-progress-fill');
     if (fill) fill.style.width = percent + '%';
   }
