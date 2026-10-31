@@ -225,3 +225,14 @@
 }
 .stats-sync-ratings:hover { border-color: var(--border-hover); background: var(--bg); }
 .stats-sync-ratings:disabled { cursor: wait; opacity: .65; }
+
+
+/* Two controls at 320px: reserve room instead of covering the title. */
+.app-header .app-brand { gap: 6px; transform: translateX(-8px); }
+.app-header .brand-icon { font-size: 19px; }
+.app-header h1 { font-size: 15px; }
+@media(min-width:420px) {
+  .side-panel-host .app-header .app-brand { transform: none; }
+  .side-panel-host .app-header h1 { font-size: 17px; }
+  .side-panel-host .app-header .brand-icon { font-size: 21px; }
+}
