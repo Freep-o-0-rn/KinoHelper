@@ -1573,7 +1573,8 @@ async function resumeIdentifyFilm(tabId) {
     const session = await getSession(tabId);
     // A show may use a /film/<id> watch URL. A verified SERIES session
     // overrides that route and must never create a film checkpoint.
-    if (session?.type === 'series' && String(session.id) === direct.id) return null;
+    if (session?.type === 'series' &&
+        session.currentUrl === tab.url) return null;
     // An existing session for another movie must never attach its title.
     const title = session?.type === 'film' && String(session.id) === direct.id
       ? session.title : '';
