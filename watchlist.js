@@ -20,9 +20,8 @@
             const url = new URL(raw);
             if (url.protocol !== 'https:') return '';
             const host = url.hostname.toLowerCase();
-            return host === 'kinopoisk.ru' || host.endsWith('.kinopoisk.ru') ||
-                host === 'yandex.net' || host.endsWith('.yandex.net') ||
-                host === 'yandex.ru' || host.endsWith('.yandex.ru')
+            // Тот же белый список, который проверяет background.loadSearchPoster.
+            return ['avatars.mds.yandex.net', 'st.kp.yandex.net'].includes(host)
                 ? url.href : '';
         } catch {
             return '';
@@ -254,32 +253,42 @@
     async function requestPoster(item) {
         const key = keyOf(item);
         if (posterCache.has(key)) return;
-        let urls = posterSources(item);
-        if (!item.posterUrl) {
-            try {
-                const response = await chrome.runtime.sendMessage({
-                    action: 'findPosterOnMoviePage',
-                    payload: { id: item.id, type: item.type }
-                });
-                const poster = validPoster(response?.poster);
-                if (response?.ok && poster) {
-                    updateMetadata(item, { posterUrl: poster });
-                    urls = posterSources({ ...item, posterUrl: poster });
-                }
-            } catch { /* Продолжаем с резервными URL. */ }
-        }
-        for (const url of urls) {
-            if (!contains(item)) return;
-            try {
-                const result = await chrome.runtime.sendMessage({
-                    action: 'loadSearchPoster', payload: { url }
-                });
-                if (result?.ok && result.dataUrl && contains(item)) {
-                    adoptPoster(item, result.dataUrl);
-                    return;
-                }
-            } catch { /* Пробуем следующий адрес. */ }
-        }
+
+        const tried = new Set();
+        const trySources = async urls => {
+            for (const url of urls) {
+                if (!contains(item)) return false;
+                if (tried.has(url)) continue;
+                tried.add(url);
+                try {
+                    const result = await chrome.runtime.sendMessage({
+                        action: 'loadSearchPoster', payload: { url }
+                    });
+                    if (result?.ok && result.dataUrl && contains(item)) {
+                        adoptPoster(item, result.dataUrl);
+                        return true;
+                    }
+                } catch { /* Следующий источник постера. */ }
+            }
+            return false;
+        };
+
+        // Сначала проверяем уже известные адреса.
+        if (await trySources(posterSources(item))) return;
+
+        // Старые записи могут содержать неработающую ссылку.
+        // Ищем свежий официальный URL на странице фильма.
+        try {
+            const response = await chrome.runtime.sendMessage({
+                action: 'findPosterOnMoviePage',
+                payload: { id: item.id, type: item.type }
+            });
+            const fresh = validPoster(response?.poster);
+            if (response?.ok && fresh) {
+                updateMetadata(item, { posterUrl: fresh });
+                await trySources(posterSources({ ...item, posterUrl: fresh }));
+            }
+        } catch { /* Отсутствие изображения не мешает остальным данным. */ }
     }
 
     async function hydrate(item) {
@@ -317,11 +326,10 @@
             })());
         }
         // Готовый URL постера можно загрузить сразу, не ожидая жанры.
-        if (current.posterUrl && !posterCache.has(keyOf(item))) {
-            tasks.push(requestPoster(current));
-        }
+        const startedPoster = Boolean(current.posterUrl && !posterCache.has(keyOf(item)));
+        if (startedPoster) tasks.push(requestPoster(current));
         await Promise.allSettled(tasks);
-        if (!posterCache.has(keyOf(item))) {
+        if (!startedPoster && !posterCache.has(keyOf(item))) {
             const latest = getAll().find(entry => keyOf(entry) === keyOf(item));
             if (latest) await requestPoster(latest);
         }
