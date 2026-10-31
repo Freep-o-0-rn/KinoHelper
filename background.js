@@ -1808,3 +1808,124 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     .catch(error => sendResponse({ ok: false, error: error.message }));
   return true;
 });
+
+
+// 1.550: season/episode recognition is read-only and kept in session memory.
+// A series timecode is NOT saved or restored until real player selection is
+// verified: wrong episodes can have identical durations.
+const EPISODE_KEY_PREFIX = 'kinoEpisodeSelection:';
+const EPISODE_TTL_MS = 20000;
+const episodeKey = tabId => EPISODE_KEY_PREFIX + tabId;
+
+function originOfEpisodeSender(sender) {
+  return resumeOrigin(sender?.url);
+}
+
+async function trustedSeriesTab(tabId) {
+  const tab = await chrome.tabs.get(tabId);
+  if (!tab?.url) return null;
+  const origin = resumeOrigin(tab.url);
+  if (![ 'https://brogiro.cfd', resumeOrigin(WATCH_BASE),
+    resumeOrigin(FALLBACK_WATCH_BASE)].includes(origin)) return null;
+  const direct = parseMedia(tab.url);
+  if (direct && direct.type !== 'series') return null;
+  const session = await getSession(tabId);
+  if (direct?.type === 'series') {
+    // A stored session of another title indicates a stale/ambiguous tab.
+    if (session && (session.type !== 'series' ||
+        String(session.id) !== String(direct.id))) return null;
+    return { id: String(direct.id), title: session?.title || tab.title || '' };
+  }
+  if (session?.type !== 'series' || !/^[1-9]\d{0,12}$/.test(String(session.id)) ||
+      !Array.isArray(session.recognizedOrigins) ||
+      !session.recognizedOrigins.includes(origin) ||
+      session.currentUrl !== tab.url) return null;
+  return { id: String(session.id), title: session.title || tab.title || '' };
+}
+
+function resolvedEpisode(entry, seriesId, at = Date.now()) {
+  if (!entry || entry.seriesId !== seriesId ||
+      !entry.sources || typeof entry.sources !== 'object') return null;
+  const values = Object.values(entry.sources).filter(source =>
+    source && Number.isInteger(source.season) && Number.isInteger(source.episode) &&
+    source.season >= 1 && source.season <= 250 &&
+    source.episode >= 1 && source.episode <= 250 &&
+    Number.isFinite(source.at) && at - source.at >= 0 &&
+    at - source.at <= EPISODE_TTL_MS);
+  if (!values.length) return null;
+  const identities = new Set(values.map(value => value.season + ':' + value.episode));
+  if (identities.size !== 1) return null;
+  return { season: values[0].season, episode: values[0].episode };
+}
+
+async function saveEpisodeObservation(payload, sender) {
+  if (sender?.id !== chrome.runtime.id ||
+      !Number.isInteger(sender.tab?.id) ||
+      !Number.isInteger(sender.frameId) ||
+      !['https://brogiro.cfd', 'https://theatre.stravers.live']
+        .includes(originOfEpisodeSender(sender))) return { ok: false };
+  const season = Number(payload?.season);
+  const episode = Number(payload?.episode);
+  if (!Number.isInteger(season) || season < 1 || season > 250 ||
+      !Number.isInteger(episode) || episode < 1 || episode > 250) {
+    return { ok: false };
+  }
+
+  const tabId = sender.tab.id;
+  const series = await trustedSeriesTab(tabId);
+  if (!series) return { ok: false };
+  const key = episodeKey(tabId);
+  const stored = (await chrome.storage.session.get(key))[key];
+  const before = resolvedEpisode(stored, series.id);
+  const at = Date.now();
+  const sources = stored?.seriesId === series.id && stored?.sources
+    ? { ...stored.sources } : {};
+  for (const [frame, data] of Object.entries(sources)) {
+    if (!data || at - data.at > EPISODE_TTL_MS || at < data.at) delete sources[frame];
+  }
+  sources[String(sender.frameId)] = { season, episode, at };
+  const next = { seriesId: series.id, sources };
+  await chrome.storage.session.set({ [key]: next });
+  const after = resolvedEpisode(next, series.id);
+  if (before?.season !== after?.season || before?.episode !== after?.episode) {
+    chrome.runtime.sendMessage({ action: 'kinoEpisodeSelectionChanged', tabId })
+      .catch(() => {});
+  }
+  return { ok: true, confirmed: Boolean(after) };
+}
+
+async function getEpisodeIdentity(tabId, sender) {
+  if (sender?.id !== chrome.runtime.id ||
+      !sender?.url?.startsWith(chrome.runtime.getURL('')) ||
+      !Number.isInteger(tabId)) return null;
+  const series = await trustedSeriesTab(tabId);
+  if (!series) return null;
+  const value = (await chrome.storage.session.get(episodeKey(tabId)))
+    [episodeKey(tabId)];
+  const selection = resolvedEpisode(value, series.id);
+  return selection ? { seriesId: series.id, ...selection } : null;
+}
+
+chrome.tabs.onRemoved.addListener(tabId => {
+  void chrome.storage.session.remove(episodeKey(tabId)).catch(() => {});
+});
+chrome.webNavigation.onCommitted.addListener(details => {
+  if (details.frameId === 0) {
+    void chrome.storage.session.remove(episodeKey(details.tabId)).catch(() => {});
+  }
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.action === 'kinoSeriesEpisodeObserved') {
+    saveEpisodeObservation(message.payload, sender)
+      .then(sendResponse).catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+  if (message?.action === 'kinoGetEpisodeIdentity') {
+    getEpisodeIdentity(message.tabId, sender)
+      .then(value => sendResponse({ ok: Boolean(value), identity: value }))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+  return false;
+});
