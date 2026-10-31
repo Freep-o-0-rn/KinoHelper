@@ -124,14 +124,18 @@
       confirmedAt = currentTime;
       return;
     }
-    if (!id || currentTime - confirmedAt < 1200) return;
-    if (id === reported && currentTime - reportedAt < REPORT_EVERY_MS) return;
+    if (currentTime - confirmedAt < 1200) return;
+    if (id === reported && (id === '' || currentTime - reportedAt < REPORT_EVERY_MS)) return;
+    // When an episode becomes ambiguous, clear the previous observation.
+    // Never keep a stale selected episode merely because no new one matched.
     reported = id;
     reportedAt = currentTime;
     try {
       chrome.runtime.sendMessage({
         action: 'kinoSeriesEpisodeObserved',
-        payload: { season: value.season, episode: value.episode }
+        payload: value
+          ? { season: value.season, episode: value.episode }
+          : { clear: true }
       }).catch(() => {});
     } catch { /* Browser may be unloading the frame. */ }
   }
