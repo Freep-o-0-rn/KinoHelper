@@ -24,26 +24,20 @@
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (sequence !== generation || !Number.isInteger(tab?.id)) return;
-      let seriesId = candidateFromUrl(tab.url);
-      if (!seriesId) {
-        const response = await chrome.runtime.sendMessage({
-          action: 'getWatchSession', tabId: tab.id
-        });
-        if (sequence !== generation) return;
-        const session = response?.ok ? response.session : null;
-        if (session?.type === 'series' && session.currentUrl === tab.url &&
-            /^[1-9]\d{0,12}$/.test(String(session.id))) {
-          seriesId = String(session.id);
-        }
-      }
-      if (!seriesId) return;
+      // Query the verified iframe selection first. On the provider a real
+      // series may have a /film/<id> URL and a film-classified watch session.
       const response = await chrome.runtime.sendMessage({
         action: 'kinoGetEpisodeIdentity', tabId: tab.id
       });
       if (sequence !== generation) return;
       const item = response?.ok ? response.identity : null;
-      if (!item || String(item.seriesId) !== seriesId ||
-          !Number.isInteger(item.season) || !Number.isInteger(item.episode)) return;
+      if (!item || !Number.isInteger(item.season) ||
+          !Number.isInteger(item.episode)) return;
+      let seriesId = candidateFromUrl(tab.url);
+      const route = new URL(tab.url).pathname.match(/^\/(?:film|series)\/([1-9]\d{0,12})(?:\/|$)/);
+      if (route && route[1] !== String(item.seriesId)) return;
+      if (!seriesId) seriesId = String(item.seriesId);
+      if (String(item.seriesId) !== seriesId) return;
       line.textContent = 'Сезон ' + item.season + ' · Серия ' + item.episode;
       line.hidden = false;
     } catch { /* Do not show stale or invented episode details. */ }
