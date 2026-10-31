@@ -67,6 +67,49 @@
     return !rect || (rect.width > 0 && rect.height > 0);
   }
 
+  // Confirmed from real theatre.stravers.live player (KinoHelper 1.551 report):
+  //   button.select__item  "Сезон 1" at top left
+  //   button.select__item  "Серия 1" then "Серия 2" after switching
+  //   button.select__drop-item.active is the selected dropdown option.
+  // Do NOT inspect div.active.textContent: it contains the whole episode list.
+  function fromPlayerSelector() {
+    const buttons = [...document.querySelectorAll('button.select__item')]
+      .slice(0, 20).filter(visible);
+    if (!buttons.length) return { present: false };
+
+    const seasons = new Set();
+    const episodes = new Set();
+    for (const button of buttons) {
+      const label = String(button.textContent || '').replace(/\s+/g, ' ').trim();
+      const season = label.match(/^(?:Сезон|Season)\s*№?\s*(\d{1,3})$/i);
+      const episode = label.match(/^(?:Серия|Episode)\s*№?\s*(\d{1,3})$/i);
+      if (season) seasons.add(number(season[1]));
+      if (episode) episodes.add(number(episode[1]));
+    }
+    if (seasons.size !== 1 || episodes.size !== 1 ||
+        seasons.has(null) || episodes.has(null)) {
+      return { present: true, selection: null };
+    }
+    const selected = pair([...seasons][0], [...episodes][0]);
+    if (!selected) return { present: true, selection: null };
+
+    // Cross-check the expanded menu, if present. The menu may disappear
+    // immediately after selecting a new episode; then the closed button is
+    // sufficient evidence. Never treat every dropdown option as selected.
+    const activeOptions = [...document.querySelectorAll('button.select__drop-item.active')]
+      .slice(0, 20).filter(visible);
+    for (const option of activeOptions) {
+      const label = String(option.textContent || '').replace(/\s+/g, ' ').trim();
+      const season = label.match(/^(?:Сезон|Season)\s*№?\s*(\d{1,3})$/i);
+      const episode = label.match(/^(?:Серия|Episode)\s*№?\s*(\d{1,3})$/i);
+      if ((season && number(season[1]) !== selected.season) ||
+          (episode && number(episode[1]) !== selected.episode)) {
+        return { present: true, selection: null };
+      }
+    }
+    return { present: true, selection: selected };
+  }
+
   function selectedPair() {
     const controls = [...document.querySelectorAll(
       '[aria-selected="true"],[aria-current="true"],[aria-current="step"],' +
@@ -106,7 +149,11 @@
 
   function detect() {
     const byUrl = fromUrl();
-    const byControls = selectedPair();
+    const explicit = fromPlayerSelector();
+    // If the known series selector is present, never fall back to guessing
+    // from generic ".active" containers. Incomplete/contradictory = unknown.
+    const byControls = explicit.present ? explicit.selection : selectedPair();
+    if (explicit.present && !byControls) return null;
     if (byControls?.conflict) return null;
     if (byUrl && byControls &&
         (byUrl.season !== byControls.season || byUrl.episode !== byControls.episode)) {
