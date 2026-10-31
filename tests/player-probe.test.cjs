@@ -31,13 +31,15 @@ async function probe({ allow = true, players = [], frames = [
 ] } = {}) {
     const controls = {};
     const ids = ['playerProbeStart', 'playerProbeResult', 'playerProbeStatus',
-        'playerProbeCopy', 'playerProbeGrant'];
+        'playerProbeCopy', 'playerProbeGrant', 'playerProbeLive', 'playerProbeStopLive'];
     for (const id of ids) {
         controls[id] = {
             hidden: true, disabled: false, textContent: '', handlers: {},
             addEventListener(type, cb) { this.handlers[type] = cb; }
         };
     }
+    const liveTimers = new Map();
+    let timerNumber = 0;
     const previouslyGranted = new Set();
     const requests = [];
     const page = {
@@ -62,7 +64,8 @@ async function probe({ allow = true, players = [], frames = [
                 const document = target.frameIds[0] === 457 ? page :
                     { querySelectorAll() { return []; } };
                 let tick;
-                const value = await vm.runInNewContext('(' + func.toString() + ')(' + args[0] + ')', {
+                const input = Array.isArray(args) ? JSON.stringify(args[0]) : '';
+                const value = await vm.runInNewContext('(' + func.toString() + ')(' + input + ')', {
                     document,
                     setInterval(cb) { tick = cb; return 1; },
                     clearInterval() {},
@@ -79,15 +82,34 @@ async function probe({ allow = true, players = [], frames = [
         }
     };
     vm.runInNewContext(source, {
-        document: { getElementById: id => controls[id] },
+        document: {
+            hidden: false,
+            body: { classList: { contains: name => name === 'settings-open' } },
+            getElementById: id => controls[id],
+            addEventListener() {}
+        },
         chrome, URL,
+        setInterval(cb) {
+            const id = ++timerNumber;
+            liveTimers.set(id, cb);
+            return id;
+        },
+        clearInterval(id) { liveTimers.delete(id); },
         navigator: { clipboard: { writeText: async () => {} } }
     });
     controls.playerProbeStart.handlers.click();
     for (let i = 0; i < 12; i++) {
         await new Promise(resolve => setImmediate(resolve));
     }
-    return { controls, requests };
+    return {
+        controls, requests,
+        async advanceLive(seconds = 2) {
+            for (const v of players) v.time += seconds;
+            for (const cb of [...liveTimers.values()]) cb();
+            for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+        },
+        activeTimers: () => liveTimers.size
+    };
 }
 
 test('automatically asks for two specific hosts on the first probe click', async () => {
@@ -149,4 +171,31 @@ test('time changing only through paused seeking is not treated as confirmed play
         /время менялось, но воспроизведение не подтверждено/);
     assert.doesNotMatch(controls.playerProbeStatus.textContent,
         /Воспроизведение подтверждено/);
+});
+
+
+test('live clock updates after a static diagnostic report', async () => {
+    const movie = player({ time: 26, duration: 6722, paused: false,
+        readyState: 4, rate: 2, width: 854, height: 480 });
+    const result = await probe({ players: [movie] });
+    const reportBefore = result.controls.playerProbeResult.textContent;
+    const liveBefore = result.controls.playerProbeLive.textContent;
+    assert.match(liveBefore, /Живой таймкод/);
+    assert.equal(result.activeTimers(), 1);
+    await result.advanceLive(4);
+    const liveAfter = result.controls.playerProbeLive.textContent;
+    assert.notEqual(liveBefore, liveAfter);
+    assert.equal(result.controls.playerProbeResult.textContent, reportBefore);
+    assert.match(liveAfter, /обновление каждые 2 секунды/);
+    result.controls.playerProbeStopLive.handlers.click();
+    assert.equal(result.activeTimers(), 0);
+    assert.match(result.controls.playerProbeLive.textContent, /остановлен/);
+});
+
+test('zero duration and empty video does not become live tracking target', async () => {
+    const empty = player({ time: 0, duration: NaN, paused: true,
+        readyState: 0, rate: 0, width: 0, height: 0 });
+    const result = await probe({ players: [empty] });
+    assert.equal(result.activeTimers(), 0);
+    assert.equal(result.controls.playerProbeLive.hidden, true);
 });
