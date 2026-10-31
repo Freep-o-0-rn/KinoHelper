@@ -1760,6 +1760,10 @@ chrome.runtime.onStartup.addListener(() => {
     console.warn('[KinoHelper] Не удалось подключить отслеживание после запуска:', error));
 });
 
+chrome.tabs.onRemoved.addListener(tabId => {
+  void chrome.storage.session.remove(pendingResumeKey(tabId)).catch(() => {});
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.action === 'kinoResumeArm') {
     armResumeForTab(message.tabId, message.filmId, sender)
