@@ -73,6 +73,12 @@
       if (!['completed','loading','retry','paused'].includes(existing.state)) {
         const restarted=await saveJob({...existing,state:'loading',nextAt:Date.now()+1000});
         await schedule(restarted.nextAt);
+      } else if (existing.state==='paused' &&
+          /вход|профил|авториз/i.test(existing.message||'')) {
+        const resumed=await saveJob({...existing,state:'loading',
+          failures:0,nextAt:Date.now()+30000,message:'Проверяем восстановление входа'});
+        await schedule(resumed.nextAt);
+        return {ok:true,job:resumed};
       } else {
         await schedule(existing.nextAt || Date.now()+1000);
       }
@@ -139,11 +145,15 @@
       }
       try {
         const identity=await self.KinoStatsAccount.detect();
-        if(identity.status!=='logged-in' || identity.id!==job.profileId) {
-          const reason=identity.status==='logged-in'
-            ? 'Выполнен вход в другой профиль'
-            : identity.status==='logged-out' ? 'Вход в Кинопоиск не выполнен'
-              : 'Невозможно проверить текущий профиль';
+        if(identity.status==='logged-in' && identity.id!==job.profileId) {
+          // Automatically follow account switches; old accounts' ratings
+          // remain under their own IDs and legacy page cursors.
+          return start(identity.id);
+        }
+        if(identity.status!=='logged-in') {
+          const reason=identity.status==='logged-out'
+            ? 'Вход в Кинопоиск не выполнен'
+            : 'Невозможно проверить текущий профиль';
           return handleFailure(job,Error(reason));
         }
         if(job.nextPage>MAX_PAGE) {
@@ -220,8 +230,14 @@
   }
   async function wake() {
     const job=await readJob();
-    if(!job) return;
-    await schedule(job.nextAt || Date.now()+30000);
+    if(job) {
+      await schedule(job.nextAt || Date.now()+30000);
+      return;
+    }
+    // First installation or fresh profile: no statistics view needs to open.
+    // Identification must come from an authenticated own-profile response.
+    const identity=await self.KinoStatsAccount.detect();
+    if(identity.status==='logged-in')await start(identity.id);
   }
 
   chrome.alarms.onAlarm.addListener(alarm=>{
