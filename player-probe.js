@@ -249,7 +249,14 @@
         const refresh = async () => {
             if (generation !== liveGeneration || livePolling) return;
             // После ухода из настроек не продолжаем опрашивать плеер.
-            if (document.hidden || !document.body?.classList.contains('settings-open')) return;
+            if (document.hidden) {
+                stopLive('Наблюдение остановлено: расширение скрыто.');
+                return;
+            }
+            if (!document.body?.classList.contains('settings-open')) {
+                stopLive('Наблюдение остановлено: открыт другой раздел.');
+                return;
+            }
             livePolling = true;
             try {
                 const responses = await chrome.scripting.executeScript({
