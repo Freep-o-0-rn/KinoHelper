@@ -35,6 +35,17 @@
             <section class="context-card info" id="contextCard" aria-label="Текущий фильм или состояние">
               <div id="message" class="info" aria-live="polite">Выберите фильтры и нажмите «Случайный»</div>
 
+              <section class="movie-details" id="movieDetails" aria-label="Информация о фильме" hidden>
+                <div class="movie-genres" id="movieGenres" hidden></div>
+                <div class="movie-description-actions">
+                  <button class="movie-description-toggle" id="movieDescriptionToggle" type="button"
+                          aria-expanded="false" aria-controls="movieDescription" hidden>
+                    Описание <span class="movie-description-chevron" aria-hidden="true">▼</span>
+                  </button>
+                </div>
+                <div class="movie-description-text" id="movieDescription" hidden></div>
+              </section>
+
               <section class="rating-card" id="ratingCard" aria-label="Оценка на Кинопоиске" hidden>
                 <div class="rating-card-header">
                   <span class="rating-card-title">Кинопоиск: <strong class="movie-rating" id="movieRating">—</strong></span>
@@ -191,6 +202,7 @@
     </div>
   </div>
 
+  <script src="movie-details.js"></script>
   <script src="popup.js"></script>
   <script src="search.js"></script>
   <script src="filters.js"></script>
