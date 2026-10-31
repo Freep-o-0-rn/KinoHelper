@@ -1747,6 +1747,17 @@ async function injectResumeIntoOpenTabs() {
           world: 'ISOLATED'
         });
       }
+      const episodeFrames = (frames || []).filter(frame =>
+        ['https://brogiro.cfd', 'https://theatre.stravers.live']
+          .includes(resumeOrigin(frame.url)))
+        .map(frame => frame.frameId);
+      if (episodeFrames.length) {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id, frameIds: episodeFrames },
+          files: ['episode-detector.js'],
+          world: 'ISOLATED'
+        });
+      }
     } catch {
       // Tab may close or its iframe may navigate during extension update.
     }
