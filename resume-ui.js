@@ -47,8 +47,9 @@
   }
 
   function percentage(item) {
+    // Без события завершения не показываем ложные 100% при округлении.
     return item.completed ? 100 :
-      Math.max(0, Math.min(100, Math.round(item.position / item.duration * 100)));
+      Math.max(0, Math.min(99, Math.round(item.position / item.duration * 100)));
   }
 
   function formatTime(value) {
