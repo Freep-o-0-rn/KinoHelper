@@ -234,6 +234,7 @@
         }
 
         lines.push('', 'Проверка только читает состояние; видео не перематывалось.');
+        lines.push('Движение не подтверждено, если время неподвижно или видео стояло на паузе.');
         return lines.join('\n');
     }
 
@@ -295,7 +296,30 @@
         }
     }
 
-    button.addEventListener('click', () => void run());
+    // chrome.permissions.request требует непосредственного действия пользователя.
+    // Нажатие «Проверить плеер» и есть это действие: если разрешение уже
+    // получено ранее, Chrome не показывает запрос повторно.
+    button.addEventListener('click', () => {
+        if (busy) return;
+        button.disabled = true;
+        let request;
+        try {
+            request = chrome.permissions.request({ origins: optionalOrigins });
+        } catch (error) {
+            button.disabled = false;
+            status.textContent = 'Не удалось запросить доступ: ' + String(error.message || error);
+            return;
+        }
+        Promise.resolve(request).then(granted => {
+            if (!granted) {
+                status.textContent = 'Доступ к плееру не предоставлен. Проверим остальные доступные фреймы.';
+            }
+            return run();
+        }).catch(error => {
+            button.disabled = false;
+            status.textContent = 'Ошибка разрешений: ' + String(error.message || error);
+        });
+    });
 
     grantButton.addEventListener('click', () => {
         // Важно: request() должен вызваться непосредственно из обработчика
