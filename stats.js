@@ -16,6 +16,10 @@
   let lastData = null;
   let loadingId = 0;
   let importState = null;
+  let verifiedAccountId = '';
+  let authState = 'checking';
+  let authReadSequence = 0;
+  let lastAccountCheck = 0;
 
   function safeObject(value) {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -197,10 +201,12 @@
     try {
       const values = await chrome.storage.local.get(KEYS);
       if (order !== loadingId) return;
-      const profileId = String(values.kinoStatsProfileId || '');
+      // Never display a previously saved account as the *current* login.
+      const profileId = authState === 'logged-in' ? verifiedAccountId : '';
       const scopes = safeObject(values.kinoStatsRatingsV1);
       const ratings = safeObject(scopes[profileId || '__local__']);
-      importState = safeObject(values.kinoStatsProfileImportV1)[profileId] || null;
+      importState = profileId
+        ? safeObject(values.kinoStatsProfileImportV1)[profileId] || null : null;
       lastData = core.summarize({
         films:values.kinoPlaybackProgressV1,
         episodes:values.kinoSeriesEpisodeProgressV1,
@@ -216,9 +222,7 @@
             ' · уникальных оценок: ' + (importState.votes || 0) +
             (importState.lastPage ? ' · доступный пагинатор: ' + importState.lastPage : '')
           : '';
-      const input = els('statsProfileInput');
-      if (document.activeElement !== input) input.value =
-        profileId ? 'https://www.kinopoisk.ru/user/' + profileId + '/' : '';
+
     } catch (error) {
       els('statsStatus').textContent = 'Не удалось прочитать данные статистики: '+
         error.message;
@@ -230,9 +234,11 @@
     const media = type + ':' + String(id);
     if (!/^(?:film|series):[1-9]\d{0,12}$/.test(media) ||
         !Number.isInteger(n) || n < 1 || n > 10) return;
-    const stored = await chrome.storage.local.get(['kinoStatsRatingsV1','kinoStatsProfileId']);
-    const profileId = String(stored.kinoStatsProfileId || '');
-    const scope = profileId || '__local__';
+    // A confirmed movie vote alone does not identify the current user.
+    // Verify the *own* profile before associating the rating with an account.
+    const detected = await window.KinoStatsAccount?.detect();
+    const scope = detected?.status === 'logged-in' ? detected.id : '__local__';
+    const stored = await chrome.storage.local.get('kinoStatsRatingsV1');
     const all = {...safeObject(stored.kinoStatsRatingsV1)};
     all[scope] = {...safeObject(all[scope]),
       [media]: {rating:n,updatedAt:Date.now()}};
@@ -246,6 +252,11 @@
   let ratingsSyncActive = false;
   async function syncKnownRatings() {
     if (ratingsSyncActive) return;
+    if (authState !== 'logged-in' || !verifiedAccountId) {
+      els('statsStatus').textContent = 'Сначала необходимо подтвердить вход на Кинопоиск.';
+      return;
+    }
+    const verifiedId = verifiedAccountId;
     ratingsSyncActive = true;
     const button = els('statsRatingsSync');
     const status = els('statsStatus');
@@ -272,7 +283,7 @@
         const id = film || (series ? 'series:' + series[1] : '');
         if (id) media.set(id,Math.max(media.get(id)||0,Number(item?.updatedAt)||0));
       }
-      const account = String(data.kinoStatsProfileId || '') || '__local__';
+      const account = verifiedId;
       const scans = {...safeObject(data.kinoStatsRatingScanV1)};
       const scanned = {...safeObject(scans[account])};
       const oneDay = 86400000;
@@ -291,6 +302,10 @@
       let verified = 0, withoutVote = 0, processed = 0;
       let interrupted = '';
       for (const [mediaKey] of entries) {
+        if (authState !== 'logged-in' || verifiedAccountId !== verifiedId) {
+          interrupted = 'Аккаунт изменился во время синхронизации.';
+          break;
+        }
         const [type,id] = mediaKey.split(':');
         let response;
         try {
@@ -339,18 +354,25 @@
 
 
   let importing = false;
-  async function importProfileVotes() {
+  async function importProfileVotes({ automatic = false } = {}) {
     if (importing) return;
     const parser = window.KinoProfileVotes;
     if (!parser) return;
     const display = els('statsImportStatus');
     const button = els('statsProfileImport');
-    const selected = core.validateProfile(els('statsProfileInput').value);
-    const saved = await chrome.storage.local.get('kinoStatsProfileId');
-    const id = String(saved.kinoStatsProfileId || '');
-    if (!id || selected !== id) {
-      display.textContent = 'Сначала укажи свой профиль и нажми «Сохранить».';
+    const id = authState === 'logged-in' ? verifiedAccountId : '';
+    if (!id) {
+      display.textContent = 'Сначала нужно подтвердить вход на Кинопоиск.';
       return;
+    }
+    // Limit automatic refreshes. Manual "continue" always works immediately.
+    if (automatic) {
+      const field = 'kinoStatsAutoImportAtV1';
+      const dates = safeObject((await chrome.storage.local.get(field))[field]);
+      if (Date.now() - Number(dates[id] || 0) < 60 * 60 * 1000) return;
+      await chrome.storage.local.set({ [field]: {
+        ...dates, [id]: Date.now()
+      } });
     }
     importing = true;
     button.disabled = true;
@@ -368,6 +390,8 @@
           current.nextPage >= 1 && current.nextPage <= 500 ? current.nextPage : 1);
       let totalPages = Number.isInteger(current.lastPage) ? current.lastPage : null;
       for (let attempt=0; attempt<5 && page<=500; attempt++,page++) {
+        if (authState !== 'logged-in' || verifiedAccountId !== id)
+          throw Error('Аккаунт изменился. Импорт остановлен.');
         display.textContent = 'Загрузка страницы ' + page +
           (totalPages ? ' из ' + totalPages : '') + '…';
         const url = 'https://www.kinopoisk.ru/user/' + id +
@@ -432,7 +456,7 @@
     } finally {
       importing = false;
       button.disabled = false;
-      button.textContent = '↓ Импорт оценок из профиля';
+      button.textContent = '↓ Продолжить импорт оценок';
       const suffix = failure ? ' Остановлено: ' + failure :
         ' Данные сохранены. При необходимости повтори импорт.';
       const message = (pagesDone
@@ -443,24 +467,55 @@
     }
   }
 
-  async function setProfile() {
-    const raw = els('statsProfileInput').value;
-    if (!raw.trim()) {
-      await chrome.storage.local.set({kinoStatsProfileId:''});
-      els('statsStatus').textContent = 'Профиль отвязан. Локальная статистика просмотров сохранена.';
-      await reload();
-      return;
-    }
-    const id = core.validateProfile(raw);
-    if (!id) {
-      els('statsStatus').textContent =
-        'Укажи ссылку вида https://www.kinopoisk.ru/user/12345/ или числовой ID.';
-      return;
-    }
-    await chrome.storage.local.set({kinoStatsProfileId:id});
-    els('statsStatus').textContent =
-      'Профиль сохранён. Оценки учитываются отдельно для каждого указанного ID. Загрузка полного архива оценок пока не реализована.';
+  // Resolving /mykp/ never requires the user to enter a profile URL.
+  async function checkAccount(force = false) {
+    const now = Date.now();
+    if (!force && now - lastAccountCheck < 45000) return;
+    lastAccountCheck = now;
+    const seq = ++authReadSequence;
+    authState = 'checking';
+    verifiedAccountId = '';
+    const status = els('statsAccountStatus');
+    const refresh = els('statsAccountRefresh');
+    status.textContent = 'Проверяем авторизацию на Кинопоиске…';
+    refresh.disabled = true;
     await reload();
+    try {
+      const response = await window.KinoStatsAccount.detect();
+      if (seq !== authReadSequence) return;
+      if (response.status === 'logged-in') {
+        verifiedAccountId = response.id;
+        authState = 'logged-in';
+        status.textContent = '✓ Вход выполнен · профиль №' + response.id;
+        // Compatibility with existing saved per-profile ratings and imports.
+        // Do not copy unscope'd votes or any data from an unrelated account.
+        await chrome.storage.local.set({kinoStatsProfileId:response.id});
+        await reload();
+        if (currentlyOpen) void importProfileVotes({automatic:true});
+      } else if (response.status === 'logged-out') {
+        verifiedAccountId = '';
+        authState = 'logged-out';
+        status.textContent = 'Вход не найден. Открой Кинопоиск и авторизуйся.';
+        await chrome.storage.local.set({kinoStatsProfileId:''});
+        await reload();
+      } else {
+        authState = 'unavailable';
+        verifiedAccountId = '';
+        status.textContent = 'Профиль не удалось подтвердить: ' +
+          (response.reason || 'проверь доступ к Кинопоиску');
+        // No automatic sync from old cached ID when verification fails.
+        await reload();
+      }
+    }catch(error){
+      if (seq !== authReadSequence) return;
+      authState = 'unavailable';
+      verifiedAccountId = '';
+      status.textContent = 'Проверка входа не удалась: ' +
+        String(error?.message||error).slice(0,140);
+      await reload();
+    }finally{
+      if (seq === authReadSequence) refresh.disabled=false;
+    }
   }
 
   function toggle(show) {
@@ -479,24 +534,21 @@
         settings.setAttribute('aria-label','Открыть настройки');
         settings.setAttribute('aria-pressed','false');
       }
-      void reload();
+      void checkAccount(true);
     }
   }
 
   button.addEventListener('click',()=>toggle(!currentlyOpen));
   back.addEventListener('click',()=>toggle(false));
-  els('statsProfileSave').addEventListener('click',()=>void setProfile());
+  els('statsAccountRefresh').addEventListener('click',()=>void checkAccount(true));
   els('statsRatingsSync').addEventListener('click',()=>void syncKnownRatings());
   els('statsProfileImport').addEventListener('click',()=>void importProfileVotes());
-  els('statsProfileInput').addEventListener('keydown',e=>{
-    if(e.key === 'Enter') void setProfile();
-  });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !currentlyOpen) return;
     if (KEYS.some(key => changes[key])) void reload();
   });
   window.addEventListener('focus',()=>{
-    if (currentlyOpen) void reload();
+    if (currentlyOpen) void checkAccount(false);
   });
   window.KinoStats = {
     open:()=>toggle(true),
