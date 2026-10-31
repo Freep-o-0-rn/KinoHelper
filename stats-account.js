@@ -4,7 +4,7 @@
   const api=factory();
   if(typeof module!=='undefined' && module.exports)module.exports=api;
   if(root)root.KinoStatsAccount=api;
-})(typeof window!=='undefined'?window:null, () => {
+})(typeof window!=='undefined' ? window : typeof self!=='undefined' ? self : null, () => {
   'use strict';
   const ROOT='https://www.kinopoisk.ru';
   const HOSTS=new Set(['www.kinopoisk.ru','kinopoisk.ru']);
