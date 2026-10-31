@@ -41,6 +41,7 @@
                     id: movie.id, type: movie.type,
                     kpUrl: movie.kpUrl, watchUrl: movie.watchUrl,
                     title: movie.title, year: movie.year, rating: movie.rating,
+                    genres: movie.genres || [],
                     poster: movie.poster || '', posterFallback: movie.posterFallback || ''
                 }))
             };
@@ -348,6 +349,11 @@
             rating.textContent = '★ ' + Number(movie.rating).toFixed(1);
             meta.append(' · ', rating);
         }
+        if (movie._genresNode) {
+            const genres = Array.isArray(movie.genres) ? movie.genres : [];
+            movie._genresNode.textContent = genres.length ? 'Жанр: ' + genres.join(', ') : '';
+            movie._genresNode.hidden = !genres.length;
+        }
     }
 
     function renderItem(movie) {
@@ -363,13 +369,16 @@
         title.className = 'title-search-title';
         const meta = document.createElement('div');
         meta.className = 'title-search-meta';
+        const genres = document.createElement('div');
+        genres.className = 'title-search-genres';
+        genres.hidden = true;
         const actions = document.createElement('div');
         actions.className = 'title-search-actions';
         actions.append(
             makeAction('▶ Смотреть', 'watch', movie, true),
             makeAction('Кинопоиск', 'kinopoisk', movie, false)
         );
-        details.append(title, meta);
+        details.append(title, meta, genres);
         if (typeof window.historyContains === 'function' &&
             window.historyContains(movie.watchUrl)) {
             const watched = document.createElement('div');
@@ -382,6 +391,7 @@
         movie._posterNode = poster;
         movie._titleNode = title;
         movie._metaNode = meta;
+        movie._genresNode = genres;
         updateMovieCard(movie);
         if (movie.posterDataUrl) {
             const image = document.createElement('img');
@@ -408,6 +418,60 @@
         setStatus(movies.length
             ? 'Найдено: ' + movies.length + (searching ? ' · ищем ещё…' : '')
             : (searching ? 'Ищем фильмы и сериалы…' : 'Совпадений не найдено'));
+    }
+
+
+    // Жанры загружаем лишь для видимых карточек и рядом с ними.
+    // Не вмешиваемся в быстрый поиск и очередь загрузки постеров.
+    const GENRE_CONCURRENCY = 2;
+    const genreQueue = [];
+    let activeGenreJobs = 0;
+    const genreObserver = new IntersectionObserver(entries => {
+        for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            genreObserver.unobserve(entry.target);
+            const movie = entry.target._kinoMovie;
+            if (!movie || movie._genreQueued || movie._genreLoaded ||
+                (movie._genreAttempts || 0) > 0) continue;
+            const searchId = movie._genreSearchId;
+            movie._genreQueued = true;
+            genreQueue.push({ movie, searchId });
+        }
+        pumpGenreQueue();
+    }, { root: resultsBox, rootMargin: '180px 0px' });
+
+    function pumpGenreQueue() {
+        while (activeGenreJobs < GENRE_CONCURRENCY && genreQueue.length) {
+            const { movie, searchId } = genreQueue.shift();
+            movie._genreQueued = false;
+            if (searchId !== requestNumber || !movie._cardNode?.isConnected) continue;
+            movie._genreAttempts = (movie._genreAttempts || 0) + 1;
+            activeGenreJobs++;
+            Promise.resolve().then(() => window.KinoMovieDetails.get({
+                id: movie.id, type: movie.type
+            })).then(details => {
+                if (searchId !== requestNumber || !movie._cardNode?.isConnected) return;
+                movie.genres = details.genres || [];
+                movie._genreLoaded = true;
+                updateMovieCard(movie);
+            }).catch(error => {
+                console.warn('[KinoHelper search] Не удалось получить жанр:', movie.id, error);
+            }).finally(() => {
+                activeGenreJobs--;
+                pumpGenreQueue();
+            });
+        }
+    }
+
+    function observeResultGenres(movies, searchId) {
+        if (searchId !== requestNumber) return;
+        for (const movie of movies) {
+            if (movie._genreLoaded || (movie._genreAttempts || 0) > 0 ||
+                !movie._cardNode?.isConnected) continue;
+            movie._cardNode._kinoMovie = movie;
+            movie._genreSearchId = searchId;
+            genreObserver.observe(movie._cardNode);
+        }
     }
 
     // Лимит одновременно загружаемых постеров; не перегружаем сервис.
@@ -562,6 +626,7 @@
                 movie._metadataQueued = false;
             }
         }));
+        observeResultGenres(movies, searchId);
     }
 
     async function runSearch(query) {
@@ -639,6 +704,7 @@
                     }
                     prev.year ||= movie.year;
                     prev.rating ??= movie.rating;
+                    prev.genres ||= movie.genres;
                     prev.poster ||= movie.poster;
                     prev.posterFallback ||= movie.posterFallback;
                     changed = true;
