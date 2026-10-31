@@ -208,3 +208,20 @@
 @media(prefers-reduced-motion:reduce) {
   .stats-donut-piece {transition:none;}
 }
+
+
+.stats-sync-ratings {
+  width: 100%;
+  display: block;
+  margin-top: 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text);
+  padding: 8px;
+  font-size: 10px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.stats-sync-ratings:hover { border-color: var(--border-hover); background: var(--bg); }
+.stats-sync-ratings:disabled { cursor: wait; opacity: .65; }
