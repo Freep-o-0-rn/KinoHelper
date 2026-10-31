@@ -19,7 +19,12 @@
   let playedSeconds = 0;
   let lastSentAt = 0;
   let scanTimer = null;
-  let statsTrackingId = crypto.randomUUID();
+  // crypto.randomUUID exists on HTTPS players; deterministic test realms may
+  // not expose crypto, so provide a temporary fallback scoped to this script.
+  const newStatsTrackingId = () => globalThis.crypto?.randomUUID?.() ||
+    ('local-' + Date.now().toString(36) + '-' +
+      Math.random().toString(36).slice(2).padEnd(20,'0'));
+  let statsTrackingId = newStatsTrackingId();
 
   const now = () => Date.now();
   function viable(video) {
@@ -85,7 +90,7 @@
       lastTime = null;
       confirmedSamples = 0;
       playedSeconds = 0;
-      statsTrackingId = crypto.randomUUID();
+      statsTrackingId = newStatsTrackingId();
       lastSampleAt = 0;
       lastSentAt = 0;
     }
