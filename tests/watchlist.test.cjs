@@ -89,3 +89,43 @@ test('invalid JSON is handled without throwing on reads', () => {
     const { api } = harness({ kinoHelperWatchlistV1: '{corrupted' });
     assert.deepEqual(Array.from(api.getAll()), []);
 });
+
+
+test('metadata enrichment updates genre, year and poster URL without touching saved order', () => {
+    const { api, memory } = harness();
+    api.toggle({ type: 'film', id: 258687, title: 'Интерстеллар' });
+    const addedAt = api.getAll()[0].addedAt;
+    assert.equal(api.updateMetadata({ type: 'film', id: 258687 }, {
+        title: 'Интерстеллар', year: 2014,
+        genres: ['фантастика', 'драма', 'фантастика'],
+        posterUrl: 'https://avatars.mds.yandex.net/get-kinopoisk-image/123/abc/280x420'
+    }), true);
+    const [item] = api.getAll();
+    assert.equal(item.year, 2014);
+    assert.deepEqual(Array.from(item.genres), ['фантастика', 'драма']);
+    assert.equal(item.addedAt, addedAt);
+    assert.match(item.posterUrl, /avatars\.mds\.yandex\.net/);
+    assert.equal(memory.has('kinopoiskHistory'), false);
+    assert.equal(api.updateMetadata({ type: 'film', id: 258687 }, {
+        year: null, genres: [], posterUrl: ''
+    }), false);
+    assert.equal(api.getAll()[0].year, 2014);
+    assert.equal(api.getAll()[0].genres.length, 2);
+});
+
+test('old 1.542 records without genres are loaded and enriched without migrations', () => {
+    const original = [{ id: '123', type: 'film', title: 'Астрал', year: 2010,
+        posterUrl: '', addedAt: 1234 }];
+    const { api } = harness({ kinoHelperWatchlistV1: JSON.stringify(original) });
+    assert.deepEqual(Array.from(api.getAll()[0].genres), []);
+    api.updateMetadata({ id: 123, type: 'film' }, { genres: ['ужасы', 'триллер'] });
+    assert.deepEqual(Array.from(api.getAll()[0].genres), ['ужасы', 'триллер']);
+});
+
+test('saved records never store large image data URLs', () => {
+    const { api, memory } = harness();
+    api.toggle({ id: 123, type: 'film', title: 'Астрал',
+        posterDataUrl: 'data:image/png;base64,AAA' });
+    assert.equal(api.getAll()[0].posterUrl, '');
+    assert.equal(memory.get('kinoHelperWatchlistV1').includes('data:image/'), false);
+});
