@@ -58,6 +58,7 @@ let ratingLoadSequence = 0;
 let movieDetailsLoadSequence = 0;
 let currentViewRefreshSequence = 0;
 let currentViewRefreshTimer = null;
+let currentViewRefreshForced = false;
 let lastRenderedTabSignature = '';
 
 const DEBUG = true;
@@ -208,6 +209,8 @@ async function openTrackedWatchTab(watchUrl, returnUrl = null, title = '') {
     const tab = await chrome.tabs.create({ url: 'about:blank', active: false });
     await startWatchSessionForTab(tab.id, resolvedReturnUrl, watchUrl, title);
     await chrome.tabs.update(tab.id, { url: watchUrl, active: true });
+    // Панель остаётся открытой: обновляем её сразу после выбора из истории.
+    scheduleCurrentMovieRefresh(80, { force: true });
     return tab;
 }
 
@@ -921,33 +924,66 @@ async function showCurrentMovie({ force = false } = {}) {
     }
 }
 
-function scheduleCurrentMovieRefresh(delayMs = 60) {
+function scheduleCurrentMovieRefresh(delayMs = 60, { force = false } = {}) {
+    // Сохраняем принудительный запрос при объединении нескольких событий.
+    currentViewRefreshForced = currentViewRefreshForced || force;
     if (currentViewRefreshTimer !== null) clearTimeout(currentViewRefreshTimer);
     currentViewRefreshTimer = setTimeout(() => {
         currentViewRefreshTimer = null;
-        void showCurrentMovie();
+        const shouldForce = currentViewRefreshForced;
+        currentViewRefreshForced = false;
+        void showCurrentMovie({ force: shouldForce });
     }, delayMs);
 }
 
-async function refreshActiveTabIfReady(tabId) {
+async function refreshActiveTabIfReady(tabId, { force = false } = {}) {
     try {
         const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (activeTab?.id !== tabId || activeTab.status !== 'complete') return;
-        scheduleCurrentMovieRefresh();
+        // Событие активации может прийти до полной загрузки страницы.
+        if (activeTab?.id !== tabId) return;
+        scheduleCurrentMovieRefresh(70, { force });
     } catch (error) {
         debugLog('Не удалось обновить состояние активной вкладки:', error);
     }
 }
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    const completed = changeInfo.status === 'complete';
-    const titleChangedAfterLoad = typeof changeInfo.title === 'string' && tab.status === 'complete';
-    if (!completed && !titleChangedAfterLoad) return;
-    void refreshActiveTabIfReady(tabId);
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    const changed = typeof changeInfo.url === 'string' ||
+        typeof changeInfo.title === 'string' ||
+        changeInfo.status === 'loading' ||
+        changeInfo.status === 'complete';
+    if (!changed) return;
+    void refreshActiveTabIfReady(tabId, { force: changeInfo.status === 'complete' });
 });
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {
-    void refreshActiveTabIfReady(tabId);
+    void refreshActiveTabIfReady(tabId, { force: true });
+});
+
+chrome.tabs.onRemoved.addListener(() => scheduleCurrentMovieRefresh(80, { force: true }));
+
+// Service worker оповещает открытую панель об изменении сеанса просмотра.
+chrome.runtime.onMessage.addListener(message => {
+    if (message?.action !== 'kinoWatchSessionChanged' || !Number.isInteger(message.tabId)) return;
+    void refreshActiveTabIfReady(message.tabId, { force: true });
+});
+
+// Сверка после пропущенных браузером событий; запросов оценки здесь нет.
+setInterval(async () => {
+    if (document.hidden) return;
+    try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (getTabSignature(tab) !== lastRenderedTabSignature) {
+            scheduleCurrentMovieRefresh(40);
+        }
+    } catch (error) {
+        debugLog('Не удалось синхронизировать активную вкладку:', error);
+    }
+}, 1800);
+
+window.addEventListener('focus', () => scheduleCurrentMovieRefresh(80, { force: true }));
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) scheduleCurrentMovieRefresh(80, { force: true });
 });
 
 // Навигация и настройки
