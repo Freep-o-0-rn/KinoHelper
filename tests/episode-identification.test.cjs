@@ -156,6 +156,50 @@ function playerButton(text, cls = 'select__item') {
   };
 }
 
+test('changing a selected episode replaces the old identity and clears on ambiguity', async () => {
+  const messages = [];
+  let time = 100000;
+  let tick;
+  let current = [playerButton('Сезон 1'), playerButton('Серия 1')];
+  const context = {
+    globalThis: {}, URL,
+    location: { href: 'https://theatre.stravers.live/player' },
+    Date: { now: () => time },
+    document: {
+      documentElement: {},
+      querySelectorAll(selector) {
+        if (selector === 'button.select__item') return current;
+        return [];
+      }
+    },
+    chrome: { runtime: { sendMessage: async message => {
+      messages.push(message.payload); return { ok: true };
+    } } },
+    MutationObserver: class { observe() {} disconnect() {} },
+    setTimeout() { return 1; }, clearTimeout() {},
+    setInterval(fn) { tick = fn; return 1; }, clearInterval() {},
+    window: { addEventListener() {} }
+  };
+  vm.runInNewContext(detector, context);
+  time += 2500;
+  tick();
+  current = [playerButton('Сезон 1'), playerButton('Серия 2')];
+  time += 2500;
+  tick(); // changing identity starts a new confirmation interval
+  time += 2500;
+  tick();
+  current = [playerButton('Серия 3')]; // no season -> unknown
+  time += 2500;
+  tick();
+  time += 2500;
+  tick();
+  assert.deepEqual(JSON.parse(JSON.stringify(messages)), [
+    { season: 1, episode: 1 },
+    { season: 1, episode: 2 },
+    { clear: true }
+  ]);
+});
+
 test('real player selector: season 1 episode 1 shown with dropdown open', async () => {
   const messages = await detect({
     playerButtons: [playerButton('Сезон 1'), playerButton('Серия 1')],
