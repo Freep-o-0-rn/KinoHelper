@@ -189,6 +189,15 @@
               </label>
             </section>
 
+            <section class="settings-section player-probe-section" aria-label="Диагностика видеоплеера">
+              <div class="settings-section-title">ПРОДОЛЖИТЬ ПРОСМОТР — ДИАГНОСТИКА</div>
+              <div class="player-probe-description">Открой фильм, запусти видео, затем проверь доступ к таймкоду. Диагностика не сохраняет данные и не управляет воспроизведением.</div>
+              <button id="playerProbeStart" class="player-probe-button" type="button">Проверить плеер</button>
+              <div id="playerProbeStatus" class="player-probe-status" role="status" aria-live="polite"></div>
+              <pre id="playerProbeResult" class="player-probe-result" hidden></pre>
+              <button id="playerProbeCopy" class="player-probe-button secondary" type="button" hidden>Копировать отчёт</button>
+            </section>
+
             <section class="settings-section">
               <div class="settings-section-title">ДАННЫЕ</div>
               <button class="danger-button" id="clearHistoryBtn" type="button">Очистить историю</button>
@@ -216,5 +225,6 @@
   <script src="filters.js"></script>
   <script src="filters-ui.js"></script>
   <script src="display-mode.js"></script>
+  <script src="player-probe.js"></script>
 </body>
 </html>
