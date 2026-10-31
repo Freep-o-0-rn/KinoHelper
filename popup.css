@@ -1794,3 +1794,19 @@ button.btn-convert:active:not(:disabled) {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
 }
+
+
+/* Текущий таймкод обновляется каждые 2 секунды, в отличие от разового отчёта. */
+.player-probe-live[hidden] { display: none !important; }
+.player-probe-live {
+  padding: 9px 10px;
+  white-space: pre-line;
+  font-size: 12px;
+  line-height: 1.65;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius);
+}
