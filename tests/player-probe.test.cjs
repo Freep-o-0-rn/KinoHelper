@@ -102,7 +102,7 @@ test('two optional player origins are requested on consent, then inspected', asy
         { grant: true, clickGrant: true }
     );
     const report = controls.get('playerProbeResult').textContent;
-    assert.deepEqual(controls.requests[0], [
+    assert.deepEqual(Array.from(controls.requests[0]), [
         'https://brogiro.cfd/*', 'https://theatre.stravers.live/*'
     ]);
     assert.match(report, /Разрешено проверить: 2/);
