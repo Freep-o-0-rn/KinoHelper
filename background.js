@@ -1875,10 +1875,11 @@ async function saveEpisodeObservation(payload, sender) {
       !Number.isInteger(sender.frameId) ||
       !['https://brogiro.cfd', 'https://theatre.stravers.live']
         .includes(originOfEpisodeSender(sender))) return { ok: false };
-  const season = Number(payload?.season);
-  const episode = Number(payload?.episode);
-  if (!Number.isInteger(season) || season < 1 || season > 250 ||
-      !Number.isInteger(episode) || episode < 1 || episode > 250) {
+  const clearing = payload?.clear === true;
+  const season = clearing ? null : Number(payload?.season);
+  const episode = clearing ? null : Number(payload?.episode);
+  if (!clearing && (!Number.isInteger(season) || season < 1 || season > 250 ||
+      !Number.isInteger(episode) || episode < 1 || episode > 250)) {
     return { ok: false };
   }
 
@@ -1894,9 +1895,11 @@ async function saveEpisodeObservation(payload, sender) {
   for (const [frame, data] of Object.entries(sources)) {
     if (!data || at - data.at > EPISODE_TTL_MS || at < data.at) delete sources[frame];
   }
-  sources[String(sender.frameId)] = { season, episode, at };
+  if (clearing) delete sources[String(sender.frameId)];
+  else sources[String(sender.frameId)] = { season, episode, at };
   const next = { seriesId: series.id, sources };
-  await chrome.storage.session.set({ [key]: next });
+  if (!Object.keys(sources).length) await chrome.storage.session.remove(key);
+  else await chrome.storage.session.set({ [key]: next });
   const after = resolvedEpisode(next, series.id);
   if (before?.season !== after?.season || before?.episode !== after?.episode) {
     chrome.runtime.sendMessage({ action: 'kinoEpisodeSelectionChanged', tabId })
