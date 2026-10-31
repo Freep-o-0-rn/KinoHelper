@@ -55,8 +55,12 @@ test('only confirmed personal ratings contribute to mean', () => {
   });
   assert.equal(data.ratingsCount,2);
   assert.equal(data.meanRating,8);
-  assert.equal(data.buckets[0].count,1);
-  assert.equal(data.buckets[1].count,1);
+  assert.equal(data.buckets.length,10);
+  assert.equal(data.buckets[8].name,'9');
+  assert.equal(data.buckets[8].count,1);
+  assert.equal(data.buckets[6].name,'7');
+  assert.equal(data.buckets[6].count,1);
+  assert.equal(data.buckets.filter(x=>x.count).length,2);
 });
 
 test('genre membership works with multiple genres and watched-only ID', () => {
@@ -152,4 +156,27 @@ test('a series served on /film/ does not inflate film counts or lose its time', 
   assert.equal(data.seriesSeconds,150);
   assert.equal(data.filmSeconds,0);
   assert.equal(data.taggedTitles,1);
+});
+
+
+test('personal score histogram has one row for each grade 1 through 10',()=>{
+  const ratings=Object.fromEntries([
+    1,1,2,3,4,5,6,7,8,9,10,10,10
+  ].map((n,index)=>['film:'+(index+1),{rating:n}]));
+  const result=core.summarize({ratings});
+  assert.equal(result.buckets.length,10);
+  assert.deepEqual(result.buckets.map(x=>x.name),
+    ['1','2','3','4','5','6','7','8','9','10']);
+  assert.deepEqual(result.buckets.map(x=>x.count),
+    [2,1,1,1,1,1,1,1,1,3]);
+  assert.equal(result.buckets.reduce((n,x)=>n+x.count,0),13);
+  assert.equal(result.ratingsCount,13);
+  assert.equal(new Set(result.buckets.map(x=>x.color)).size,10);
+});
+
+test('missing personal ratings still render all ten categories with zeros',()=>{
+  const result=core.summarize({ratings:{}});
+  assert.equal(result.ratingsCount,0);
+  assert.equal(result.meanRating,null);
+  assert.ok(result.buckets.every(x=>x.count===0));
 });
