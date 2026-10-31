@@ -15,13 +15,14 @@ const observer = fs.readFileSync(path.join(__dirname, '..', 'playback-tracker.js
 function makeBackground() {
   const data = {};
   const registered = new Map();
+  let granted = true;
   let tab = { id: 7, url: 'https://brogiro.cfd/film/447301/?secret=DO_NOT_SAVE',
     title: 'Астрал' };
   const event = () => ({ addListener() {} });
   const chrome = {
     runtime: { id: 'kino-test', onInstalled: event(), onStartup: event(),
       onMessage: event() },
-    permissions: { contains: async () => true, onAdded: event(), onRemoved: event() },
+    permissions: { contains: async () => granted, onAdded: event(), onRemoved: event() },
     tabs: { get: async () => tab, query: async () => [tab] },
     storage: { local: { get: async key => ({ [key]: data[key] }),
       set: async object => Object.assign(data, object) } },
@@ -48,7 +49,9 @@ function makeBackground() {
   };
   vm.createContext(context);
   vm.runInContext(background + '\nthis.resumeAPI = { saveResumeProgress };', context);
-  return { api: context.resumeAPI, data, registered, setTab: next => { tab = next; } };
+  return { api: context.resumeAPI, data, registered,
+    setTab: next => { tab = next; },
+    revoke: () => { granted = false; } };
 }
 
 test('progress is stored by Kinopoisk film ID, not tab ID or a secret player URL', async () => {
@@ -151,4 +154,19 @@ test('observer skips invalid ad video and sends real progress and pause', () => 
   primary.paused = true;
   for (const callback of handlers.pause || []) callback();
   assert.equal(messages[messages.length - 1].payload.event, 'pause');
+});
+
+
+test('revoking optional host permission immediately prevents new progress writes', async () => {
+  const { api, data, revoke } = makeBackground();
+  const sender = { id: 'kino-test', tab: { id: 7 },
+    url: 'https://theatre.stravers.live/player' };
+  const payload = { currentTime: 150, duration: 6722,
+    playedSeconds: 20, event: 'playing' };
+  const first = await api.saveResumeProgress(payload, sender);
+  assert.equal(first.ok, true);
+  revoke();
+  const second = await api.saveResumeProgress({ ...payload, currentTime: 170 }, sender);
+  assert.equal(second.ok, false);
+  assert.equal(data.kinoPlaybackProgressV1['film:447301'].position, 150);
 });
