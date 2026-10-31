@@ -23,6 +23,7 @@
   let lastTick = 0;
   let movingSamples = 0;
   let watchedSeconds = 0;
+  let statsTrackingId = crypto.randomUUID();
   let lastSent = 0;
   let lastKnownMediaSrc = '';
   let trackedMediaToken = 0;
@@ -80,6 +81,7 @@
     lastTick = 0;
     movingSamples = 0;
     watchedSeconds = 0;
+    statsTrackingId = crypto.randomUUID();
     lastSent = 0;
   }
 
@@ -152,6 +154,7 @@
           currentTime: Math.round(video.currentTime * 10)/10,
           duration: Math.round(video.duration * 10)/10,
           playedSeconds: Math.floor(watchedSeconds),
+          statsTrackingId,
           event: eventType
         }
       }).catch(() => {});
