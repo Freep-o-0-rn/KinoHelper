@@ -200,9 +200,12 @@ test('episode progress is isolated and shows season and episode in history', asy
     /Сезон 1 · Серия 3 · 5:00 \/ 30:00 · 17%/);
   assert.match(ui.elements.resumeLastMeta.textContent,
     /Сезон 1 · Серия 3 · Сохранено 5:00 \/ 30:00/);
-  assert.equal(ui.elements.resumeLastOpen.textContent, '▶ Открыть');
+  assert.equal(ui.elements.resumeLastOpen.textContent, '▶ Продолжить');
   ui.elements.resumeLastOpen.events.click();
-  assert.equal(ui.openedOptions[0].resume, false);
+  assert.equal(ui.openedOptions[0].resume, true);
+  assert.equal(ui.openedOptions[0].resumeTarget.kind, 'series');
+  assert.equal(ui.openedOptions[0].resumeTarget.season, 1);
+  assert.equal(ui.openedOptions[0].resumeTarget.episode, 3);
 });
 
 test('switching episodes updates latest progress but preserves earlier episode', async () => {
@@ -257,9 +260,12 @@ test('provider film URL with explicit series history label displays episode prog
   assert.match(label.textContent, /Сезон 1 · Серия 3/);
   assert.match(ui.elements.resumeLastMeta.textContent,
     /Сезон 1 · Серия 3/);
-  assert.equal(ui.elements.resumeLastOpen.textContent, '▶ Открыть');
+  assert.equal(ui.elements.resumeLastOpen.textContent, '▶ Продолжить');
   ui.elements.resumeLastOpen.events.click();
-  assert.equal(ui.openedOptions[0].resume, false);
+  assert.equal(ui.openedOptions[0].resume, true);
+  assert.equal(ui.openedOptions[0].resumeTarget.kind, 'series');
+  assert.equal(ui.openedOptions[0].resumeTarget.season, 1);
+  assert.equal(ui.openedOptions[0].resumeTarget.episode, 3);
 });
 
 test('film URL with verified series metadata suppresses duplicate current-view card', async () => {
@@ -277,4 +283,18 @@ test('film URL with verified series metadata suppresses duplicate current-view c
   // the history entry must retain its correct episode label and progress.
   assert.match(ui.rows[0].querySelector('.history-progress-label').textContent,
     /Сезон 1 · Серия 3/);
+});
+
+
+test('latest completed episode never falls back to older unfinished episodes', async () => {
+  const last = { ...episode, episode: 4, position: 1800,
+    duration: 1800, completed: true, updatedAt: 70000 };
+  const ui = await setup({ history: seriesHistory,
+    seriesData: { 'series:404900:1:3': episode,
+      'series:404900:1:4': last } });
+  assert.equal(ui.elements.resumeLast.hidden, true);
+  assert.match(ui.rows[0].querySelector('.history-progress-label').textContent,
+    /Сезон 1 · Серия 4/);
+  assert.equal(ui.rows[0].querySelector('.history-progress-track')
+    .attrs['aria-valuenow'], '100');
 });
