@@ -538,7 +538,13 @@ function historyContains(url) {
 
 function addToHistory(title, url) {
     let history = getHistory();
-    history = history.filter(item => item.url !== url);
+    const media = parseMediaUrl(url);
+    // Keep a single history entry per Kinopoisk title (not per provider URL
+    // variant), while episode checkpoints remain separate in chrome.storage.
+    history = history.filter(item => {
+        const previous = parseMediaUrl(item.url);
+        return media && previous ? previous.id !== media.id : item.url !== url;
+    });
     history.unshift({ title, url, timestamp: Date.now() });
     history = pruneHistory(history);
     saveHistory(history);
