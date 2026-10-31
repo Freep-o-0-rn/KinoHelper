@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "КиноПомощник",
-  "version": "1.554",
+  "version": "1.555",
   "description": "Быстрый доступ к фильмам и сериалам с удобными фильтрами",
   "action": {
     "default_title": "КиноПомощник"
@@ -66,7 +66,8 @@
         "https://theatre.stravers.live/*"
       ],
       "js": [
-        "series-progress-tracker.js"
+        "series-progress-tracker.js",
+        "series-playback-resume.js"
       ],
       "all_frames": true,
       "run_at": "document_idle"
