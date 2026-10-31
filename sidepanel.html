@@ -213,23 +213,16 @@
             <div class="stats-fineprint" id="statsRatingsNote"></div>
             <div class="stats-section-title">ПРОФИЛЬ КИНОПОИСКА</div>
             <article class="stats-tile stats-profile-tile">
-              <label for="statsProfileInput">Ссылка на свой профиль или ID</label>
-              <div class="stats-profile-row">
-                <input id="statsProfileInput" type="text"
-                       placeholder="kinopoisk.ru/user/12345/"
-                       spellcheck="false" autocomplete="off" />
-                <button id="statsProfileSave" type="button">Сохранить</button>
+              <div class="stats-account-row">
+                <div id="statsAccountStatus" class="stats-account-status" role="status" aria-live="polite">Проверяем вход на Кинопоиск…</div>
+                <button id="statsAccountRefresh" class="stats-account-refresh" type="button" title="Повторно проверить авторизацию" aria-label="Проверить авторизацию">↻</button>
               </div>
               <button id="statsRatingsSync" class="stats-sync-ratings" type="button">↻ Обновить оценки известных фильмов</button>
-              <button id="statsProfileImport" class="stats-sync-ratings stats-profile-import" type="button">↓ Импорт оценок из профиля</button>
+              <button id="statsProfileImport" class="stats-sync-ratings stats-profile-import" type="button">↓ Продолжить импорт оценок</button>
               <div id="statsImportStatus" class="stats-profile-status" role="status" aria-live="polite"></div>
               <a id="statsProfileLink" href="https://www.kinopoisk.ru/"
                  target="_blank" rel="noopener noreferrer" hidden>Мои оценки на Кинопоиске ↗</a>
-              <p class="stats-fineprint">Здесь сохраняется адрес профиля — не ID разработчика.
-                 Оценки известных расширению фильмов можно подтянуть из авторизованного
-                 аккаунта Кинопоиска. Указанная ссылка не проверяет аккаунт.
-                 Импорт считывает постраничный список оценок выбранного профиля.
-                 При блокировке Кинопоиска импорт остановится; уже полученные оценки сохранятся.</p>
+              <p class="stats-fineprint">KinoHelper определяет текущий профиль по личным страницам Кинопоиска, без паролей и ввода ID. При открытии статистики автоматически проверяет вход и загружает новую порцию оценок. При смене аккаунта данные не смешиваются. Если Кинопоиск ограничит доступ, сохраним ранее подтверждённые оценки.</p>
               <div id="statsStatus" class="stats-profile-status" role="status"></div>
             </article>
           </div>
@@ -324,6 +317,7 @@
   <script src="popup.js"></script>
   <script src="stats-core.js"></script>
   <script src="stats-profile-import.js"></script>
+  <script src="stats-account.js"></script>
   <script src="stats.js"></script>
   <script src="search.js"></script>
   <script src="filters.js"></script>
