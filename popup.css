@@ -1856,3 +1856,15 @@ button.btn-convert:active:not(:disabled) {
   border-color: var(--secondary-hover);
   background: var(--secondary-hover);
 }
+
+
+/* Identified series episode is shown only when two valid numbers are confirmed. */
+.current-episode-info[hidden] { display: none !important; }
+.current-episode-info {
+  margin-top: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
