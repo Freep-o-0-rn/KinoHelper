@@ -341,6 +341,9 @@
         if (!title || !meta) return;
         title.textContent = movie.title;
         title.title = movie.title;
+        if (movie._bookmarkNode) {
+            window.KinoWatchlist?.syncSearchButton(movie._bookmarkNode, movie);
+        }
         const typeName = movie.type === 'series' ? 'Сериал' : 'Фильм';
         meta.textContent = typeName + (movie.year ? ' · ' + movie.year : '');
         if (movie.rating != null) {
@@ -378,6 +381,11 @@
             makeAction('▶ Смотреть', 'watch', movie, true),
             makeAction('Кинопоиск', 'kinopoisk', movie, false)
         );
+        const bookmark = window.KinoWatchlist?.createSearchButton(movie);
+        if (bookmark) {
+            movie._bookmarkNode = bookmark;
+            actions.appendChild(bookmark);
+        }
         details.append(title, meta, genres);
         if (typeof window.historyContains === 'function' &&
             window.historyContains(movie.watchUrl)) {
