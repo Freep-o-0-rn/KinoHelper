@@ -136,3 +136,20 @@ test('completed content cannot be undone by a later checkpoint', async () => {
   assert.equal(records['series:101:1:1'].completed,true);
   assert.equal(Object.keys(records).length,2);
 });
+
+
+test('a series served on /film/ does not inflate film counts or lose its time', () => {
+  const data = core.summarize({
+    films:{'film:404900':film(404900,false)},
+    episodes:{'series:404900:1:4':ep(404900,1,4,true)},
+    watchTime:{'film:404900':{seconds:30},'series:404900':{seconds:120}},
+    genres:{'film:404900':{genres:['драма']}}
+  });
+  assert.equal(data.finishedFilms,0);
+  assert.equal(data.unfinishedFilms,0);
+  assert.equal(data.startedSeries,1);
+  assert.equal(data.finishedEpisodes,1);
+  assert.equal(data.seriesSeconds,150);
+  assert.equal(data.filmSeconds,0);
+  assert.equal(data.taggedTitles,1);
+});
