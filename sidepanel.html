@@ -221,12 +221,15 @@
                 <button id="statsProfileSave" type="button">Сохранить</button>
               </div>
               <button id="statsRatingsSync" class="stats-sync-ratings" type="button">↻ Обновить оценки известных фильмов</button>
+              <button id="statsProfileImport" class="stats-sync-ratings stats-profile-import" type="button">↓ Импорт оценок из профиля</button>
+              <div id="statsImportStatus" class="stats-profile-status" role="status" aria-live="polite"></div>
               <a id="statsProfileLink" href="https://www.kinopoisk.ru/"
                  target="_blank" rel="noopener noreferrer" hidden>Мои оценки на Кинопоиске ↗</a>
               <p class="stats-fineprint">Здесь сохраняется адрес профиля — не ID разработчика.
                  Оценки известных расширению фильмов можно подтянуть из авторизованного
                  аккаунта Кинопоиска. Указанная ссылка не проверяет аккаунт.
-                 Полный импорт архива профиля пока не реализован.</p>
+                 Импорт считывает постраничный список оценок выбранного профиля.
+                 При блокировке Кинопоиска импорт остановится; уже полученные оценки сохранятся.</p>
               <div id="statsStatus" class="stats-profile-status" role="status"></div>
             </article>
           </div>
@@ -320,6 +323,7 @@
   <script src="episode-ui.js"></script>
   <script src="popup.js"></script>
   <script src="stats-core.js"></script>
+  <script src="stats-profile-import.js"></script>
   <script src="stats.js"></script>
   <script src="search.js"></script>
   <script src="filters.js"></script>
