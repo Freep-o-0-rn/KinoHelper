@@ -1525,3 +1525,202 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     .catch(error => sendResponse({ ok: false, error: error.message }));
   return true;
 });
+
+
+// -------------------------
+// Resume playback: passive, opt-in host-scoped film autosave.
+// No player control or seek. Series deliberately excluded until episode identity
+// is independently verified, to prevent restoring an unrelated episode.
+// -------------------------
+const RESUME_STORAGE_KEY = 'kinoPlaybackProgressV1';
+const RESUME_SCRIPT_ID = 'kino-playback-tracker-v1';
+const RESUME_PLAYER_ORIGIN = 'https://theatre.stravers.live/*';
+const RESUME_PLAYER_HOST = 'theatre.stravers.live';
+const RESUME_MAX_ENTRIES = 120;
+let resumeWriteQueue = Promise.resolve();
+let resumeRegistrationQueue = Promise.resolve();
+
+function resumeOrigin(url) {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' ? u.origin : '';
+  } catch {
+    return '';
+  }
+}
+
+function resumeSourceIsTrusted(sender) {
+  return sender?.id === chrome.runtime.id &&
+    Number.isInteger(sender?.tab?.id) &&
+    resumeOrigin(sender.url) === 'https://' + RESUME_PLAYER_HOST;
+}
+
+async function resumeIdentifyFilm(tabId) {
+  const tab = await chrome.tabs.get(tabId);
+  if (!tab?.url) return null;
+  const origin = resumeOrigin(tab.url);
+  // Recovered session may have no longer existed after redirect. A stable
+  // /film/<id> path on the known parent site is an independent identity.
+  const direct = parseMedia(tab.url);
+  if (direct?.type === 'film' &&
+      [resumeOrigin(WATCH_BASE), resumeOrigin(FALLBACK_WATCH_BASE),
+        'https://brogiro.cfd'].includes(origin)) {
+    const session = await getSession(tabId);
+    // An existing session for another movie must never attach its title.
+    const title = session?.type === 'film' && String(session.id) === direct.id
+      ? session.title : '';
+    return { id: direct.id, title: title || tab.title || '' };
+  }
+
+  const session = await getSession(tabId);
+  if (session?.type !== 'film' || !/^\d+$/.test(String(session.id))) return null;
+  // The active top-level page must be a known step in the tracked watch chain.
+  if (!Array.isArray(session.recognizedOrigins) ||
+      !session.recognizedOrigins.includes(origin) ||
+      origin === KINOPOISK_BASE) return null;
+  return { id: String(session.id), title: session.title || tab.title || '' };
+}
+
+function validatePlaybackEvent(data) {
+  if (!data || typeof data !== 'object') return null;
+  const position = Number(data.currentTime);
+  const duration = Number(data.duration);
+  const played = Number(data.playedSeconds);
+  const event = data.event;
+  if (!Number.isFinite(position) || !Number.isFinite(duration) ||
+      !Number.isFinite(played) || played < 2 ||
+      duration < 60 || duration > 8 * 3600 ||
+      position < 1 || position > duration + 2 ||
+      !['playing', 'pause', 'seeked', 'pagehide', 'ended'].includes(event)) return null;
+  return { position: Math.min(Math.floor(position), Math.floor(duration)),
+    duration: Math.floor(duration), played, event };
+}
+
+async function saveResumeProgress(payload, sender) {
+  const item = validatePlaybackEvent(payload);
+  if (!item || !resumeSourceIsTrusted(sender)) {
+    return { ok: false, skipped: 'invalid source or progress' };
+  }
+  const film = await resumeIdentifyFilm(sender.tab.id);
+  if (!film) return { ok: false, skipped: 'movie identification unavailable' };
+  const key = 'film:' + film.id;
+  const safeTitle = String(film.title || '').replace(/\s+/g, ' ').trim().slice(0, 150);
+  if (key.length > 40) return { ok: false, skipped: 'invalid movie id' };
+
+  // Serialize writes to prevent a racing old storage snapshot from overwriting
+  // another tab's progress. No storage API calls from the iframe itself.
+  const write = async () => {
+    const store = await chrome.storage.local.get(RESUME_STORAGE_KEY);
+    const entries = store[RESUME_STORAGE_KEY] &&
+      typeof store[RESUME_STORAGE_KEY] === 'object' &&
+      !Array.isArray(store[RESUME_STORAGE_KEY])
+      ? { ...store[RESUME_STORAGE_KEY] } : {};
+    const older = entries[key];
+    const completed = item.event === 'ended' &&
+      item.played >= 30 && item.position >= item.duration - 5;
+
+    // If playback restarted from the beginning after completion, a new
+    // verified session creates a fresh unfinished entry.
+    entries[key] = {
+      type: 'film',
+      id: film.id,
+      title: safeTitle || older?.title || 'Фильм №' + film.id,
+      position: item.position,
+      duration: item.duration,
+      updatedAt: Date.now(),
+      completed,
+      source: RESUME_PLAYER_HOST
+    };
+
+    const kept = Object.entries(entries)
+      .filter(([id, value]) => /^film:\d+$/.test(id) &&
+        value && Number.isFinite(value.updatedAt))
+      .sort((a, b) => b[1].updatedAt - a[1].updatedAt)
+      .slice(0, RESUME_MAX_ENTRIES);
+    await chrome.storage.local.set({
+      [RESUME_STORAGE_KEY]: Object.fromEntries(kept)
+    });
+    return { ok: true, key, position: item.position, completed };
+  };
+  const result = resumeWriteQueue.then(write, write);
+  resumeWriteQueue = result.catch(error => {
+    console.warn('[KinoHelper] Не удалось сохранить таймкод:', error);
+  });
+  return result;
+}
+
+async function syncResumeContentScript() {
+  const granted = await chrome.permissions.contains({
+    origins: [RESUME_PLAYER_ORIGIN]
+  });
+  const registered = await chrome.scripting.getRegisteredContentScripts({
+    ids: [RESUME_SCRIPT_ID]
+  });
+
+  if (granted && !registered.length) {
+    await chrome.scripting.registerContentScripts([{
+      id: RESUME_SCRIPT_ID,
+      matches: [RESUME_PLAYER_ORIGIN],
+      js: ['playback-tracker.js'],
+      runAt: 'document_idle',
+      allFrames: true,
+      persistAcrossSessions: true,
+      world: 'ISOLATED'
+    }]);
+  } else if (!granted && registered.length) {
+    await chrome.scripting.unregisterContentScripts({ ids: [RESUME_SCRIPT_ID] });
+  }
+  return granted;
+}
+
+function scheduleResumeRegistration() {
+  const update = resumeRegistrationQueue.then(syncResumeContentScript, syncResumeContentScript);
+  resumeRegistrationQueue = update.catch(error =>
+    console.warn('[KinoHelper] Не удалось подключить отслеживание:', error));
+  return update;
+}
+
+async function injectResumeIntoOpenTabs() {
+  const tabs = await chrome.tabs.query({});
+  for (const tab of tabs) {
+    if (!Number.isInteger(tab.id)) continue;
+    try {
+      const frames = await chrome.webNavigation.getAllFrames({ tabId: tab.id });
+      const ids = (frames || []).filter(frame =>
+        resumeOrigin(frame.url) === 'https://' + RESUME_PLAYER_HOST)
+        .map(frame => frame.frameId);
+      if (ids.length) {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id, frameIds: ids },
+          files: ['playback-tracker.js'],
+          world: 'ISOLATED'
+        });
+      }
+    } catch {
+      // A tab may close/navigate while permissions are being granted.
+    }
+  }
+}
+
+chrome.permissions.onAdded.addListener(permissions => {
+  if (permissions.origins?.includes(RESUME_PLAYER_ORIGIN)) {
+    scheduleResumeRegistration().then(() => injectResumeIntoOpenTabs())
+      .catch(error => console.warn('[KinoHelper] Ошибка подключения к плееру:', error));
+  }
+});
+chrome.permissions.onRemoved.addListener(permissions => {
+  if (permissions.origins?.includes(RESUME_PLAYER_ORIGIN)) {
+    void scheduleResumeRegistration();
+  }
+});
+chrome.runtime.onInstalled.addListener(() => { void scheduleResumeRegistration(); });
+chrome.runtime.onStartup.addListener(() => { void scheduleResumeRegistration(); });
+void scheduleResumeRegistration();
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.action !== 'kinoPlaybackProgress') return false;
+  saveResumeProgress(message.payload, sender)
+    .then(sendResponse)
+    .catch(error => sendResponse({ ok: false, error: error.message }));
+  return true;
+});
