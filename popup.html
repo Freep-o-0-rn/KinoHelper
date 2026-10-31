@@ -211,12 +211,16 @@
                 <div id="statsAccountStatus" class="stats-account-status" role="status" aria-live="polite">Проверяем вход на Кинопоиск…</div>
                 <button id="statsAccountRefresh" class="stats-account-refresh" type="button" title="Повторно проверить авторизацию" aria-label="Проверить авторизацию">↻</button>
               </div>
-              <button id="statsRatingsSync" class="stats-sync-ratings" type="button">↻ Обновить оценки известных фильмов</button>
-              <button id="statsProfileImport" class="stats-sync-ratings stats-profile-import" type="button">↓ Продолжить импорт оценок</button>
-              <div id="statsImportStatus" class="stats-profile-status" role="status" aria-live="polite"></div>
+              <div class="stats-import-header">
+                <span>Автоматический импорт оценок</span>
+                <strong id="statsImportCount">—</strong>
+              </div>
+              <progress id="statsImportProgress" class="stats-import-progress" max="100" value="0"
+                        aria-label="Прогресс импорта оценок"></progress>
+              <div id="statsImportStatus" class="stats-profile-status" role="status" aria-live="polite">Ожидаем проверку профиля…</div>
               <a id="statsProfileLink" href="https://www.kinopoisk.ru/"
                  target="_blank" rel="noopener noreferrer" hidden>Мои оценки на Кинопоиске ↗</a>
-              <p class="stats-fineprint">KinoHelper определяет текущий профиль по личным страницам Кинопоиска, без паролей и ввода ID. При открытии статистики автоматически проверяет вход и загружает новую порцию оценок. При смене аккаунта данные не смешиваются. Если Кинопоиск ограничит доступ, сохраним ранее подтверждённые оценки.</p>
+              <p class="stats-fineprint">KinoHelper самостоятельно загружает все доступные страницы с паузами между запросами, даже при закрытой панели. Прогресс сохраняется после перезапуска браузера. Если Кинопоиск ограничит доступ, загрузка приостанавливается и повторяется позже.</p>
               <div id="statsStatus" class="stats-profile-status" role="status"></div>
             </article>
           </div>
