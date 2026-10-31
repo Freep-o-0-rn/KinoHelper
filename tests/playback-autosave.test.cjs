@@ -153,19 +153,28 @@ test('observer skips invalid ad video and sends real progress and pause', () => 
   };
   vm.createContext(context);
   vm.runInContext(observer, context);
-  for (let i = 0; i < 80; i++) {
+  // Run 40 seconds of video: first checkpoint after confirming playback,
+  // then another one at >=30 seconds. No noisy 10-second writes.
+  for (let i = 0; i < 160; i++) {
     milliseconds += 250;
     primary.currentTime += 0.25;
     for (const callback of handlers.timeupdate || []) callback();
   }
   interval();
-  assert.ok(messages.length >= 2);
+  const periodic = messages.filter(message => message.payload.event === 'playing');
+  assert.equal(periodic.length, 2);
+  assert.ok(periodic[1].payload.currentTime - periodic[0].payload.currentTime >= 30);
   assert.ok(messages.every(message =>
     message.action === 'kinoPlaybackProgress' &&
     message.payload.duration === 3127));
   primary.paused = true;
   for (const callback of handlers.pause || []) callback();
   assert.equal(messages[messages.length - 1].payload.event, 'pause');
+  assert.equal(messages[messages.length - 1].payload.currentTime, 40);
+  primary.currentTime = 120;
+  for (const callback of handlers.seeked || []) callback();
+  assert.equal(messages[messages.length - 1].payload.event, 'seeked');
+  assert.equal(messages[messages.length - 1].payload.currentTime, 120);
 });
 
 
