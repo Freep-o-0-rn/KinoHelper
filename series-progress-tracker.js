@@ -23,7 +23,12 @@
   let lastTick = 0;
   let movingSamples = 0;
   let watchedSeconds = 0;
-  let statsTrackingId = crypto.randomUUID();
+  // crypto.randomUUID exists on HTTPS players; deterministic test realms may
+  // not expose crypto, so provide a temporary fallback scoped to this script.
+  const newStatsTrackingId = () => globalThis.crypto?.randomUUID?.() ||
+    ('local-' + Date.now().toString(36) + '-' +
+      Math.random().toString(36).slice(2).padEnd(20,'0'));
+  let statsTrackingId = newStatsTrackingId();
   let lastSent = 0;
   let lastKnownMediaSrc = '';
   let trackedMediaToken = 0;
@@ -81,7 +86,7 @@
     lastTick = 0;
     movingSamples = 0;
     watchedSeconds = 0;
-    statsTrackingId = crypto.randomUUID();
+    statsTrackingId = newStatsTrackingId();
     lastSent = 0;
   }
 
