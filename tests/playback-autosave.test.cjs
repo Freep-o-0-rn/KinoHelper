@@ -85,6 +85,10 @@ test('progress is stored by Kinopoisk film ID, not tab ID or a secret player URL
   assert.equal(JSON.stringify(data).includes('DO_NOT_SAVE'), false);
   assert.equal(JSON.stringify(data).includes('VERY_PRIVATE'), false);
 
+  // Switching tabs flushes the checkpoint without periodic background writes.
+  await send(95, 'hidden', 45);
+  assert.equal(data.kinoPlaybackProgressV1['film:447301'].position, 95);
+
   await send(6722, 'ended', 90);
   assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed, true);
   await send(6720, 'pagehide', 90);
