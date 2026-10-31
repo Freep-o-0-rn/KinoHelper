@@ -61,6 +61,21 @@
     }
     return found;
   }
+  function recognizedSSRRows(ssr) {
+    const state=ssr?.apolloState || ssr?.props?.pageProps?.apolloState;
+    if(!state || typeof state!=='object')return 0;
+    const ids=new Set();
+    for(const entries of reactionLists(state)) {
+      for(const raw of entries) {
+        const row=ref(state,raw);
+        const movie=ref(state,row?.movie);
+        if(row?.__typename==='UserMovieReactions' &&
+            userId(String(movie?.id||'')) && TYPES.has(movie?.__typename))
+          ids.add(String(movie.id));
+      }
+    }
+    return ids.size;
+  }
   function readSSRRecords(ssr){
     const state=ssr?.apolloState || ssr?.props?.pageProps?.apolloState;
     if(!state || typeof state!=='object')return [];
@@ -131,12 +146,20 @@
         !html.includes('UserMovieReactions'))throw Error('Кинопоиск запросил проверку браузера');
     const ssr=profileSSR(html);
     const ssrVotes=readSSRRecords(ssr);
+    const recognized=recognizedSSRRows(ssr);
     let doc=null;
     if(typeof DOMParser!=='undefined')
       doc=new DOMParser().parseFromString(html,'text/html');
     const votes=ssrVotes.length?ssrVotes:readHTMLCards(doc);
     const {lastPage}=pagination(doc,html,page);
-    return {votes,lastPage,source:ssrVotes.length?'ssr':votes.length?'html':'empty'};
+    // Watched-only entries are legitimate, but they never contribute a
+    // numerical rating. The importer may safely advance past such a page.
+    const domRecognized=doc?.querySelectorAll
+      ? [...doc.querySelectorAll('[class*="styles_item"],[data-test-id*="reaction"]')]
+        .filter(card=>card.querySelector('a[href*="/film/"],a[href*="/series/"]')).length
+      : 0;
+    return {votes,lastPage,recognized:Math.max(recognized,domRecognized),
+      source:ssrVotes.length?'ssr':votes.length?'html':recognized?'watched-only':'empty'};
   }
   return {userId,profileSSR,readSSRRecords,parsePage,readHTMLCards,pagination};
 });
