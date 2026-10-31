@@ -84,11 +84,28 @@
     // /film/<id> also hosts series on this provider. A verified episode
     // checkpoint takes precedence. The explicit "(сериал)" history suffix
     // is display-only; it must never authorize saving or restoring a video.
-    const labeledSeries = /\(\s*(?:сериал|series)\s*\)\s*$/i
+    const labeledSeries = /\(\s*(?:сериал|series)(?:\s+\d{4}(?:[-–—]\d{4})?)?\s*\)\s*$/i
       .test(String(entry?.title || ''));
     return latestSeriesEpisode(media.id) || labeledSeries
       ? { ...media, type: 'series', key: 'series:' + media.id }
       : media;
+  }
+
+  // Never seek by title alone. A resume target must have an actual
+  // validated checkpoint (film or explicit season+episode).
+  function resumeTargetFor(entry) {
+    const media = displayMediaForEntry(entry);
+    if (!media) return null;
+    const saved = media.type === 'series'
+      ? latestSeriesEpisode(media.id, true) : positionFor(media.key);
+    if (!saved || saved.completed || saved.position < 10 ||
+        saved.position > saved.duration - 25) return null;
+    if (saved.type === 'series') {
+      return {kind:'series', id:String(saved.id),
+        season:saved.season, episode:saved.episode};
+    }
+    if (media.type === 'film') return {kind:'film',id:String(saved.id)};
+    return null;
   }
 
   function percentage(item) {
@@ -183,11 +200,9 @@
       if (!entry || typeof entry.url !== 'string') continue;
       const media = displayMediaForEntry(entry);
       if (!media || unique.has(media.key)) continue;
-      const saved = savedForMedia(media, false);
-      // A series with only completed episodes is not a resume candidate.
-      // Completed episodes remain visible (100%) in the history bar.
-      if (media.type === 'series' && !saved &&
-          latestSeriesEpisode(media.id, true)) continue;
+      // Only the actual most recently watched episode represents a series.
+      // Never fall back to an older unfinished episode after a newer one ends.
+      const saved = savedForMedia(media, true);
       if (saved?.completed) continue;
       const activity = Math.max(
         Number.isFinite(entry.timestamp) ? entry.timestamp : 0,
@@ -231,12 +246,10 @@
         : 'Фильм · таймкод пока не сохранён';
       lastProgress.hidden = true;
     }
-    const canResume = selected.media.type === 'film' &&
-      Boolean(saved && !saved.completed && saved.position >= 10 &&
-        saved.position <= saved.duration - 25);
+    const canResume = Boolean(resumeTargetFor(selected.entry));
     lastOpen.textContent = canResume ? '▶ Продолжить' : '▶ Открыть';
     lastOpen.title = canResume
-      ? 'Открыть фильм и восстановить сохранённую позицию'
+      ? 'Открыть сохранённый фильм или серию с нужного момента'
       : 'Открыть фильм или сериал';
   }
 
@@ -327,12 +340,11 @@
     const value = selected;
     if (!value) return;
     if (typeof window.openHistoryUrl === 'function') {
-      const saved = value.saved;
-      const resume = value.media.type === 'film' &&
-        Boolean(saved && !saved.completed && saved.position >= 10 &&
-          saved.position <= saved.duration - 25);
-      void window.openHistoryUrl(value.entry.url, value.entry.title, { resume }).catch(error =>
-        console.warn('[KinoHelper resume] Не удалось открыть фильм:', error));
+      const target = resumeTargetFor(value.entry);
+      void window.openHistoryUrl(value.entry.url, value.entry.title, {
+        resume: Boolean(target), resumeTarget: target
+      }).catch(error =>
+        console.warn('[KinoHelper resume] Не удалось открыть просмотр:', error));
     } else {
       void chrome.tabs.create({ url: value.entry.url });
     }
@@ -353,7 +365,8 @@
     void readStorage();
   });
 
-  window.KinoResumeUI = { updateHistory, readStorage, updateActive };
+  window.KinoResumeUI = { updateHistory, readStorage, updateActive,
+    resumeTargetFor };
   void readStorage();
   void updateActive();
 })();
