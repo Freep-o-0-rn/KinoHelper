@@ -117,14 +117,17 @@ window.KinoMovieDetails = (() => {
         return parsePage(html);
     }
 
+    let genreStatsQueue = Promise.resolve();
     function rememberGenres(target, details) {
         if (!details?.genres?.length) return;
-        // Enrichment is best-effort and must never delay the normal movie UI.
-        void chrome.storage.local.get('kinoStatsGenresV1').then(data => {
+        // Several search cards may load simultaneously. Serialize their
+        // read-modify-write operations to avoid losing genre records.
+        genreStatsQueue = genreStatsQueue.catch(() => {}).then(async () => {
+            const data = await chrome.storage.local.get('kinoStatsGenresV1');
             const previous = data.kinoStatsGenresV1 || {};
-            const old = previous[target.key];
-            if (JSON.stringify(old?.genres) === JSON.stringify(details.genres)) return;
-            return chrome.storage.local.set({ kinoStatsGenresV1: {
+            if (JSON.stringify(previous[target.key]?.genres) ===
+                JSON.stringify(details.genres)) return;
+            await chrome.storage.local.set({ kinoStatsGenresV1: {
                 ...previous, [target.key]: { genres: details.genres, updatedAt: Date.now() }
             } });
         }).catch(() => {});
