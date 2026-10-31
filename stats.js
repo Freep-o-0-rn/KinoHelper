@@ -403,12 +403,16 @@
         all[id] = scope;
         const allStates = {...safeObject(snapshot[KEY])};
         const prev = safeObject(allStates[id]);
+        const visitedPages = [...new Set([
+          ...(Array.isArray(prev.visitedPages) ? prev.visitedPages : []),page
+        ])].filter(n=>Number.isInteger(n)&&n>=1&&n<=500).sort((a,b)=>a-b);
         allStates[id] = {
-          pages: (Number(prev.pages)||0) + 1,
+          pages: visitedPages.length,
+          visitedPages,
           nextPage:page+1,
           lastPage:totalPages,
-          votes:Object.values(scope).filter(v=>Number.isInteger(v?.rating) &&
-            v.rating>=1 && v.rating<=10).length,
+          votes:Object.values(scope).filter(v=>v?.source==='kinopoisk-profile' &&
+            Number.isInteger(v.rating) && v.rating>=1 && v.rating<=10).length,
           updatedAt:importedAt
         };
         // Individual pages are committed independently. A later block or
