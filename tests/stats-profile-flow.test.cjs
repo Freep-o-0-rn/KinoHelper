@@ -68,18 +68,18 @@ function setup() {
   };
   const window={
     KinoStatsCore:core, KinoProfileVotes:parser,
+    KinoStatsAccount:{detect:async()=>({status:'logged-in',id:'1234567'})},
     addEventListener(){}
   };
   new Function('window','document','chrome','fetch','URL','AbortSignal',
     script)(window,doc,chrome,fetch,URL,AbortSignal);
-  doc.getElementById('statsProfileInput').value =
-    'https://www.kinopoisk.ru/user/1234567/';
+  const openStats=doc.getElementById('statsButton');
   const button=doc.getElementById('statsProfileImport');
   const wait = async () => {
     for(let i=0;i<50;i++)await new Promise(resolve=>setImmediate(resolve));
   };
   return {
-    values,requested,button,wait,
+    values,requested,button,openStats,wait,
     retry(){failSecond=false;},
     getStatus(){return doc.getElementById('statsImportStatus').textContent;}
   };
@@ -87,7 +87,8 @@ function setup() {
 
 test('partial failures persist verified votes; retry resumes next page',async()=>{
   const ui=setup();
-  ui.button.events.click();
+  // Opening statistics automatically detects the current user and starts import.
+  ui.openStats.events.click();
   await ui.wait();
   assert.equal(ui.values.kinoStatsRatingsV1['1234567']['film:123'].rating,10);
   assert.equal(ui.values.kinoStatsRatingsV1['1234567']['film:456'],undefined);
