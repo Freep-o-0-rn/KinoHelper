@@ -103,7 +103,7 @@ test('automatically asks for two specific hosts on the first probe click', async
     ]]);
     const report = controls.playerProbeResult.textContent;
     assert.match(report, /Найдено HTML5-видео: 2/);
-    assert.match(report, /Видео 1: .*изменение подтверждено/);
+    assert.match(report, /Видео 1: .*воспроизведение подтверждено/);
     assert.match(report, /Видео 2: .*не готов\/неактивен/);
     assert.match(report, /timeupdate: 5/);
     assert.doesNotMatch(report, /PRIVATE|TOPSECRET/);
@@ -138,4 +138,15 @@ test('uninstrumented, unknown frame does not cause requesting all-sites access',
     ]);
     assert.match(controls.playerProbeResult.textContent, /other.example \(нет разрешения\)/);
     assert.doesNotMatch(controls.playerProbeResult.textContent, /SECRET/);
+});
+
+
+test('time changing only through paused seeking is not treated as confirmed playback', async () => {
+    const stationary = player({ time: 10, duration: 6722, paused: true,
+        readyState: 4, rate: 2 });
+    const { controls } = await probe({ players: [stationary] });
+    assert.match(controls.playerProbeResult.textContent,
+        /время менялось, но воспроизведение не подтверждено/);
+    assert.doesNotMatch(controls.playerProbeStatus.textContent,
+        /Воспроизведение подтверждено/);
 });
