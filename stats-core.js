@@ -11,7 +11,7 @@
   };
   const valid = value => value && typeof value === 'object' && !Array.isArray(value);
   const num = value => Number.isFinite(value) && value >= 0 ? value : 0;
-  function summarize({ films = {}, episodes = {}, watchTime = {}, genres = {},
+  function summarize({ films = {}, episodes = {}, library = {}, watchTime = {}, genres = {},
     ratings = {}, profileId = '' } = {}) {
     const filmMap = new Map(), seriesMap = new Map();
     let finishedFilms = 0, unfinishedFilms = 0, finishedEpisodes = 0;
@@ -24,6 +24,7 @@
       if (entry.completed) finishedFilms++; else unfinishedFilms++;
     }
     const seenEpisodes = new Set();
+    const completedEpisodeKeys = new Set();
     for (const [key, entry] of Object.entries(valid(episodes) ? episodes : {})) {
       if (!/^series:[1-9]\d{0,12}:\d{1,3}:\d{1,3}$/.test(key) ||
           !entry || entry.type !== 'series' ||
@@ -32,8 +33,28 @@
           !Number.isFinite(entry.position) || entry.position < 0) continue;
       seriesMap.set('series:' + entry.id, true);
       seenEpisodes.add(key);
-      if (entry.completed) finishedEpisodes++;
+      if (entry.completed) completedEpisodeKeys.add(key);
     }
+    // Merge permanent verified catalog with bounded legacy checkpoints.
+    for (const [key, record] of Object.entries(valid(library) ? library : {})) {
+      if (!record || typeof record !== 'object') continue;
+      if (/^film:[1-9]\d{0,12}$/.test(key)) {
+        const earlier = filmMap.get(key);
+        if (!earlier) filmMap.set(key, {
+          type:'film', id:key.slice(5), completed:Boolean(record.completed)
+        });
+        else if (record.completed) earlier.completed = true;
+      } else {
+        const match = /^series:([1-9]\d{0,12}):(\d{1,3}):(\d{1,3})$/.exec(key);
+        if (!match || Number(match[2]) < 1 || Number(match[3]) < 1) continue;
+        seriesMap.set('series:' + match[1], true);
+        seenEpisodes.add(key);
+        if (record.completed) completedEpisodeKeys.add(key);
+      }
+    }
+    finishedFilms = [...filmMap.values()].filter(e=>e.completed).length;
+    unfinishedFilms = filmMap.size - finishedFilms;
+    finishedEpisodes = completedEpisodeKeys.size;
     let filmSeconds = 0, seriesSeconds = 0;
     for (const [key, entry] of Object.entries(valid(watchTime) ? watchTime : {})) {
       if (!identity(key)) continue;
