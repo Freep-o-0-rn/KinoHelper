@@ -75,7 +75,12 @@
     let taggedTitles = 0;
     const eligible = new Set([...filmMap.keys(), ...seriesMap.keys()]);
     for (const [key, entry] of Object.entries(valid(genres) ? genres : {})) {
-      if (!eligible.has(key) || !Array.isArray(entry?.genres) || !entry.genres.length) continue;
+      // Some providers present series on /film/<id>; reuse the same
+      // Kinopoisk ID's genre metadata without counting a title twice.
+      const alias = /^film:([1-9]\d{0,12})$/.exec(key);
+      const watched = eligible.has(key) ||
+        Boolean(alias && eligible.has('series:' + alias[1]));
+      if (!watched || !Array.isArray(entry?.genres) || !entry.genres.length) continue;
       const names = [...new Set(entry.genres.map(g =>
         String(g).trim().toLocaleLowerCase('ru')).filter(g =>
           g.length >= 3 && g.length <= 32))];
