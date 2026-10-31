@@ -43,7 +43,7 @@
         if (!earlier) filmMap.set(key, {
           type:'film', id:key.slice(5), completed:Boolean(record.completed)
         });
-        else if (record.completed) earlier.completed = true;
+        else if (record.completed) filmMap.set(key, { ...earlier, completed: true });
       } else {
         const match = /^series:([1-9]\d{0,12}):(\d{1,3}):(\d{1,3})$/.exec(key);
         if (!match || Number(match[2]) < 1 || Number(match[3]) < 1) continue;
