@@ -195,6 +195,14 @@
               </label>
             </section>
 
+            <section class="settings-section resume-saved-section" aria-label="Сохранённые просмотры">
+              <div class="settings-section-title">СОХРАНЁННЫЙ ПРОГРЕСС</div>
+              <div class="resume-saved-description">Автосохранение фильмов: до 10 секунд между записями. Для сериалов отслеживание ещё не включено.</div>
+              <div id="resumeSavedStatus" class="resume-saved-description" role="status" aria-live="polite"></div>
+              <div id="resumeSavedItems" class="resume-saved-items"></div>
+              <button id="resumeSavedRefresh" class="player-probe-button secondary" type="button">Обновить данные</button>
+            </section>
+
             <section class="settings-section player-probe-section" aria-label="Диагностика видеоплеера">
               <div class="settings-section-title">ПРОДОЛЖИТЬ ПРОСМОТР — ДИАГНОСТИКА</div>
               <div class="player-probe-description">Открой фильм, запусти видео, затем проверь доступ к таймкоду. Диагностика не сохраняет данные и не управляет воспроизведением.</div>
@@ -235,6 +243,7 @@
   <script src="filters-ui.js"></script>
   <script src="display-mode.js"></script>
   <script src="player-probe.js"></script>
+  <script src="resume-status.js"></script>
   <script src="sidepanel-ambient.js"></script>
 </body>
 </html>
