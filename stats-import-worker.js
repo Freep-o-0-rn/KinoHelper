@@ -171,6 +171,11 @@
         if(fingerprint && fingerprint===job.previousFingerprint) {
           throw Error('Кинопоиск повторил ту же страницу. Импорт приостановлен');
         }
+        // Another account may have been selected while this network request
+        // was in flight. Never replace its active job with a stale write.
+        const stillActive=await readJob();
+        if(stillActive?.profileId!==job.profileId ||
+           stillActive.nextPage!==job.nextPage)return stillActive;
         const snapshot=await chrome.storage.local.get([RATINGS,LEGACY]);
         const all={...safeObj(snapshot[RATINGS])};
         const account={...safeObj(all[job.profileId])};
@@ -230,13 +235,17 @@
   }
   async function wake() {
     const job=await readJob();
+    // On browser startup, check for account switches before restoring the
+    // old job. No UI action is required even if the active user changed.
+    const identity=await self.KinoStatsAccount.detect();
+    if(identity.status==='logged-in' && identity.id!==job?.profileId) {
+      await start(identity.id);
+      return;
+    }
     if(job) {
       await schedule(job.nextAt || Date.now()+30000);
       return;
     }
-    // First installation or fresh profile: no statistics view needs to open.
-    // Identification must come from an authenticated own-profile response.
-    const identity=await self.KinoStatsAccount.detect();
     if(identity.status==='logged-in')await start(identity.id);
   }
 
