@@ -543,6 +543,7 @@ function updateHistoryView() {
     if (!history.length) {
         historySection.style.display = 'none';
         historyItems.innerHTML = '';
+        window.KinoResumeUI?.updateHistory(history);
         return;
     }
 
@@ -552,6 +553,11 @@ function updateHistoryView() {
     history.forEach(item => {
         const historyItem = document.createElement('div');
         historyItem.className = 'history-item';
+        const media = parseMediaUrl(item.url);
+        if (media) historyItem.dataset.kinoMediaKey = media.type + ':' + media.id;
+
+        const main = document.createElement('div');
+        main.className = 'history-item-main';
 
         const title = document.createElement('div');
         title.className = 'history-item-title';
@@ -581,9 +587,11 @@ function updateHistoryView() {
         removeButton.addEventListener('click', () => removeFromHistory(item.url));
 
         actions.append(openButton, removeButton);
-        historyItem.append(title, actions);
+        main.appendChild(title);
+        historyItem.append(main, actions);
         historyItems.appendChild(historyItem);
     });
+    window.KinoResumeUI?.updateHistory(history);
 }
 
 function showMessage(text, type = 'info') {
