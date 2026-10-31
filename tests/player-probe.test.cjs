@@ -1,123 +1,141 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
-const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'player-probe.js'), 'utf8');
 
-async function runProbe(frames, videoFrames = {}, options = {}) {
-    const controls = new Map();
-    for (const id of ['playerProbeStart', 'playerProbeResult', 'playerProbeStatus', 'playerProbeCopy', 'playerProbeGrant']) {
-        controls.set(id, {
-            textContent: '', hidden: true, disabled: false, handlers: {},
-            addEventListener(type, callback) { this.handlers[type] = callback; }
-        });
-    }
-    let calls = 0;
-    const granted = new Set(['https://www.kinokino.vip/*', 'https://flcksbr.top/*']);
-    const requests = [];
-    const pageForFrame = frameId => ({
-        querySelectorAll(selector) {
-            if (selector === 'iframe' || selector === '*') return [];
-            if (selector !== 'video') return [];
-            const data = videoFrames[frameId] || [];
-            return data.map(v => ({
-                currentTime: v.times[Math.min(calls, v.times.length - 1)],
-                duration: v.duration, paused: false, ended: false, readyState: 4
-            }));
+function player({ time = 0, duration = NaN, paused = true, readyState = 0,
+    rate = 0, width = 0, height = 0 }) {
+    const listeners = {};
+    return {
+        time, duration, paused, readyState, videoWidth: width, videoHeight: height,
+        get currentTime() { return this.time; },
+        addEventListener(event, cb) { (listeners[event] ||= []).push(cb); },
+        removeEventListener(event, cb) {
+            listeners[event] = (listeners[event] || []).filter(item => item !== cb);
+        },
+        getBoundingClientRect() { return { width, height }; },
+        tick() {
+            this.time += rate;
+            for (const cb of listeners.timeupdate || []) cb();
         }
-    });
+    };
+}
+
+async function probe({ allow = true, players = [], frames = [
+    { frameId: 0, url: 'https://brogiro.cfd/film/447301/?secret=PRIVATE' },
+    { frameId: 457, url: 'https://theatre.stravers.live/player?token=TOPSECRET' }
+] } = {}) {
+    const controls = {};
+    const ids = ['playerProbeStart', 'playerProbeResult', 'playerProbeStatus',
+        'playerProbeCopy', 'playerProbeGrant'];
+    for (const id of ids) {
+        controls[id] = {
+            hidden: true, disabled: false, textContent: '', handlers: {},
+            addEventListener(type, cb) { this.handlers[type] = cb; }
+        };
+    }
+    const previouslyGranted = new Set();
+    const requests = [];
+    const page = {
+        querySelectorAll(selector) {
+            return selector === 'video' ? players :
+                selector === 'iframe' ? [{}] : [];
+        }
+    };
     const chrome = {
         permissions: {
-            contains: async ({ origins }) => origins.every(origin => granted.has(origin)),
             request: ({ origins }) => {
-                requests.push(origins);
-                if (!options.grant) return Promise.resolve(false);
-                for (const origin of origins) granted.add(origin);
-                return Promise.resolve(true);
-            }
+                requests.push([...origins]);
+                if (allow) origins.forEach(origin => previouslyGranted.add(origin));
+                return Promise.resolve(allow);
+            },
+            contains: async ({ origins }) => origins.every(origin => previouslyGranted.has(origin))
         },
-        tabs: { query: async () => [{ id: 5, url: 'https://www.kinokino.vip/film/123/?token=SECRET' }] },
+        tabs: { query: async () => [{ id: 123, url: frames[0].url }] },
         webNavigation: { getAllFrames: async () => frames },
         scripting: {
-            executeScript: async ({ target, func }) => {
-                const page = pageForFrame(target.frameIds[0]);
-                const value = vm.runInNewContext('(' + func.toString() + ')()', { document: page });
-                calls += 1;
+            executeScript: async ({ target, func, args }) => {
+                const document = target.frameIds[0] === 457 ? page :
+                    { querySelectorAll() { return []; } };
+                let tick;
+                const value = await vm.runInNewContext('(' + func.toString() + ')(' + args[0] + ')', {
+                    document,
+                    setInterval(cb) { tick = cb; return 1; },
+                    clearInterval() {},
+                    setTimeout(cb) {
+                        for (let i = 0; i < 5; i++) {
+                            for (const video of players) video.tick();
+                            tick();
+                        }
+                        cb();
+                    }
+                });
                 return [{ frameId: target.frameIds[0], result: value }];
             }
         }
     };
-    const context = {
-        document: { getElementById: id => controls.get(id) },
-        chrome, URL, setTimeout: callback => callback(),
+    vm.runInNewContext(source, {
+        document: { getElementById: id => controls[id] },
+        chrome, URL,
         navigator: { clipboard: { writeText: async () => {} } }
-    };
-    vm.runInNewContext(source, context, { filename: 'player-probe.js' });
-    controls.get('playerProbeStart').handlers.click();
-    // Ожидаем завершения 2 проб, передача callback имитирует 3 секунды.
-    for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
-    if (options.clickGrant) {
-        controls.get('playerProbeGrant').handlers.click();
-        for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+    });
+    controls.playerProbeStart.handlers.click();
+    for (let i = 0; i < 12; i++) {
+        await new Promise(resolve => setImmediate(resolve));
     }
-    controls.requests = requests;
-    return controls;
+    return { controls, requests };
 }
 
-test('probe reads timecode, duration and playback delta without changing the player', async () => {
-    const controls = await runProbe(
-        [{ frameId: 0, url: 'https://www.kinokino.vip/film/123/' }],
-        { 0: [{ times: [120, 123], duration: 600 }] }
-    );
-    const report = controls.get('playerProbeResult').textContent;
-    assert.match(report, /Найдено HTML5-видео: 1/);
-    assert.match(report, /2:03 \/ 10:00/);
-    assert.match(report, /движение \+3 с/);
-    assert.equal(controls.get('playerProbeCopy').hidden, false);
-    assert.equal(controls.get('playerProbeStart').disabled, false);
+test('automatically asks for two specific hosts on the first probe click', async () => {
+    const { controls, requests } = await probe({
+        players: [
+            player({ time: 26, duration: 6722, paused: false,
+                readyState: 4, rate: 2, width: 1280, height: 720 }),
+            player({ time: 0, paused: true, readyState: 0 })
+        ]
+    });
+    assert.deepEqual(requests, [[
+        'https://brogiro.cfd/*', 'https://theatre.stravers.live/*'
+    ]]);
+    const report = controls.playerProbeResult.textContent;
+    assert.match(report, /Найдено HTML5-видео: 2/);
+    assert.match(report, /Видео 1: .*изменение подтверждено/);
+    assert.match(report, /Видео 2: .*не готов\/неактивен/);
+    assert.match(report, /timeupdate: 5/);
+    assert.doesNotMatch(report, /PRIVATE|TOPSECRET/);
+    assert.equal(controls.playerProbeStart.disabled, false);
 });
 
-test('probe exposes only frame hostnames, not private URL query parameters', async () => {
-    const controls = await runProbe([
-        { frameId: 0, url: 'https://www.kinokino.vip/film/123/?secret=HIDDEN' },
-        { frameId: 2, url: 'https://external-player.example/embed?auth=SECRET' }
-    ]);
-    const report = controls.get('playerProbeResult').textContent;
-    assert.match(report, /external-player.example \(нет разрешения\)/);
-    assert.doesNotMatch(report, /HIDDEN|SECRET|token=/);
-    assert.match(report, /в доступных фреймах HTML5-видео не найдено/i);
+test('paused movie does not falsely count as verified playback', async () => {
+    const { controls } = await probe({
+        players: [player({ time: 45, duration: 6722, paused: true,
+            readyState: 4, rate: 0 })]
+    });
+    assert.match(controls.playerProbeResult.textContent, /пауза весь замер/);
+    assert.doesNotMatch(controls.playerProbeResult.textContent, /изменение подтверждено/);
 });
 
+test('denied permissions never attempt injection and never expose URL parameters', async () => {
+    const { controls } = await probe({ allow: false });
+    assert.match(controls.playerProbeResult.textContent, /Разрешено проверить: 0/);
+    assert.match(controls.playerProbeResult.textContent, /нет разрешения/);
+    assert.doesNotMatch(controls.playerProbeResult.textContent, /PRIVATE|TOPSECRET/);
+});
 
-test('two optional player origins are requested on consent, then inspected', async () => {
-    const controls = await runProbe(
-        [
+test('uninstrumented, unknown frame does not cause requesting all-sites access', async () => {
+    const { controls, requests } = await probe({
+        frames: [
             { frameId: 0, url: 'https://brogiro.cfd/film/447301/' },
-            { frameId: 450, url: 'https://theatre.stravers.live/embed?token=SECRET' }
-        ],
-        { 450: [{ times: [120, 123], duration: 8888 }] },
-        { grant: true, clickGrant: true }
-    );
-    const report = controls.get('playerProbeResult').textContent;
-    assert.deepEqual(Array.from(controls.requests[0]), [
+            { frameId: 457, url: 'https://other.example/embed?token=SECRET' }
+        ]
+    });
+    assert.deepEqual(requests[0], [
         'https://brogiro.cfd/*', 'https://theatre.stravers.live/*'
     ]);
-    assert.match(report, /Разрешено проверить: 2/);
-    assert.match(report, /Найдено HTML5-видео: 1/);
-    assert.match(report, /Фрейм 450 \(theatre\.stravers\.live\)/);
-    assert.doesNotMatch(report, /SECRET/);
-    assert.equal(controls.get('playerProbeGrant').hidden, true);
-});
-
-test('declining player access leaves frames uninspected', async () => {
-    const controls = await runProbe(
-        [{ frameId: 0, url: 'https://brogiro.cfd/film/447301/' }],
-        {}, { grant: false, clickGrant: true }
-    );
-    assert.match(controls.get('playerProbeResult').textContent, /Разрешено проверить: 0/);
-    assert.match(controls.get('playerProbeStatus').textContent, /не предоставлен/);
-    assert.equal(controls.requests.length, 1);
+    assert.match(controls.playerProbeResult.textContent, /other.example \(нет разрешения\)/);
+    assert.doesNotMatch(controls.playerProbeResult.textContent, /SECRET/);
 });
