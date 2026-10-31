@@ -1728,3 +1728,19 @@ button.btn-convert:active:not(:disabled) {
   background: var(--secondary);
   border-color: var(--secondary);
 }
+
+
+.watchlist-genres {
+  display: -webkit-box;
+  margin-top: 3px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.watchlist-poster img {
+  object-position: center;
+}
