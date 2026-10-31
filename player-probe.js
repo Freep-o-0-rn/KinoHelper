@@ -13,7 +13,13 @@
     const status = $('playerProbeStatus');
     const copy = $('playerProbeCopy');
     const grantButton = $('playerProbeGrant');
-    if (!button || !result || !status || !copy || !grantButton) return;
+    const live = $('playerProbeLive');
+    const stopButton = $('playerProbeStopLive');
+    if (!button || !result || !status || !copy || !grantButton || !live || !stopButton) return;
+    let liveTimer = null;
+    let liveGeneration = 0;
+    let lastLiveInfo = '';
+    let livePolling = false;
     const optionalOrigins = [
         'https://brogiro.cfd/*',
         'https://theatre.stravers.live/*'
@@ -181,6 +187,113 @@
         };
     }
 
+
+    // Читает ПОЗИЦИЮ ЗАНОВО при каждом опросе. В отличие от статического
+    // 10-секундного отчёта, возвращаемые данные обновляются в UI.
+    // Никакого доступа к src/currentSrc или тексту веб-страницы.
+    function readLiveVideos() {
+        const videos = [];
+        const roots = [document];
+        let visited = 0;
+        const seconds = v => Number.isFinite(v) && v >= 0
+            ? Math.round(v * 10) / 10 : null;
+        for (let i = 0; i < roots.length && i < 25; i++) {
+            const root = roots[i];
+            for (const v of root.querySelectorAll('video')) {
+                if (videos.length >= 12) break;
+                const rect = typeof v.getBoundingClientRect === 'function'
+                    ? v.getBoundingClientRect() : null;
+                videos.push({
+                    index: videos.length,
+                    time: seconds(v.currentTime),
+                    duration: seconds(v.duration),
+                    paused: Boolean(v.paused),
+                    readyState: Number(v.readyState) || 0,
+                    width: Number(v.videoWidth) || 0,
+                    height: Number(v.videoHeight) || 0,
+                    visible: !rect || (rect.width >= 80 && rect.height >= 60)
+                });
+            }
+            for (const el of root.querySelectorAll('*')) {
+                if (++visited > 2500 || roots.length >= 25) break;
+                if (el.shadowRoot) roots.push(el.shadowRoot);
+            }
+        }
+        return videos;
+    }
+
+    function stopLive(reason = '') {
+        liveGeneration++;
+        if (liveTimer !== null) clearInterval(liveTimer);
+        liveTimer = null;
+        livePolling = false;
+        stopButton.hidden = true;
+        if (reason) live.textContent = reason;
+    }
+
+    function startLive(tabId, frameId, initial) {
+        stopLive();
+        const generation = liveGeneration;
+        let previousTime = initial.time;
+        let unchangedSeconds = 0;
+        const duration = initial.duration;
+        const index = initial.index;
+        const frameLabel = 'Фрейм ' + frameId;
+
+        live.hidden = false;
+        stopButton.hidden = false;
+        live.textContent = 'Живой таймкод · ' + frameLabel + '\n' +
+            formatTime(initial.time) + ' / ' + formatTime(duration) +
+            '\nОбновление каждые 2 секунды';
+
+        const refresh = async () => {
+            if (generation !== liveGeneration || livePolling) return;
+            // После ухода из настроек не продолжаем опрашивать плеер.
+            if (document.hidden || !document.body?.classList.contains('settings-open')) return;
+            livePolling = true;
+            try {
+                const responses = await chrome.scripting.executeScript({
+                    target: { tabId, frameIds: [frameId] },
+                    world: 'ISOLATED',
+                    func: readLiveVideos
+                });
+                if (generation !== liveGeneration) return;
+                const candidates = responses?.[0]?.result || [];
+                const compatible = candidates.filter(v =>
+                    v.readyState >= 2 && v.time !== null && v.duration !== null &&
+                    Math.abs(v.duration - duration) <= Math.max(3, duration * 0.005) &&
+                    v.width >= 160 && v.height >= 90 && v.visible !== false);
+                const chosen = compatible.find(v => v.index === index) ||
+                    (compatible.length === 1 ? compatible[0] : null);
+                if (!chosen) {
+                    stopLive('Плеер изменился или видео недоступно. Запусти проверку повторно.');
+                    return;
+                }
+                if (chosen.paused) unchangedSeconds = 0;
+                else if (previousTime !== null && chosen.time - previousTime >= 0.5) {
+                    unchangedSeconds = 0;
+                } else unchangedSeconds += 2;
+                previousTime = chosen.time;
+                const state = chosen.paused ? '⏸ Пауза' :
+                    unchangedSeconds >= 6 ? '⚠ Время не меняется' : '▶ Воспроизведение';
+                const message = 'Живой таймкод · ' + frameLabel + '\n' +
+                    formatTime(chosen.time) + ' / ' + formatTime(chosen.duration) +
+                    '\n' + state + ' · обновление каждые 2 секунды';
+                live.textContent = message;
+                lastLiveInfo = message;
+            } catch {
+                if (generation === liveGeneration) {
+                    stopLive('Не удалось читать плеер. Возможно, вкладка или iframe обновились.');
+                }
+            } finally {
+                livePolling = false;
+            }
+        };
+
+        liveTimer = setInterval(() => { void refresh(); }, 2000);
+        void refresh();
+    }
+
     function formatReport(tab, frameList, successes, failures, accessible) {
         const lines = [
             'KinoHelper — проверка видеоплеера',
@@ -246,6 +359,9 @@
 
     async function run() {
         if (busy) return;
+        stopLive();
+        live.hidden = true;
+        lastLiveInfo = '';
         busy = true;
         button.disabled = true;
         copy.hidden = true;
@@ -291,6 +407,21 @@
             result.hidden = false;
             copy.hidden = false;
             const count = successes.reduce((sum, f) => sum + f.videos.length, 0);
+            // Приоритет основному видимому, готовому видео. Скрытые рекламные
+            // элементы без длительности не подходят.
+            const possible = successes.flatMap(frame => frame.videos.map(video => ({ frame, video })))
+                .filter(({ video }) => video.readyState >= 2 &&
+                    video.duration >= 60 && video.time !== null &&
+                    video.width >= 160 && video.height >= 90 && video.visible !== false);
+            const preferred = possible.sort((a, b) => {
+                const score = x =>
+                    (x.video.everPlaying ? 6 : 0) +
+                    (x.video.movement >= 1 ? 5 : 0) +
+                    (x.video.paused ? 0 : 2) +
+                    x.video.width * x.video.height / 1000000;
+                return score(b) - score(a);
+            })[0];
+            if (preferred) startLive(tab.id, preferred.frame.id, preferred.video);
             const confirmed = successes.some(frame => frame.videos.some(video =>
                 video.readyState >= 2 && video.duration >= 60 &&
                 video.everPlaying && video.movement >= 1 &&
@@ -311,6 +442,14 @@
     // chrome.permissions.request требует непосредственного действия пользователя.
     // Нажатие «Проверить плеер» и есть это действие: если разрешение уже
     // получено ранее, Chrome не показывает запрос повторно.
+    stopButton.addEventListener('click', () => {
+        stopLive('Живой таймкод остановлен.');
+    });
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) stopLive('Наблюдение остановлено: окно расширения скрыто.');
+    });
+
     button.addEventListener('click', () => {
         if (busy) return;
         button.disabled = true;
@@ -364,7 +503,8 @@
     copy.addEventListener('click', async () => {
         if (!lastReport) return;
         try {
-            await navigator.clipboard.writeText(lastReport);
+            await navigator.clipboard.writeText(lastReport +
+                (lastLiveInfo ? '\n\nПоследний живой замер:\n' + lastLiveInfo : ''));
             status.textContent = 'Отчёт скопирован. В нём нет URL видео и параметров страницы.';
         } catch {
             status.textContent = 'Не удалось скопировать автоматически. Выдели текст отчёта вручную.';
