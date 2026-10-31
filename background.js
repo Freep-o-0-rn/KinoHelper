@@ -1943,3 +1943,98 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   return false;
 });
+
+
+// 1.553: Episode checkpoints are isolated from film progress. We write only
+// when the iframe's own confirmed selector AND the parent series ID agree.
+// No automatic series seeking/selecting in this stage.
+const SERIES_PROGRESS_KEY = 'kinoSeriesEpisodeProgressV1';
+const SERIES_PROGRESS_LIMIT = 300;
+let seriesProgressQueue = Promise.resolve();
+
+function validateEpisodeProgress(payload) {
+  const base = validatePlaybackEvent(payload);
+  const season = Number(payload?.season);
+  const episode = Number(payload?.episode);
+  if (!base || !Number.isInteger(season) || !Number.isInteger(episode) ||
+      season < 1 || season > 250 || episode < 1 || episode > 250) return null;
+  return { ...base, season, episode };
+}
+
+async function episodeSourceMatches(tabId, frameId, seriesId, season, episode) {
+  const key = episodeKey(tabId);
+  const entry = (await chrome.storage.session.get(key))[key];
+  const confirmed = resolvedEpisode(entry, String(seriesId));
+  if (!confirmed || confirmed.season !== season || confirmed.episode !== episode)
+    return false;
+  const source = entry?.sources?.[String(frameId)];
+  const at = Date.now();
+  return Boolean(source && source.season === season && source.episode === episode &&
+    Number.isFinite(source.at) && at >= source.at && at - source.at <= EPISODE_TTL_MS);
+}
+
+async function saveSeriesEpisodeProgress(payload, sender) {
+  const item = validateEpisodeProgress(payload);
+  if (!item || !resumeSourceIsTrusted(sender) || !Number.isInteger(sender.frameId))
+    return { ok: false, skipped: 'invalid source or episode' };
+  const granted = await chrome.permissions.contains({
+    origins: [RESUME_PLAYER_ORIGIN]
+  });
+  if (!granted) return { ok: false, skipped: 'player permission revoked' };
+
+  const series = await trustedSeriesTab(sender.tab.id);
+  if (!series) return { ok: false, skipped: 'not a known series tab' };
+  if (!await episodeSourceMatches(sender.tab.id, sender.frameId,
+    series.id, item.season, item.episode))
+    return { ok: false, skipped: 'unconfirmed selection' };
+
+  const key = 'series:' + series.id + ':' + item.season + ':' + item.episode;
+  const write = async () => {
+    // Recheck immediately before writing: a queued checkpoint from the
+    // previous episode must not be written after the user has switched.
+    const current = await trustedSeriesTab(sender.tab.id);
+    if (!current || current.id !== series.id ||
+        !await episodeSourceMatches(sender.tab.id, sender.frameId,
+          series.id, item.season, item.episode))
+      return { ok: false, skipped: 'episode changed while queued' };
+
+    const data = (await chrome.storage.local.get(SERIES_PROGRESS_KEY))[SERIES_PROGRESS_KEY];
+    const entries = data && typeof data === 'object' && !Array.isArray(data)
+      ? { ...data } : {};
+    const older = entries[key];
+    const ended = item.event === 'ended' && item.played >= 30 &&
+      item.position >= item.duration - 5;
+    const completed = ended || Boolean(older?.completed &&
+      item.position >= item.duration * 0.1);
+    const cleanTitle = String(current.title || '').replace(/\s+/g, ' ').trim().slice(0, 150);
+    entries[key] = {
+      type: 'series', id: series.id,
+      season: item.season, episode: item.episode,
+      title: cleanTitle || older?.title || 'Сериал №' + series.id,
+      position: item.position, duration: item.duration,
+      completed, updatedAt: Date.now()
+    };
+    const kept = Object.entries(entries)
+      .filter(([entryKey, value]) =>
+        /^series:[1-9]\d{0,12}:\d{1,3}:\d{1,3}$/.test(entryKey) &&
+        value && Number.isFinite(value.updatedAt))
+      .sort((a,b) => b[1].updatedAt - a[1].updatedAt)
+      .slice(0, SERIES_PROGRESS_LIMIT);
+    await chrome.storage.local.set({
+      [SERIES_PROGRESS_KEY]: Object.fromEntries(kept)
+    });
+    return { ok: true, key, position: item.position, completed };
+  };
+  const result = seriesProgressQueue.then(write, write);
+  seriesProgressQueue = result.catch(error =>
+    console.warn('[KinoHelper] Ошибка сохранения прогресса серии:', error));
+  return result;
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.action !== 'kinoSeriesEpisodeProgress') return false;
+  saveSeriesEpisodeProgress(message.payload, sender)
+    .then(sendResponse)
+    .catch(error => sendResponse({ ok:false, error: error.message }));
+  return true;
+});
