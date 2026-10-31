@@ -9,7 +9,7 @@
 
   const KEYS = ['kinoPlaybackProgressV1', 'kinoSeriesEpisodeProgressV1',
     'kinoStatsLibraryV1', 'kinoStatsWatchTimeV1', 'kinoStatsGenresV1', 'kinoStatsRatingsV1',
-    'kinoStatsProfileId', 'kinoStatsProfileImportV1'];
+    'kinoStatsProfileId', 'kinoStatsProfileImportV1', 'kinoStatsImportJobV2'];
   const palette = { film: '#f36a35', series: '#8a6aea', other: '#a9b0bb' };
   const els = id => document.getElementById(id);
   let currentlyOpen = false;
@@ -186,7 +186,7 @@
     const source = importState?.pages ? ' (в том числе из выбранного профиля)' : '';
     els('statsRatingsNote').textContent = model.ratingsCount
       ? model.ratingsCount + ' учтённых личных оценок' + source + '. ' +
-        'Полнота архива зависит от числа успешно загруженных страниц.'
+        'Полнота архива указана в прогрессе импорта.'
       : 'Оценок пока нет. Открой фильм или импортируй оценки из профиля.';
 
     els('statsProfileLink').hidden = !model.profileId;
@@ -216,12 +216,7 @@
         ratings,profileId
       });
       render(lastData);
-      if (!importing) els('statsImportStatus').textContent =
-        importState?.pages
-          ? 'Из профиля загружено страниц: ' + importState.pages +
-            ' · уникальных оценок: ' + (importState.votes || 0) +
-            (importState.lastPage ? ' · доступный пагинатор: ' + importState.lastPage : '')
-          : '';
+      updateImportProgress(values.kinoStatsImportJobV2);
 
     } catch (error) {
       els('statsStatus').textContent = 'Не удалось прочитать данные статистики: '+
@@ -250,225 +245,35 @@
   }
 
 
-  // Reuse the existing authorized MoviePreviewCard request. It checks a
-  // known movie ID and returns the current Kinopoisk account's actual vote;
-  // this is NOT scraping the user's whole public profile.
-  let ratingsSyncActive = false;
-  async function syncKnownRatings() {
-    if (ratingsSyncActive) return;
-    if (authState !== 'logged-in' || !verifiedAccountId) {
-      els('statsStatus').textContent = 'Сначала необходимо подтвердить вход на Кинопоиск.';
+  function updateImportProgress(job) {
+    const indicator=els('statsImportProgress');
+    const title=els('statsImportCount');
+    const label=els('statsImportStatus');
+    if (!job || job.profileId !== verifiedAccountId) {
+      indicator.value=0;
+      indicator.max=100;
+      title.textContent='—';
+      label.textContent='Ожидаем подтверждения входа на Кинопоиск.';
       return;
     }
-    const verifiedId = verifiedAccountId;
-    ratingsSyncActive = true;
-    const button = els('statsRatingsSync');
-    const status = els('statsStatus');
-    button.disabled = true;
-    button.textContent = 'Проверяем оценки…';
-    try {
-      const keys = ['kinoPlaybackProgressV1','kinoSeriesEpisodeProgressV1',
-        'kinoStatsLibraryV1','kinoStatsProfileId','kinoStatsRatingScanV1'];
-      const data = await chrome.storage.local.get(keys);
-      const media = new Map();
-      for (const [key,item] of Object.entries(safeObject(data.kinoPlaybackProgressV1))) {
-        if (/^film:[1-9]\d{0,12}$/.test(key))
-          media.set(key, Number(item?.updatedAt)||0);
-      }
-      for (const [key,item] of Object.entries(safeObject(data.kinoSeriesEpisodeProgressV1))) {
-        const match = /^series:([1-9]\d{0,12}):\d{1,3}:\d{1,3}$/.exec(key);
-        if (!match) continue;
-        const id = 'series:' + match[1];
-        media.set(id,Math.max(media.get(id)||0,Number(item?.updatedAt)||0));
-      }
-      for (const [key,item] of Object.entries(safeObject(data.kinoStatsLibraryV1))) {
-        const film = /^film:[1-9]\d{0,12}$/.test(key) ? key : '';
-        const series = /^series:([1-9]\d{0,12}):\d{1,3}:\d{1,3}$/.exec(key);
-        const id = film || (series ? 'series:' + series[1] : '');
-        if (id) media.set(id,Math.max(media.get(id)||0,Number(item?.updatedAt)||0));
-      }
-      const account = verifiedId;
-      const scans = {...safeObject(data.kinoStatsRatingScanV1)};
-      const scanned = {...safeObject(scans[account])};
-      const oneDay = 86400000;
-      const entries = [...media.entries()].sort((a,b)=>b[1]-a[1])
-        .filter(([key])=>!Number.isFinite(scanned[key]) ||
-          Date.now()-scanned[key]>oneDay)
-        .slice(0,12);
-      if (!media.size) {
-        status.textContent = 'Сначала посмотри фильм или серию через KinoHelper.';
-        return;
-      }
-      if (!entries.length) {
-        status.textContent = 'Все известные оценки недавно проверены. Можно повторить завтра.';
-        return;
-      }
-      let verified = 0, withoutVote = 0, processed = 0;
-      let interrupted = '';
-      for (const [mediaKey] of entries) {
-        if (authState !== 'logged-in' || verifiedAccountId !== verifiedId) {
-          interrupted = 'Аккаунт изменился во время синхронизации.';
-          break;
-        }
-        const [type,id] = mediaKey.split(':');
-        let response;
-        try {
-          response = await chrome.runtime.sendMessage({
-            action:'getMovieRating',payload:{type,id}
-          });
-        } catch (error) {
-          interrupted = 'Ошибка связи с Кинопоиском: ' + error.message;
-          break;
-        }
-        if (!response?.ok) {
-          interrupted = 'Не удалось загрузить оценки; повтори попытку позднее.';
-          break;
-        }
-        if (!response.authorized) {
-          interrupted = 'Для импорта оценок войди в свой аккаунт Кинопоиска.';
-          break;
-        }
-        processed++;
-        scanned[mediaKey] = Date.now();
-        const rating = Number(response.rating);
-        if (Number.isInteger(rating) && rating >= 1 && rating <= 10) {
-          await recordConfirmedRating({type,id,rating,expectedAccountId:verifiedId});
-          verified++;
-        } else {
-          withoutVote++;
-        }
-        status.textContent = 'Проверено: ' + processed + ' / ' + entries.length +
-          ' · оценок найдено: ' + verified;
-      }
-      scans[account] = scanned;
-      await chrome.storage.local.set({kinoStatsRatingScanV1:scans});
-      status.textContent = (processed ? 'Проверено ' + processed +
-        ' фильмов/сериалов; найдено оценок: ' + verified +
-        (withoutVote ? ', без оценки: ' + withoutVote : '') + '. ' : '') +
-        (interrupted || 'Для остальных произведений нажми кнопку ещё раз.');
-      await reload();
-    } catch (error) {
-      status.textContent = 'Синхронизация не удалась: ' + error.message;
-    } finally {
-      ratingsSyncActive = false;
-      button.disabled = false;
-      button.textContent = '↻ Обновить оценки известных фильмов';
-    }
-  }
-
-
-  let importing = false;
-  async function importProfileVotes({ automatic = false } = {}) {
-    if (importing) return;
-    const parser = window.KinoProfileVotes;
-    if (!parser) return;
-    const display = els('statsImportStatus');
-    const button = els('statsProfileImport');
-    const id = authState === 'logged-in' ? verifiedAccountId : '';
-    if (!id) {
-      display.textContent = 'Сначала нужно подтвердить вход на Кинопоиск.';
-      return;
-    }
-    // Limit automatic refreshes. Manual "continue" always works immediately.
-    if (automatic) {
-      const field = 'kinoStatsAutoImportAtV1';
-      const dates = safeObject((await chrome.storage.local.get(field))[field]);
-      if (Date.now() - Number(dates[id] || 0) < 60 * 60 * 1000) return;
-      await chrome.storage.local.set({ [field]: {
-        ...dates, [id]: Date.now()
-      } });
-    }
-    importing = true;
-    button.disabled = true;
-    button.textContent = 'Загружаем оценки…';
-    const KEY = 'kinoStatsProfileImportV1';
-    let pagesDone = 0, votesFound = 0, failure = '';
-    try {
-      const existing = await chrome.storage.local.get(KEY);
-      const states = safeObject(existing[KEY]);
-      const current = safeObject(states[id]);
-      // A fresh button press after reaching the listed final page refreshes
-      // from page 1; normal interrupted batches resume from the next page.
-      let page = current.lastPage && current.nextPage > current.lastPage
-        ? 1 : (Number.isInteger(current.nextPage) &&
-          current.nextPage >= 1 && current.nextPage <= 500 ? current.nextPage : 1);
-      let totalPages = Number.isInteger(current.lastPage) ? current.lastPage : null;
-      for (let attempt=0; attempt<5 && page<=500; attempt++,page++) {
-        if (authState !== 'logged-in' || verifiedAccountId !== id)
-          throw Error('Аккаунт изменился. Импорт остановлен.');
-        display.textContent = 'Загрузка страницы ' + page +
-          (totalPages ? ' из ' + totalPages : '') + '…';
-        const url = 'https://www.kinopoisk.ru/user/' + id +
-          '/movies/voted-watched/?page=' + page;
-        const reply = await fetch(url, {
-          method:'GET', credentials:'include', cache:'no-store',
-          signal:AbortSignal.timeout(18000)
-        });
-        if(!reply.ok) throw Error('HTTP ' + reply.status);
-        const actual = new URL(reply.url);
-        if(!['www.kinopoisk.ru','kinopoisk.ru'].includes(actual.hostname) ||
-            !actual.pathname.startsWith('/user/' + id + '/movies/voted-watched'))
-          throw Error('Кинопоиск перенаправил на другую страницу');
-        const html = await reply.text();
-        const parsed = parser.parsePage(html,page);
-        if (!parsed.votes.length && !parsed.recognized) {
-          throw Error('Не удалось распознать записи профиля на странице ' +
-            page + '. Возможно, Кинопоиск изменил формат или ограничил доступ');
-        }
-        if (Number.isInteger(parsed.lastPage))
-          totalPages = Math.max(totalPages || 0,parsed.lastPage);
-
-        const snapshot = await chrome.storage.local.get(['kinoStatsRatingsV1',KEY]);
-        const all = {...safeObject(snapshot.kinoStatsRatingsV1)};
-        const scope = {...safeObject(all[id])};
-        const importedAt = Date.now();
-        for(const item of parsed.votes) {
-          const mediaKey = item.type + ':' + item.id;
-          if(!/^(?:film|series):[1-9]\d{0,12}$/.test(mediaKey))continue;
-          scope[mediaKey] = {rating:item.rating,updatedAt:importedAt,
-            source:'kinopoisk-profile'};
-        }
-        all[id] = scope;
-        const allStates = {...safeObject(snapshot[KEY])};
-        const prev = safeObject(allStates[id]);
-        const visitedPages = [...new Set([
-          ...(Array.isArray(prev.visitedPages) ? prev.visitedPages : []),page
-        ])].filter(n=>Number.isInteger(n)&&n>=1&&n<=500).sort((a,b)=>a-b);
-        allStates[id] = {
-          pages: visitedPages.length,
-          visitedPages,
-          nextPage:page+1,
-          lastPage:totalPages,
-          votes:Object.values(scope).filter(v=>v?.source==='kinopoisk-profile' &&
-            Number.isInteger(v.rating) && v.rating>=1 && v.rating<=10).length,
-          updatedAt:importedAt
-        };
-        // Individual pages are committed independently. A later block or
-        // tab close cannot erase earlier successfully verified ratings.
-        await chrome.storage.local.set({
-          kinoStatsRatingsV1: all,
-          [KEY]: allStates
-        });
-        pagesDone++;
-        votesFound+=parsed.votes.length;
-        display.textContent = 'Проверено страниц: ' + pagesDone +
-          ' · найдено оценок на страницах: ' + votesFound;
-        if (totalPages && page>=totalPages) break;
-      }
-    } catch(error) {
-      failure = String(error?.message||error);
-    } finally {
-      importing = false;
-      button.disabled = false;
-      button.textContent = '↓ Продолжить импорт оценок';
-      const suffix = failure ? ' Остановлено: ' + failure :
-        ' Данные сохранены. При необходимости повтори импорт.';
-      const message = (pagesDone
-        ? 'За этот запуск: ' + pagesDone + ' стр., ' + votesFound +
-          ' оценок на страницах.' : 'Новые оценки не импортированы.') + suffix;
-      await reload();
-      display.textContent = message;
-    }
+    const total=Number(job.totalPages);
+    const done=Math.max(0,Number(job.pagesDone)||0);
+    const known=Number.isSafeInteger(total)&&total>=1;
+    title.textContent=known ? Math.min(done,total)+' / '+total+' стр.'
+      : done+' стр. · всего неизвестно';
+    indicator.max=known ? total : 100;
+    if (known) indicator.value=Math.min(done,total);
+    else indicator.removeAttribute('value'); // native indeterminate progress
+    const knownVotes=Number(job.importedVotes)||0;
+    const retry=Number.isFinite(job.nextAt)&&job.nextAt>Date.now() &&
+      ['paused','retry'].includes(job.state)
+      ? ' · Повторная попытка позднее, автоматически.' : '';
+    const phase=job.state==='completed'?'Импорт завершён; новые оценки проверяются ежедневно.'
+      : job.state==='paused'?'Доступ временно ограничен.'
+      : job.state==='retry'?'Временная ошибка загрузки.'
+      : 'Импорт выполняется в фоне, даже при закрытой панели.';
+    label.textContent=phase+' '+(job.message||'')+
+      ' · Учтено личных оценок: '+knownVotes+'.'+retry;
   }
 
   // Resolving /mykp/ never requires the user to enter a profile URL.
@@ -483,9 +288,7 @@
     const refresh = els('statsAccountRefresh');
     status.textContent = 'Проверяем авторизацию на Кинопоиске…';
     refresh.disabled = true;
-    els('statsRatingsSync').disabled = true;
-    els('statsProfileImport').disabled = true;
-    await reload();
+     await reload();
     try {
       const response = await window.KinoStatsAccount.detect();
       if (seq !== authReadSequence) return;
@@ -493,13 +296,21 @@
         verifiedAccountId = response.id;
         authState = 'logged-in';
         status.textContent = '✓ Вход выполнен · профиль №' + response.id;
-        els('statsRatingsSync').disabled = false;
-        els('statsProfileImport').disabled = false;
         // Compatibility with existing saved per-profile ratings and imports.
         // Do not copy unscope'd votes or any data from an unrelated account.
         await chrome.storage.local.set({kinoStatsProfileId:response.id});
         await reload();
-        if (currentlyOpen) void importProfileVotes({automatic:true});
+        // The background worker owns all page requests and resumes using
+        // chrome.alarms even after this window has been closed.
+        if (currentlyOpen) {
+          const reply = await chrome.runtime.sendMessage({
+            action:'statsImportEnsure',profileId:response.id
+          }).catch(error=>({ok:false,error:error.message}));
+          if(!reply?.ok) els('statsImportStatus').textContent =
+            'Не удалось запустить фоновый импорт: ' +
+            (reply?.error||'неизвестная ошибка');
+          else await reload();
+        }
       } else if (response.status === 'logged-out') {
         verifiedAccountId = '';
         authState = 'logged-out';
@@ -549,8 +360,6 @@
   button.addEventListener('click',()=>toggle(!currentlyOpen));
   back.addEventListener('click',()=>toggle(false));
   els('statsAccountRefresh').addEventListener('click',()=>void checkAccount(true));
-  els('statsRatingsSync').addEventListener('click',()=>void syncKnownRatings());
-  els('statsProfileImport').addEventListener('click',()=>void importProfileVotes());
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !currentlyOpen) return;
     if (KEYS.some(key => changes[key])) void reload();
