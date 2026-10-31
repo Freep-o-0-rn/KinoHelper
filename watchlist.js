@@ -181,8 +181,11 @@
                 image.alt = '';
                 image.loading = 'lazy';
                 image.src = item.posterUrl;
-                image.addEventListener('load', () => { poster.textContent = ''; });
-                image.addEventListener('error', () => { image.remove(); });
+                image.addEventListener('error', () => {
+                    image.remove();
+                    poster.textContent = item.type === 'series' ? '📺' : '🎬';
+                });
+                poster.textContent = '';
                 poster.appendChild(image);
             }
 
