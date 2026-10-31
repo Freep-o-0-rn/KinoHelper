@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const worker = fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8');
-const marker = '// Resume playback: passive, opt-in host-scoped film autosave.';
+const marker = '// Resume playback: passive, manifest-scoped film autosave.';
 const start = worker.indexOf(marker);
 if (start < 0) throw Error('Playback background module not found');
 const background = worker.slice(worker.lastIndexOf('// -------------------------', start));
