@@ -28,6 +28,7 @@
           <main class="main-content">
             <section class="context-card info" id="contextCard" aria-label="Текущий фильм или состояние">
               <div id="message" class="info" aria-live="polite">Выберите фильтры и нажмите «Случайный»</div>
+              <button class="watchlist-current-action" id="watchlistCurrentAction" type="button" hidden aria-pressed="false">☆ В «Буду смотреть»</button>
 
               <section class="movie-details" id="movieDetails" aria-label="Информация о фильме" hidden>
                 <div class="movie-genres" id="movieGenres" hidden></div>
@@ -98,6 +99,18 @@
               <button class="btn-accent" id="openOnKinopoisk" type="button" style="display: none;"><span class="icon">🎭</span> На Кинопоиск</button>
             </div>
 
+
+            <section class="watchlist" id="watchlist" aria-label="Буду смотреть">
+              <div class="watchlist-header">
+                <div class="watchlist-title">☆ Буду смотреть <span class="watchlist-count" id="watchlistCount">0</span></div>
+                <button class="watchlist-toggle" id="watchlistToggle" type="button" aria-expanded="true">▼ Скрыть</button>
+              </div>
+              <div class="watchlist-body" id="watchlistBody">
+                <div class="watchlist-empty" id="watchlistEmpty">Найденные фильмы можно сохранить на потом кнопкой ☆.</div>
+                <div class="watchlist-status" id="watchlistStatus" role="status" aria-live="polite" hidden></div>
+                <div class="watchlist-items" id="watchlistItems"></div>
+              </div>
+            </section>
 
             <div class="history" id="history">
               <div class="history-header">
@@ -197,6 +210,7 @@
   </div>
 
   <script src="movie-details.js"></script>
+  <script src="watchlist.js"></script>
   <script src="popup.js"></script>
   <script src="search.js"></script>
   <script src="filters.js"></script>
