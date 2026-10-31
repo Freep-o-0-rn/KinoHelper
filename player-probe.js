@@ -3,7 +3,6 @@
 (() => {
     'use strict';
 
-    const sampleDelayMs = 3000;
     const maxFrames = 12;
     let busy = false;
     let lastReport = '';
@@ -28,38 +27,100 @@
     ]);
     let pendingOrigins = [];
 
-    // Возвращаемые данные НЕ включают URL видео, cookies или содержимое страницы.
-    // Chrome сериализует эту функцию и исполняет в изолированном контексте фрейма.
-    function readVideos() {
-        const videos = [];
-        const seen = new Set();
-        function addFrom(root) {
-            for (const node of root.querySelectorAll('video')) {
-                if (!seen.has(node) && videos.length < 10) {
-                    seen.add(node);
-                    const toSeconds = value =>
-                        Number.isFinite(value) && value >= 0
-                            ? Math.round(value * 10) / 10 : null;
-                    videos.push({
-                        index: videos.length,
-                        time: toSeconds(node.currentTime),
-                        duration: toSeconds(node.duration),
-                        paused: Boolean(node.paused),
-                        ended: Boolean(node.ended),
-                        readyState: Number(node.readyState) || 0
-                    });
+    // Исследуем один и тот же video-элемент на протяжении 10 секунд.
+    // Только чтение: никакого play(), pause(), currentTime= или сохранения потоков.
+    async function monitorVideos(durationMs) {
+        const nodes = new WeakMap();
+        const records = [];
+        const cleaners = [];
+        const seconds = value => Number.isFinite(value) && value >= 0
+            ? Math.round(value * 10) / 10 : null;
+
+        function scan() {
+            const roots = [document];
+            let visited = 0;
+            for (let i = 0; i < roots.length && i < 25; i++) {
+                const root = roots[i];
+                for (const video of root.querySelectorAll('video')) {
+                    if (!nodes.has(video) && records.length < 12) {
+                        const entry = {
+                            index: records.length, first: null, last: null,
+                            min: null, max: null, duration: null,
+                            readyState: 0, paused: true, playingObserved: false,
+                            pausedSamples: 0, samples: 0, timeupdates: 0,
+                            playEvents: 0, seekingEvents: 0,
+                            width: 0, height: 0, visible: null
+                        };
+                        records.push(entry);
+                        nodes.set(video, entry);
+                        const event = name => () => { entry[name] += 1; };
+                        for (const [eventName, key] of [
+                            ['timeupdate', 'timeupdates'],
+                            ['play', 'playEvents'],
+                            ['seeking', 'seekingEvents']
+                        ]) {
+                            const listener = event(key);
+                            video.addEventListener(eventName, listener);
+                            cleaners.push(() => video.removeEventListener(eventName, listener));
+                        }
+                    }
+                    const entry = nodes.get(video);
+                    if (!entry) continue;
+                    const time = seconds(video.currentTime);
+                    const duration = seconds(video.duration);
+                    if (time != null) {
+                        if (entry.first == null) entry.first = time;
+                        entry.last = time;
+                        entry.min = entry.min == null ? time : Math.min(entry.min, time);
+                        entry.max = entry.max == null ? time : Math.max(entry.max, time);
+                    }
+                    if (duration != null && duration > 0) entry.duration = duration;
+                    entry.readyState = Number(video.readyState) || 0;
+                    entry.paused = Boolean(video.paused);
+                    entry.playingObserved ||= !video.paused && !video.ended;
+                    entry.pausedSamples += Number(Boolean(video.paused));
+                    entry.width = Number(video.videoWidth) || 0;
+                    entry.height = Number(video.videoHeight) || 0;
+                    if (typeof video.getBoundingClientRect === 'function') {
+                        const rect = video.getBoundingClientRect();
+                        entry.visible = Boolean(rect.width >= 80 && rect.height >= 60);
+                    }
+                    entry.samples++;
+                }
+                for (const node of root.querySelectorAll('*')) {
+                    if (++visited > 2500 || roots.length >= 25) break;
+                    if (node.shadowRoot) roots.push(node.shadowRoot);
                 }
             }
-            // Некоторые проигрыватели используют открытые shadow roots.
-            // Ограничиваем обход, чтобы не тормозить большие страницы.
-            let scanned = 0;
-            for (const element of root.querySelectorAll('*')) {
-                if (++scanned > 1800 || videos.length >= 10) break;
-                if (element.shadowRoot) addFrom(element.shadowRoot);
-            }
         }
-        addFrom(document);
-        return { videos, iframeCount: document.querySelectorAll('iframe').length };
+
+        scan();
+        await new Promise(resolve => {
+            const timer = setInterval(scan, 500);
+            setTimeout(() => {
+                clearInterval(timer);
+                scan();
+                resolve();
+            }, durationMs);
+        });
+        for (const release of cleaners) release();
+        return {
+            iframeCount: document.querySelectorAll('iframe').length,
+            videos: records.map(v => {
+                const movement = v.min != null && v.max != null
+                    ? Math.round((v.max - v.min) * 10) / 10 : null;
+                const delta = v.first != null && v.last != null
+                    ? Math.round((v.last - v.first) * 10) / 10 : null;
+                return {
+                    index: v.index, time: v.last, duration: v.duration,
+                    paused: v.paused, everPlaying: v.playingObserved,
+                    readyState: v.readyState, movement, delta,
+                    timeupdates: v.timeupdates, playEvents: v.playEvents,
+                    seekingEvents: v.seekingEvents, samples: v.samples,
+                    width: v.width, height: v.height, visible: v.visible
+                };
+            })
+        };
     }
 
     function hostname(url) {
@@ -105,30 +166,17 @@
             String(m)) + ':' + String(s).padStart(2, '0');
     }
 
-    async function sample(tabId, frameId) {
-        const frames = await chrome.scripting.executeScript({
-            target: { tabId, frameIds: [frameId] },
-            world: 'ISOLATED',
-            func: readVideos
-        });
-        return frames?.[0]?.result || { videos: [], iframeCount: 0 };
-    }
-
     async function inspectFrame(tabId, frame) {
-        const first = await sample(tabId, frame.frameId);
-        await new Promise(resolve => setTimeout(resolve, sampleDelayMs));
-        const second = await sample(tabId, frame.frameId);
-        const videos = second.videos.map((video, index) => {
-            const before = first.videos[index];
-            const delta = before?.time != null && video.time != null
-                ? Math.round((video.time - before.time) * 10) / 10 : null;
-            return { ...video, delta };
+        const samples = await chrome.scripting.executeScript({
+            target: { tabId, frameIds: [frame.frameId] },
+            world: 'ISOLATED',
+            func: monitorVideos,
+            args: [10000]
         });
         return {
             id: frame.frameId,
             host: hostname(frame.url),
-            iframeCount: second.iframeCount,
-            videos
+            ...samples?.[0]?.result || { videos: [], iframeCount: 0 }
         };
     }
 
@@ -148,15 +196,22 @@
                 lines.push('  Видео не найдено · вложенных iframe: ' + frame.iframeCount);
             }
             for (const video of frame.videos) {
-                const state = video.ended ? 'завершено' : video.paused ? 'пауза' : 'воспроизведение';
-                const moved = video.delta == null ? 'изменение неизвестно' :
-                    video.delta > 0.4 ? 'движение +' + video.delta + ' с' :
-                    video.delta < -0.4 ? 'перемотка ' + video.delta + ' с' :
-                    'позиция не изменилась';
+                const valid = video.readyState >= 2 && video.duration >= 60;
+                const status = !valid ? 'не готов/неактивен' :
+                    video.movement >= 1 ? 'изменение подтверждено' :
+                    video.paused && !video.everPlaying ? 'пауза весь замер' :
+                    'время НЕ изменилось';
                 lines.push('  Видео ' + (video.index + 1) + ': ' +
                     formatTime(video.time) + ' / ' + formatTime(video.duration) +
-                    ' · ' + state + ' · ' + moved +
-                    ' · readyState=' + video.readyState);
+                    ' · ' + status +
+                    ' · движение ' + (video.movement == null ? '—' : video.movement + ' с') +
+                    ' · timeupdate: ' + video.timeupdates +
+                    ' · play: ' + video.playEvents +
+                    ' · paused: ' + video.paused +
+                    ' · было воспроизведение: ' + video.everPlaying +
+                    ' · readyState=' + video.readyState +
+                    ' · video=' + video.width + '×' + video.height +
+                    ' · видно=' + video.visible);
             }
         }
 
@@ -190,7 +245,7 @@
         grantButton.hidden = true;
         pendingOrigins = [];
         result.hidden = true;
-        status.textContent = 'Проверяем текущую вкладку (два замера с интервалом 3 секунды)…';
+        status.textContent = 'Наблюдаем видео и события 10 секунд. После запуска проверки включи воспроизведение.';
         try {
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
             if (!Number.isInteger(tab?.id) || !tab.url) {
@@ -230,7 +285,7 @@
             copy.hidden = false;
             const count = successes.reduce((sum, f) => sum + f.videos.length, 0);
             status.textContent = count
-                ? 'Готово. Проверь, меняется ли таймкод во время воспроизведения.'
+                ? 'Готово. Проверь поле «изменение подтверждено» для основного видео.'
                 : 'Готово. Видео не найдено в доступных фреймах — посмотри домены iframe в отчёте.';
         } catch (error) {
             status.textContent = 'Ошибка проверки: ' + String(error.message || error);
