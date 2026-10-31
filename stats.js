@@ -8,7 +8,7 @@
   if (!core || !view || !button || !back) return;
 
   const KEYS = ['kinoPlaybackProgressV1', 'kinoSeriesEpisodeProgressV1',
-    'kinoStatsWatchTimeV1', 'kinoStatsGenresV1', 'kinoStatsRatingsV1',
+    'kinoStatsLibraryV1', 'kinoStatsWatchTimeV1', 'kinoStatsGenresV1', 'kinoStatsRatingsV1',
     'kinoStatsProfileId'];
   const palette = { film: '#f36a35', series: '#8a6aea', other: '#a9b0bb' };
   const els = id => document.getElementById(id);
@@ -200,6 +200,7 @@
       lastData = core.summarize({
         films:values.kinoPlaybackProgressV1,
         episodes:values.kinoSeriesEpisodeProgressV1,
+        library:values.kinoStatsLibraryV1,
         watchTime:values.kinoStatsWatchTimeV1,
         genres:values.kinoStatsGenresV1,
         ratings,profileId
