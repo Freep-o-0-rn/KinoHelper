@@ -64,3 +64,15 @@ test('verified page count is derived from pagination, not assumed',()=>{
   assert.equal(parser.parsePage(page(state)).lastPage,null);
   assert.equal(parser.parsePage(page(state,'<a href="?page=5">5</a>')).lastPage,5);
 });
+
+
+test('watched-only page is recognized but does not invent a rating',()=>{
+  const watched=JSON.parse(JSON.stringify(state));
+  for(const key of ['Reaction:1','Reaction:2','Reaction:3'])
+    watched.apolloState[key].reactions=[{__ref:'Watched:3'}];
+  delete watched.apolloState['Reaction:1']['reactions({})'];
+  const result=parser.parsePage(page(watched));
+  assert.equal(result.votes.length,0);
+  assert.ok(result.recognized>=1);
+  assert.equal(result.source,'watched-only');
+});
