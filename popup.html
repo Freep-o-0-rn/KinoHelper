@@ -153,6 +153,7 @@
               <div class="author-name">FreeP0rn</div>
               <div class="author-email">vadim.reizer@ya.ru</div>
             </div>
+            <div class="app-version" id="appVersion" aria-label="Версия расширения"></div>
           </main>
         </div>
       </section>
@@ -180,8 +181,7 @@
                 </div>
               </article>
             </div>
-            <div class="stats-fineprint">Сериал учитывается после подтверждённого воспроизведения серии.
-              Полное завершение сериала без данных обо всех эпизодах не определяется.</div>
+
 
             <div class="stats-section-title">ВРЕМЯ ПРОСМОТРА</div>
             <article class="stats-tile stats-time-tile">
@@ -200,7 +200,7 @@
               <article class="stats-tile">
                 <div class="stats-tile-title">Мои оценки</div>
                 <div class="stats-compact-chart" id="statsRatingsChart"></div>
-                <div class="stats-legend" id="statsRatingsLegend"></div>
+                <div class="stats-legend stats-rating-legend" id="statsRatingsLegend" aria-label="Количество оценок от 1 до 10"></div>
               </article>
             </div>
             <div class="stats-fineprint" id="statsGenresNote"></div>
@@ -220,7 +220,7 @@
               <div id="statsImportStatus" class="stats-profile-status" role="status" aria-live="polite">Ожидаем проверку профиля…</div>
               <a id="statsProfileLink" href="https://www.kinopoisk.ru/"
                  target="_blank" rel="noopener noreferrer" hidden>Мои оценки на Кинопоиске ↗</a>
-              <p class="stats-fineprint">KinoHelper самостоятельно загружает все доступные страницы с паузами между запросами, даже при закрытой панели. Прогресс сохраняется после перезапуска браузера. Если Кинопоиск ограничит доступ, загрузка приостанавливается и повторяется позже.</p>
+              <p class="stats-fineprint">Оценки загружаются автоматически. Можно закрыть панель.</p>
               <div id="statsStatus" class="stats-profile-status" role="status"></div>
             </article>
           </div>
