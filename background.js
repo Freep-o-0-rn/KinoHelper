@@ -1829,7 +1829,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message?.action !== 'kinoPlaybackProgress') return false;
   saveResumeProgress(message.payload, sender)
-    .then(sendResponse)
+    .then(async result => {
+      // Count only playback samples already accepted as verified film progress.
+      if (result?.ok) await statsRecordVerifiedTime(result.key, message.payload)
+        .catch(error => console.warn('[KinoHelper stats] Film time:', error));
+      sendResponse(result);
+    })
     .catch(error => sendResponse({ ok: false, error: error.message }));
   return true;
 });
@@ -2190,7 +2195,62 @@ async function saveSeriesEpisodeProgress(payload, sender) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.action !== 'kinoSeriesEpisodeProgress') return false;
   saveSeriesEpisodeProgress(message.payload, sender)
-    .then(sendResponse)
+    .then(async result => {
+      // The episode was verified against the actual player selection.
+      if (result?.ok) await statsRecordVerifiedTime(
+        'series:' + String(result.key).split(':')[1], message.payload
+      ).catch(error => console.warn('[KinoHelper stats] Series time:', error));
+      sendResponse(result);
+    })
     .catch(error => sendResponse({ ok:false, error: error.message }));
   return true;
 });
+
+
+// KinoHelper 1.558: wall-clock time actually observed while playing.
+// Counters come from trusted content scripts and are accepted ONLY after
+// existing film/episode identity and authorization checks have succeeded.
+// A seek changes currentTime, but never these cumulative playback counters.
+const STATS_TIME_KEY = 'kinoStatsWatchTimeV1';
+const STATS_COUNTER_PREFIX = 'kinoStatsCounterV1:';
+let statsTimeQueue = Promise.resolve();
+
+function statsRecordVerifiedTime(mediaKey, payload) {
+  const task = async () => {
+    if (!/^(?:film|series):[1-9]\d{0,12}$/.test(mediaKey)) return;
+    const token = String(payload?.statsTrackingId || '');
+    const total = Number(payload?.playedSeconds);
+    if (!/^[\w-]{20,80}$/.test(token) ||
+        !Number.isFinite(total) || total < 2 || total > 1e7) return;
+
+    // Token created on each video/episode change; protects against duplicate
+    // asynchronous messages and distinguishes independent playback sessions.
+    const counterKey = STATS_COUNTER_PREFIX + token;
+    const counter = (await chrome.storage.session.get(counterKey))[counterKey];
+    if (counter && counter.mediaKey !== mediaKey) return;
+    const before = counter && Number.isFinite(counter.total) ? counter.total : 0;
+    if (total <= before) return;
+    // Cap unexpectedly large gaps rather than inventing hours on resume,
+    // service-worker restarts, or stalled/background tabs.
+    const delta = Math.min(total - before, 15);
+    const stored = (await chrome.storage.local.get(STATS_TIME_KEY))[STATS_TIME_KEY];
+    const items = stored && typeof stored === 'object' && !Array.isArray(stored)
+      ? { ...stored } : {};
+    const older = items[mediaKey];
+    const seconds = Number.isFinite(older?.seconds) && older.seconds >= 0
+      ? older.seconds : 0;
+    items[mediaKey] = {
+      seconds: Math.round((seconds + delta) * 10) / 10,
+      updatedAt: Date.now()
+    };
+    // Local storage is the durable source of truth. Update the dedup counter
+    // only after the accumulation was successfully committed.
+    await chrome.storage.local.set({ [STATS_TIME_KEY]: items });
+    await chrome.storage.session.set({
+      [counterKey]: { mediaKey, total, updatedAt: Date.now() }
+    });
+  };
+  const result = statsTimeQueue.then(task, task);
+  statsTimeQueue = result.catch(() => {});
+  return result;
+}
