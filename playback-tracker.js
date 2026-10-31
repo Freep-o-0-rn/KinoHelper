@@ -5,8 +5,8 @@
   if (globalThis.__kinoPlaybackTrackerV1) return;
   globalThis.__kinoPlaybackTrackerV1 = true;
 
-  // Checkpoint every 30 seconds; pause, seeking and pagehide flush immediately.
-  const SAVE_INTERVAL_MS = 30000;
+  // Checkpoint every 5 seconds; pause, seek, hidden and pagehide flush immediately.
+  const SAVE_INTERVAL_MS = 5000;
   const MAX_DURATION = 8 * 60 * 60;
   const events = ['timeupdate', 'play', 'playing', 'pause', 'seeked', 'ended',
     'loadedmetadata', 'durationchange'];
