@@ -12,7 +12,7 @@ assert.ok(workerIndex >= 0);
 const episodeWorker = worker.slice(workerIndex);
 
 async function detect({ url = 'https://theatre.stravers.live/player',
-    controls = [], runTicks = 1 } = {}) {
+    controls = [], playerButtons = [], activeOptions = [], runTicks = 1 } = {}) {
   const messages = [];
   let now = 100000;
   let tick;
@@ -22,7 +22,9 @@ async function detect({ url = 'https://theatre.stravers.live/player',
     Date: { now: () => now },
     document: {
       documentElement: {},
-      querySelectorAll: selector => selector.includes('aria-selected') ? controls : []
+      querySelectorAll: selector => selector === 'button.select__item'
+        ? playerButtons : selector === 'button.select__drop-item.active'
+          ? activeOptions : selector.includes('aria-selected') ? controls : []
     },
     chrome: { runtime: { sendMessage: async message => {
       messages.push(message);
@@ -143,6 +145,57 @@ function makeWorker() {
       url: 'chrome-extension://kino-test/sidepanel.html' }
   };
 }
+
+
+function playerButton(text, cls = 'select__item') {
+  return {
+    hidden: false,
+    textContent: text,
+    getAttribute(name) { return name === 'class' ? cls : null; },
+    getBoundingClientRect() { return { width: 160, height: 34 }; }
+  };
+}
+
+test('real player selector: season 1 episode 1 shown with dropdown open', async () => {
+  const messages = await detect({
+    playerButtons: [playerButton('Сезон 1'), playerButton('Серия 1')],
+    activeOptions: [playerButton('Серия 1', 'select__drop-item active')],
+    // The old generic detector could see this all-episodes container.
+    controls: [activeControl('Серия 1 Серия 2 Серия 3 Серия 4')]
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(messages[0].payload)),
+    { season: 1, episode: 1 });
+});
+
+test('real player selector: episode 2 recognized with closed dropdown', async () => {
+  const messages = await detect({
+    playerButtons: [playerButton('Сезон 1'), playerButton('Серия 2')],
+    controls: []
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(messages[0].payload)),
+    { season: 1, episode: 2 });
+});
+
+test('conflicting dropdown state or missing chosen season is not inferred', async () => {
+  const mismatch = await detect({
+    playerButtons: [playerButton('Сезон 1'), playerButton('Серия 2')],
+    activeOptions: [playerButton('Серия 1', 'select__drop-item active')]
+  });
+  assert.equal(mismatch.length, 0);
+  const missingSeason = await detect({
+    playerButtons: [playerButton('Серия 2')],
+    controls: [activeControl('Сезон 1 Серия 2')]
+  });
+  assert.equal(missingSeason.length, 0);
+});
+
+test('player selector requires both values to be independently unambiguous', async () => {
+  const messages = await detect({
+    playerButtons: [playerButton('Сезон 1'), playerButton('Сезон 2'),
+      playerButton('Серия 2')]
+  });
+  assert.equal(messages.length, 0);
+});
 
 test('background accepts same series across frames, rejects a disagreement', async () => {
   const t = makeWorker();
