@@ -1536,6 +1536,11 @@ const RESUME_STORAGE_KEY = 'kinoPlaybackProgressV1';
 const RESUME_PLAYER_ORIGIN = 'https://theatre.stravers.live/*';
 const RESUME_PLAYER_HOST = 'theatre.stravers.live';
 const RESUME_MAX_ENTRIES = 120;
+const PENDING_RESUME_PREFIX = 'kinoResumePending:';
+const PENDING_RESUME_TTL = 120000;
+function pendingResumeKey(tabId) {
+  return PENDING_RESUME_PREFIX + tabId;
+}
 let resumeWriteQueue = Promise.resolve();
 
 function resumeOrigin(url) {
@@ -1595,6 +1600,62 @@ function validatePlaybackEvent(data) {
     duration: Math.floor(duration), played, event };
 }
 
+
+async function armResumeForTab(tabId, filmId, sender) {
+  if (sender?.id !== chrome.runtime.id ||
+      !sender?.url?.startsWith(chrome.runtime.getURL('')) ||
+      !Number.isInteger(tabId) || tabId < 0 ||
+      !/^[1-9]\d{0,12}$/.test(String(filmId))) {
+    return { ok: false, reason: 'untrusted request' };
+  }
+
+  const session = await getSession(tabId);
+  if (session?.type !== 'film' || String(session.id) !== String(filmId) ||
+      Date.now() - session.startedAt > 60000) {
+    return { ok: false, reason: 'watch session mismatch' };
+  }
+  const raw = (await chrome.storage.local.get(RESUME_STORAGE_KEY))[RESUME_STORAGE_KEY];
+  const entry = raw?.['film:' + filmId];
+  if (!entry || entry.completed || entry.type !== 'film' ||
+      String(entry.id) !== String(filmId) ||
+      !Number.isFinite(entry.duration) || entry.duration < 60 ||
+      !Number.isFinite(entry.position) || entry.position < 10 ||
+      entry.position > entry.duration - 25) {
+    return { ok: false, reason: 'no resumable progress' };
+  }
+  await chrome.storage.session.set({
+    [pendingResumeKey(tabId)]: {
+      filmId: String(filmId), position: entry.position,
+      duration: entry.duration, createdAt: Date.now()
+    }
+  });
+  return { ok: true, position: entry.position };
+}
+
+async function readPendingResume(sender) {
+  if (!resumeSourceIsTrusted(sender)) return null;
+  const tabId = sender.tab.id;
+  const key = pendingResumeKey(tabId);
+  const raw = (await chrome.storage.session.get(key))[key];
+  if (!raw) return null;
+  if (!Number.isFinite(raw.createdAt) ||
+      Date.now() - raw.createdAt > PENDING_RESUME_TTL) {
+    await chrome.storage.session.remove(key);
+    return null;
+  }
+  const film = await resumeIdentifyFilm(tabId);
+  if (!film || String(film.id) !== raw.filmId) return null;
+  return { filmId: raw.filmId, position: raw.position, duration: raw.duration };
+}
+
+async function acknowledgeResume(sender, position) {
+  const raw = await readPendingResume(sender);
+  if (!raw || !Number.isFinite(position) || Math.abs(position - raw.position) > 4)
+    return { ok: false };
+  await chrome.storage.session.remove(pendingResumeKey(sender.tab.id));
+  return { ok: true };
+}
+
 async function saveResumeProgress(payload, sender) {
   const item = validatePlaybackEvent(payload);
   if (!item || !resumeSourceIsTrusted(sender)) {
@@ -1608,6 +1669,13 @@ async function saveResumeProgress(payload, sender) {
   if (!allowed) return { ok: false, skipped: 'player access revoked' };
   const film = await resumeIdentifyFilm(sender.tab.id);
   if (!film) return { ok: false, skipped: 'movie identification unavailable' };
+  const pending = (await chrome.storage.session.get(pendingResumeKey(sender.tab.id)))
+    [pendingResumeKey(sender.tab.id)];
+  // During restoration, don't replace the checkpoint with the new video's 0:00.
+  if (pending && Date.now() - pending.createdAt < PENDING_RESUME_TTL &&
+      pending.filmId === String(film.id)) {
+    return { ok: false, skipped: 'restoring saved position' };
+  }
   const key = 'film:' + film.id;
   const safeTitle = String(film.title || '').replace(/\s+/g, ' ').trim().slice(0, 150);
   if (key.length > 40) return { ok: false, skipped: 'invalid movie id' };
@@ -1693,6 +1761,22 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.action === 'kinoResumeArm') {
+    armResumeForTab(message.tabId, message.filmId, sender)
+      .then(sendResponse).catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+  if (message?.action === 'kinoResumeGetPending') {
+    readPendingResume(sender)
+      .then(value => sendResponse({ ok: Boolean(value), pending: value }))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+  if (message?.action === 'kinoResumeAcknowledge') {
+    acknowledgeResume(sender, Number(message.position))
+      .then(sendResponse).catch(() => sendResponse({ ok: false }));
+    return true;
+  }
   if (message?.action !== 'kinoPlaybackProgress') return false;
   saveResumeProgress(message.payload, sender)
     .then(sendResponse)
