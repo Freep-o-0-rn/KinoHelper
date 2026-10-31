@@ -383,8 +383,8 @@
           throw Error('Кинопоиск перенаправил на другую страницу');
         const html = await reply.text();
         const parsed = parser.parsePage(html,page);
-        if (!parsed.votes.length) {
-          throw Error('Не удалось подтвердить личные оценки на странице ' +
+        if (!parsed.votes.length && !parsed.recognized) {
+          throw Error('Не удалось распознать записи профиля на странице ' +
             page + '. Возможно, Кинопоиск изменил формат или ограничил доступ');
         }
         if (Number.isInteger(parsed.lastPage))
