@@ -13,7 +13,20 @@
     const result = $('playerProbeResult');
     const status = $('playerProbeStatus');
     const copy = $('playerProbeCopy');
-    if (!button || !result || !status || !copy) return;
+    const grantButton = $('playerProbeGrant');
+    if (!button || !result || !status || !copy || !grantButton) return;
+    const optionalOrigins = [
+        'https://brogiro.cfd/*',
+        'https://theatre.stravers.live/*'
+    ];
+    const knownHosts = new Map([
+        ['www.kinokino.vip', 'https://www.kinokino.vip/*'],
+        ['flcksbr.top', 'https://flcksbr.top/*'],
+        ['www.kinopoisk.ru', 'https://www.kinopoisk.ru/*'],
+        ['brogiro.cfd', optionalOrigins[0]],
+        ['theatre.stravers.live', optionalOrigins[1]]
+    ]);
+    let pendingOrigins = [];
 
     // Возвращаемые данные НЕ включают URL видео, cookies или содержимое страницы.
     // Chrome сериализует эту функцию и исполняет в изолированном контексте фрейма.
@@ -58,10 +71,28 @@
         }
     }
 
-    // Разрешения Chrome в версии 1.543: дополнительные домены не запрашиваем.
-    function permitted(frameUrl) {
-        const host = hostname(frameUrl);
-        return ['www.kinokino.vip', 'flcksbr.top', 'www.kinopoisk.ru'].includes(host);
+    // Проверяем фактически предоставленный Chrome доступ к каждому фрейму.
+    // Наличие шаблона в manifest само по себе не означает, что доступ разрешён.
+    function originPattern(frameUrl) {
+        try {
+            const url = new URL(frameUrl);
+            return url.protocol === 'https:' ? knownHosts.get(url.hostname.toLowerCase()) : null;
+        } catch {
+            return null;
+        }
+    }
+
+    async function accessFor(frame) {
+        const pattern = originPattern(frame.url);
+        if (!pattern) return { frame, pattern: null, allowed: false };
+        try {
+            return {
+                frame, pattern,
+                allowed: Boolean(await chrome.permissions.contains({ origins: [pattern] }))
+            };
+        } catch {
+            return { frame, pattern, allowed: false };
+        }
     }
 
     function formatTime(seconds) {
@@ -101,12 +132,12 @@
         };
     }
 
-    function formatReport(tab, frameList, successes, failures) {
+    function formatReport(tab, frameList, successes, failures, accessible) {
         const lines = [
             'KinoHelper — проверка видеоплеера',
             'Страница: ' + hostname(tab.url || ''),
             'Всего фреймов: ' + frameList.length,
-            'Разрешено проверить: ' + frameList.filter(f => permitted(f.url)).length,
+            'Разрешено проверить: ' + accessible.size,
             'Найдено HTML5-видео: ' + successes.reduce((sum, frame) => sum + frame.videos.length, 0),
             ''
         ];
@@ -130,7 +161,7 @@
         }
 
         for (const frame of frameList) {
-            if (!permitted(frame.url)) {
+            if (!accessible.has(frame.frameId)) {
                 lines.push('Не проверен iframe ' + frame.frameId + ': ' +
                     hostname(frame.url) + ' (нет разрешения)');
             }
@@ -156,6 +187,8 @@
         busy = true;
         button.disabled = true;
         copy.hidden = true;
+        grantButton.hidden = true;
+        pendingOrigins = [];
         result.hidden = true;
         status.textContent = 'Проверяем текущую вкладку (два замера с интервалом 3 секунды)…';
         try {
@@ -172,14 +205,26 @@
             if (!Array.isArray(frames) || !frames.length) {
                 throw new Error('Вкладка не содержит доступных фреймов. Попробуй обновить страницу.');
             }
-            const allowed = frames.filter(f => permitted(f.url)).slice(0, maxFrames);
+            const permissions = await Promise.all(frames.map(accessFor));
+            const allowed = permissions.filter(item => item.allowed)
+                .map(item => item.frame).slice(0, maxFrames);
+            const accessible = new Set(allowed.map(f => f.frameId));
+            pendingOrigins = [...new Set(permissions.filter(item =>
+                !item.allowed && optionalOrigins.includes(item.pattern))
+                .map(item => item.pattern))];
+            grantButton.hidden = pendingOrigins.length === 0;
+            if (pendingOrigins.length) {
+                grantButton.textContent = pendingOrigins.length === 1
+                    ? 'Разрешить доступ к плееру (1 сайт)'
+                    : 'Разрешить доступ к плееру (2 сайта)';
+            }
             const responses = await Promise.allSettled(allowed.map(f => inspectFrame(tab.id, f)));
             const successes = [], failures = [];
             responses.forEach((response, i) => {
                 if (response.status === 'fulfilled') successes.push(response.value);
                 else failures.push({ id: allowed[i].frameId, host: hostname(allowed[i].url) });
             });
-            lastReport = formatReport(tab, frames, successes, failures);
+            lastReport = formatReport(tab, frames, successes, failures, accessible);
             result.textContent = lastReport;
             result.hidden = false;
             copy.hidden = false;
@@ -196,6 +241,35 @@
     }
 
     button.addEventListener('click', () => void run());
+
+    grantButton.addEventListener('click', () => {
+        // Важно: request() должен вызваться непосредственно из обработчика
+        // пользовательского нажатия, БЕЗ предварительных await.
+        const origins = [...pendingOrigins];
+        if (!origins.length) return;
+        grantButton.disabled = true;
+        status.textContent = 'Chrome запросит доступ только к указанным сайтам.';
+        let permissionRequest;
+        try {
+            permissionRequest = chrome.permissions.request({ origins });
+        } catch (error) {
+            grantButton.disabled = false;
+            status.textContent = 'Не удалось запросить доступ: ' + String(error.message || error);
+            return;
+        }
+        Promise.resolve(permissionRequest).then(granted => {
+            if (granted) {
+                status.textContent = 'Доступ разрешён. Повторяем проверку.';
+                return run();
+            }
+            status.textContent = 'Доступ не предоставлен. Без разрешения таймкод недоступен.';
+        }).catch(error => {
+            status.textContent = 'Ошибка разрешений: ' + String(error.message || error);
+        }).finally(() => {
+            grantButton.disabled = false;
+        });
+    });
+
     copy.addEventListener('click', async () => {
         if (!lastReport) return;
         try {
