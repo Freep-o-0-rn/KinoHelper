@@ -7,15 +7,17 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'player-probe.js'), 'utf8');
 
-async function runProbe(frames, videoFrames = {}) {
+async function runProbe(frames, videoFrames = {}, options = {}) {
     const controls = new Map();
-    for (const id of ['playerProbeStart', 'playerProbeResult', 'playerProbeStatus', 'playerProbeCopy']) {
+    for (const id of ['playerProbeStart', 'playerProbeResult', 'playerProbeStatus', 'playerProbeCopy', 'playerProbeGrant']) {
         controls.set(id, {
             textContent: '', hidden: true, disabled: false, handlers: {},
             addEventListener(type, callback) { this.handlers[type] = callback; }
         });
     }
     let calls = 0;
+    const granted = new Set(['https://www.kinokino.vip/*', 'https://flcksbr.top/*']);
+    const requests = [];
     const pageForFrame = frameId => ({
         querySelectorAll(selector) {
             if (selector === 'iframe' || selector === '*') return [];
@@ -28,6 +30,15 @@ async function runProbe(frames, videoFrames = {}) {
         }
     });
     const chrome = {
+        permissions: {
+            contains: async ({ origins }) => origins.every(origin => granted.has(origin)),
+            request: ({ origins }) => {
+                requests.push(origins);
+                if (!options.grant) return Promise.resolve(false);
+                for (const origin of origins) granted.add(origin);
+                return Promise.resolve(true);
+            }
+        },
         tabs: { query: async () => [{ id: 5, url: 'https://www.kinokino.vip/film/123/?token=SECRET' }] },
         webNavigation: { getAllFrames: async () => frames },
         scripting: {
@@ -46,8 +57,13 @@ async function runProbe(frames, videoFrames = {}) {
     };
     vm.runInNewContext(source, context, { filename: 'player-probe.js' });
     controls.get('playerProbeStart').handlers.click();
-    // Обработчик запускает async-процедуру, поэтому ждём её microtasks.
+    // Ожидаем завершения 2 проб, передача callback имитирует 3 секунды.
     for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+    if (options.clickGrant) {
+        controls.get('playerProbeGrant').handlers.click();
+        for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+    }
+    controls.requests = requests;
     return controls;
 }
 
@@ -73,4 +89,35 @@ test('probe exposes only frame hostnames, not private URL query parameters', asy
     assert.match(report, /external-player.example \(нет разрешения\)/);
     assert.doesNotMatch(report, /HIDDEN|SECRET|token=/);
     assert.match(report, /в доступных фреймах HTML5-видео не найдено/i);
+});
+
+
+test('two optional player origins are requested on consent, then inspected', async () => {
+    const controls = await runProbe(
+        [
+            { frameId: 0, url: 'https://brogiro.cfd/film/447301/' },
+            { frameId: 450, url: 'https://theatre.stravers.live/embed?token=SECRET' }
+        ],
+        { 450: [{ times: [120, 123], duration: 8888 }] },
+        { grant: true, clickGrant: true }
+    );
+    const report = controls.get('playerProbeResult').textContent;
+    assert.deepEqual(controls.requests[0], [
+        'https://brogiro.cfd/*', 'https://theatre.stravers.live/*'
+    ]);
+    assert.match(report, /Разрешено проверить: 2/);
+    assert.match(report, /Найдено HTML5-видео: 1/);
+    assert.match(report, /Фрейм 450 \(theatre\.stravers\.live\)/);
+    assert.doesNotMatch(report, /SECRET/);
+    assert.equal(controls.get('playerProbeGrant').hidden, true);
+});
+
+test('declining player access leaves frames uninspected', async () => {
+    const controls = await runProbe(
+        [{ frameId: 0, url: 'https://brogiro.cfd/film/447301/' }],
+        {}, { grant: false, clickGrant: true }
+    );
+    assert.match(controls.get('playerProbeResult').textContent, /Разрешено проверить: 0/);
+    assert.match(controls.get('playerProbeStatus').textContent, /не предоставлен/);
+    assert.equal(controls.requests.length, 1);
 });
