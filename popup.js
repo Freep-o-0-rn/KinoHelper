@@ -46,11 +46,16 @@ const ratingScale = document.getElementById('ratingScale');
 const movieRating = document.getElementById('movieRating');
 const ratingCurrent = document.getElementById('ratingCurrent');
 const ratingStatus = document.getElementById('ratingStatus');
+const movieDetails = document.getElementById('movieDetails');
+const movieGenres = document.getElementById('movieGenres');
+const movieDescriptionToggle = document.getElementById('movieDescriptionToggle');
+const movieDescription = document.getElementById('movieDescription');
 
 const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
 let currentSettings = null;
 let currentRatingContext = null;
 let ratingLoadSequence = 0;
+let movieDetailsLoadSequence = 0;
 let currentViewRefreshSequence = 0;
 let currentViewRefreshTimer = null;
 let lastRenderedTabSignature = '';
@@ -213,6 +218,48 @@ async function openHistoryUrl(url, title = '') {
     }
     await chrome.tabs.create({ url });
 }
+
+function hideMovieDetails() {
+    movieDetailsLoadSequence += 1;
+    movieDetails.hidden = true;
+    movieGenres.textContent = '';
+    movieGenres.hidden = true;
+    movieDescription.textContent = '';
+    movieDescription.hidden = true;
+    movieDescriptionToggle.hidden = true;
+    movieDescriptionToggle.setAttribute('aria-expanded', 'false');
+}
+
+async function showMovieDetails(media) {
+    const sequence = ++movieDetailsLoadSequence;
+    movieDetails.hidden = true;
+    movieDescription.hidden = true;
+    movieDescriptionToggle.hidden = true;
+    movieDescriptionToggle.setAttribute('aria-expanded', 'false');
+
+    try {
+        const details = await window.KinoMovieDetails.get(media);
+        if (sequence !== movieDetailsLoadSequence) return;
+        const genres = Array.isArray(details.genres) ? details.genres : [];
+        const description = String(details.description || '').trim();
+        movieGenres.textContent = genres.length ? 'Жанр: ' + genres.join(', ') : '';
+        movieGenres.hidden = !genres.length;
+        movieDescription.textContent = description;
+        movieDescriptionToggle.hidden = !description;
+        movieDetails.hidden = !genres.length && !description;
+    } catch (error) {
+        if (sequence !== movieDetailsLoadSequence) return;
+        movieDetails.hidden = true;
+        debugLog('Жанры или описание Кинопоиска недоступны:', error);
+    }
+}
+
+movieDescriptionToggle.addEventListener('click', () => {
+    if (movieDescriptionToggle.hidden) return;
+    const expanded = movieDescriptionToggle.getAttribute('aria-expanded') !== 'true';
+    movieDescriptionToggle.setAttribute('aria-expanded', String(expanded));
+    movieDescription.hidden = !expanded;
+});
 
 function setRatingStatus(text = '', type = 'info') {
     ratingStatus.textContent = text;
@@ -789,6 +836,7 @@ async function showCurrentMovie({ force = false } = {}) {
 
         const tabSignature = getTabSignature(tab);
         if (!force && tabSignature === lastRenderedTabSignature) return;
+        hideMovieDetails();
 
         const legacyOpenButton = document.getElementById('openOnKinopoisk');
         if (legacyOpenButton) legacyOpenButton.style.display = 'none';
@@ -813,6 +861,7 @@ async function showCurrentMovie({ force = false } = {}) {
 
             lastRenderedTabSignature = tabSignature;
             showMessage(`Текущий ${type}: «${title || 'Страница Кинопоиска'}»`, 'success');
+            void showMovieDetails(media);
             await showRatingCard(media);
             return;
         }
@@ -826,6 +875,7 @@ async function showCurrentMovie({ force = false } = {}) {
 
             const fallbackTitle = normalizePlayerTitle(tab.title, session.title);
             showMessage(fallbackTitle ? `Сейчас смотрите: «${fallbackTitle}»` : 'Сейчас идёт просмотр', 'success');
+            void showMovieDetails({ type: session.type, id: session.id });
 
             const ratingResponse = await showRatingCard({ type: session.type, id: session.id });
             if (!isCurrentViewRefresh(refreshSequence)) return;
@@ -845,6 +895,7 @@ async function showCurrentMovie({ force = false } = {}) {
             const fallbackTitle = normalizePlayerTitle(tab.title);
             showMessage(fallbackTitle ? `Сейчас смотрите: «${fallbackTitle}»` : 'Сейчас идёт просмотр', 'success');
 
+            void showMovieDetails(directPlayerMedia);
             const ratingResponse = await showRatingCard(directPlayerMedia);
             if (!isCurrentViewRefresh(refreshSequence)) return;
 
