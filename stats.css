@@ -271,3 +271,27 @@
 }
 .stats-account-refresh:hover { background:var(--bg);border-color:var(--border-hover); }
 .stats-account-refresh:disabled { opacity:.5;cursor:wait; }
+
+
+/* Automatic full-profile import status: fits the existing 360px side panel. */
+.stats-import-header {
+  display:flex;justify-content:space-between;align-items:center;gap:8px;
+  margin:10px 1px 5px;font-size:10px;color:var(--text);
+  font-weight:650;
+}
+.stats-import-header strong {
+  font-size:10px;color:var(--secondary);font-variant-numeric:tabular-nums;
+  text-align:right;
+}
+.stats-import-progress {
+  display:block;width:100%;height:7px;appearance:none;
+  border:0;border-radius:20px;overflow:hidden;
+  background:var(--bg-secondary);accent-color:var(--secondary);
+}
+.stats-import-progress::-webkit-progress-bar {background:var(--bg-secondary);}
+.stats-import-progress::-webkit-progress-value {
+  background:var(--secondary);border-radius:20px;transition:width .25s ease;
+}
+.stats-import-progress::-moz-progress-bar {
+  background:var(--secondary);border-radius:20px;
+}
