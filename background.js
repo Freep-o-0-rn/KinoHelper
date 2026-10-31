@@ -1528,7 +1528,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 
 // -------------------------
-// Resume playback: passive, opt-in host-scoped film autosave.
+// Resume playback: passive, manifest-scoped film autosave.
 // No player control or seek. Series deliberately excluded until episode identity
 // is independently verified, to prevent restoring an unrelated episode.
 // -------------------------
