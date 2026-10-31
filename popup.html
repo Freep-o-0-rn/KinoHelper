@@ -51,6 +51,21 @@
               </section>
             </section>
 
+            <section class="resume-last" id="resumeLast" aria-label="Последний просмотр" hidden>
+              <div class="resume-last-heading">
+                <span class="resume-last-heading-title">↻ Последний просмотр</span>
+              </div>
+              <div class="resume-last-body">
+                <div class="resume-last-details">
+                  <div class="resume-last-title" id="resumeLastTitle"></div>
+                  <div class="resume-last-meta" id="resumeLastMeta"></div>
+                  <div class="resume-last-progress" id="resumeLastProgress" hidden></div>
+                </div>
+                <button class="resume-last-open" id="resumeLastOpen" type="button"
+                        title="Открыть фильм или сериал">▶ Открыть</button>
+              </div>
+            </section>
+
             <section class="title-search-section" aria-label="Поиск по названию">
               <form class="title-search-form" id="titleSearchForm" role="search" autocomplete="off">
                 <span class="title-search-icon" aria-hidden="true">🔎</span>
@@ -231,6 +246,7 @@
 
   <script src="movie-details.js"></script>
   <script src="watchlist.js"></script>
+  <script src="resume-ui.js"></script>
   <script src="popup.js"></script>
   <script src="search.js"></script>
   <script src="filters.js"></script>
