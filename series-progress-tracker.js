@@ -10,6 +10,7 @@
   const MAX_DURATION = 8 * 3600;
   const CHECK_INTERVAL = 2000;
   let selectionKey = '';
+  let lastNonEmptySelection = '';
   let selectionSince = 0;
   let formerVideo = null;
   let formerSrc = '';
@@ -88,7 +89,11 @@
     if (selectionKey !== key) {
       // On an episode switch the old video may still be playing while the
       // selector already shows the next episode. Do not attach its timecode.
-      const previouslySelected = Boolean(selectionKey);
+      // Preserve the previous episode through transient blank selections
+      // shown while a dropdown or the stream is reloading.
+      const previouslySelected = Boolean(lastNonEmptySelection &&
+        key && lastNonEmptySelection !== key);
+      if (key) lastNonEmptySelection = key;
       formerVideo = activeVideo || video;
       formerSrc = formerVideo?.currentSrc || '';
       formerTime = Number(formerVideo?.currentTime) || 0;
@@ -188,7 +193,7 @@
           video.addEventListener(event, () => {
             if (event === 'loadstart' || event === 'emptied') {
               if (video === formerVideo && awaitingMedia) mediaChanged = true;
-              resetMovement();
+              if (video === activeVideo) resetMovement();
               return;
             }
             consider(video, event);
