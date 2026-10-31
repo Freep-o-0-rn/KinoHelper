@@ -15,6 +15,16 @@
         <span class="brand-icon" aria-hidden="true">🎬</span>
         <h1>КиноПомощник</h1>
       </div>
+
+      <button class="header-button header-stats" id="statsButton" type="button"
+              data-tooltip="Статистика" aria-label="Статистика" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+             aria-hidden="true">
+          <path d="M12 3a9 9 0 1 0 9 9h-9z"/>
+          <path d="M15 3v6h6A9 9 0 0 0 15 3z"/>
+        </svg>
+      </button>
       <button class="header-button" id="settingsButton" type="button" data-tooltip="Открыть настройки" aria-label="Открыть настройки" aria-pressed="false">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="3" />
@@ -152,6 +162,74 @@
         </div>
       </section>
 
+
+      <section class="screen statistics-screen" id="statisticsScreen" aria-label="Статистика">
+        <div class="screen-scroll">
+          <div class="statistics-content">
+            <button class="stats-back" id="statsBack" type="button">← Статистика</button>
+            <div class="stats-subheading">Личная статистика · за всё время</div>
+            <div class="stats-section-title">ПРОСМОТРЕНО</div>
+            <div class="stats-pair">
+              <article class="stats-tile">
+                <div class="stats-tile-title">🎬 Фильмы</div>
+                <div class="stats-compact-chart" id="statsFilmChart"></div>
+                <div class="stats-legend" id="statsFilmLegend"></div>
+              </article>
+              <article class="stats-tile">
+                <div class="stats-tile-title">📺 Сериалы</div>
+                <div class="stats-compact-chart" id="statsSeriesChart"></div>
+                <div class="stats-legend" id="statsSeriesLegend"></div>
+                <div class="stats-episodes-inline">
+                  <span>Серий просмотрено</span>
+                  <strong id="statsEpisodesCount">—</strong>
+                </div>
+              </article>
+            </div>
+            <div class="stats-fineprint">Сериал учитывается после подтверждённого воспроизведения серии.
+              Полное завершение сериала без данных обо всех эпизодах не определяется.</div>
+
+            <div class="stats-section-title">ВРЕМЯ ПРОСМОТРА</div>
+            <article class="stats-tile stats-time-tile">
+              <div id="statsTimeChart" class="stats-wide-chart"></div>
+              <div class="stats-legend" id="statsTimeLegend"></div>
+            </article>
+            <div class="stats-fineprint" id="statsTimeNote"></div>
+
+            <div class="stats-section-title">ПРЕДПОЧТЕНИЯ</div>
+            <div class="stats-pair">
+              <article class="stats-tile">
+                <div class="stats-tile-title">Любимые жанры</div>
+                <div class="stats-compact-chart" id="statsGenresChart"></div>
+                <div class="stats-legend" id="statsGenresLegend"></div>
+              </article>
+              <article class="stats-tile">
+                <div class="stats-tile-title">Мои оценки</div>
+                <div class="stats-compact-chart" id="statsRatingsChart"></div>
+                <div class="stats-legend" id="statsRatingsLegend"></div>
+              </article>
+            </div>
+            <div class="stats-fineprint" id="statsGenresNote"></div>
+            <div class="stats-fineprint" id="statsRatingsNote"></div>
+            <div class="stats-section-title">ПРОФИЛЬ КИНОПОИСКА</div>
+            <article class="stats-tile stats-profile-tile">
+              <label for="statsProfileInput">Ссылка на свой профиль или ID</label>
+              <div class="stats-profile-row">
+                <input id="statsProfileInput" type="text"
+                       placeholder="kinopoisk.ru/user/12345/"
+                       spellcheck="false" autocomplete="off" />
+                <button id="statsProfileSave" type="button">Сохранить</button>
+              </div>
+              <a id="statsProfileLink" href="https://www.kinopoisk.ru/"
+                 target="_blank" rel="noopener noreferrer" hidden>Мои оценки на Кинопоиске ↗</a>
+              <p class="stats-fineprint">Здесь сохраняется адрес профиля — не ID разработчика.
+                 Полный импорт архивных оценок ещё не подключён; диаграмма использует
+                 оценки, подтверждённые в KinoHelper после установки обновления.</p>
+              <div id="statsStatus" class="stats-profile-status" role="status"></div>
+            </article>
+          </div>
+        </div>
+      </section>
+
       <section class="screen settings-screen" id="settingsScreen" aria-label="Настройки">
         <div class="screen-scroll">
           <div class="settings-content">
@@ -238,6 +316,8 @@
   <script src="resume-ui.js"></script>
   <script src="episode-ui.js"></script>
   <script src="popup.js"></script>
+  <script src="stats-core.js"></script>
+  <script src="stats.js"></script>
   <script src="search.js"></script>
   <script src="filters.js"></script>
   <script src="filters-ui.js"></script>
