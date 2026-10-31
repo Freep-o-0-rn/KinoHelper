@@ -1577,6 +1577,7 @@ async function resumeIdentifyFilm(tabId) {
   // The active top-level page must be a known step in the tracked watch chain.
   if (!Array.isArray(session.recognizedOrigins) ||
       !session.recognizedOrigins.includes(origin) ||
+      session.currentUrl !== tab.url ||
       origin === KINOPOISK_BASE) return null;
   return { id: String(session.id), title: session.title || tab.title || '' };
 }
@@ -1601,6 +1602,12 @@ async function saveResumeProgress(payload, sender) {
   if (!item || !resumeSourceIsTrusted(sender)) {
     return { ok: false, skipped: 'invalid source or progress' };
   }
+  // A still-open content script must stop writing immediately after the user
+  // revokes host permission, even before that page is reloaded.
+  const allowed = await chrome.permissions.contains({
+    origins: [RESUME_PLAYER_ORIGIN]
+  });
+  if (!allowed) return { ok: false, skipped: 'player access revoked' };
   const film = await resumeIdentifyFilm(sender.tab.id);
   if (!film) return { ok: false, skipped: 'movie identification unavailable' };
   const key = 'film:' + film.id;
