@@ -36,11 +36,11 @@ function node(tag = 'div', cls = '') {
 
 async function setup({ data = {}, seriesData = {}, history = [],
   current = 'https://www.kinopoisk.ru/', delayedTabQuery = false,
-  session = null } = {}) {
+  session = null, sharedSession = {} } = {}) {
   const elements = {
     resumeLast: node('section'), resumeLastTitle: node(),
     resumeLastMeta: node(), resumeLastProgress: node(),
-    resumeLastOpen: node('button')
+    resumeLastOpen: node('button'), resumeLastClose: node('button')
   };
   let tabUrl = current;
   const gate = delayedTabQuery ? {} : null;
@@ -89,6 +89,18 @@ async function setup({ data = {}, seriesData = {}, history = [],
         local: { get: async key => key === 'kinoSeriesEpisodeProgressV1'
           ? { kinoSeriesEpisodeProgressV1: seriesData }
           : { kinoPlaybackProgressV1: data } },
+        session: {
+          get: async key => ({ [key]: sharedSession[key] }),
+          set: async values => {
+            for (const [key, value] of Object.entries(values)) {
+              const oldValue = sharedSession[key];
+              sharedSession[key] = value;
+              for (const handler of changes) handler({
+                [key]: { oldValue, newValue: value }
+              }, 'session');
+            }
+          }
+        },
         onChanged: { addListener(cb) { changes.push(cb); } }
       }
     },
@@ -102,7 +114,7 @@ async function setup({ data = {}, seriesData = {}, history = [],
   context.window.KinoResumeUI.updateHistory(history);
   for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
   return { elements, rows, changes, tabs, opened, openedOptions,
-    documentEvents, runtimeEvents,
+    documentEvents, runtimeEvents, sharedSession,
     releaseTab: () => gate?.release(),
     setSession: value => { session = value; },
     updateHistory: context.window.KinoResumeUI.updateHistory,
@@ -403,4 +415,72 @@ test('active-tab check blocks transient appearance during asynchronous reads',as
   ui.tabs.activated();
   for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));
   assert.equal(ui.elements.resumeLast.hidden,false);
+});
+
+
+test('small close button hides latest movie without deleting checkpoint', async () => {
+  const ui = await setup({
+    history: filmHistory,
+    data: { 'film:447301': movie }
+  });
+  assert.equal(ui.elements.resumeLast.hidden, false);
+  ui.elements.resumeLastClose.events.click();
+  assert.equal(ui.elements.resumeLast.hidden, true);
+  assert.equal(ui.sharedSession.kinoLastViewDismissedV1, 'film:447301');
+
+  ui.setData({ 'film:447301': { ...movie, position: 300, updatedAt: 25000 } });
+  ui.changes[0]({ kinoPlaybackProgressV1: { newValue: true } }, 'local');
+  for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(ui.elements.resumeLast.hidden, true,
+    'five-second progress updates must not reveal dismissed card');
+  assert.equal(ui.rows[0].querySelector('.history-progress-track')
+    .attrs['aria-valuenow'], '50', 'history progress stays available');
+  assert.equal(movie.position, 150, 'dismiss must not mutate existing checkpoint');
+});
+
+test('dismissal persists between Popup and Side Panel during browser session', async () => {
+  const sharedSession = {};
+  const input = {
+    sharedSession, history: seriesHistory,
+    seriesData: { 'series:404900:1:3': episode }
+  };
+  const popup = await setup(input);
+  popup.elements.resumeLastClose.events.click();
+  assert.equal(sharedSession.kinoLastViewDismissedV1, 'series:404900:1:3');
+  const panel = await setup(input);
+  assert.equal(panel.elements.resumeLast.hidden, true);
+  assert.ok(panel.rows[0].querySelector('.history-progress-label')
+    .textContent.includes('Сезон 1 · Серия 3'));
+});
+
+test('a different episode becomes visible after dismissing the prior one', async () => {
+  const ui = await setup({
+    history: seriesHistory,
+    seriesData: { 'series:404900:1:3': episode }
+  });
+  ui.elements.resumeLastClose.events.click();
+  const updated = { ...episode, episode: 4, position: 80,
+    updatedAt: episode.updatedAt + 10000 };
+  ui.setSeriesData({
+    'series:404900:1:3': episode,
+    'series:404900:1:4': updated
+  });
+  ui.changes[0]({ kinoSeriesEpisodeProgressV1: { newValue: true } }, 'local');
+  for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(ui.elements.resumeLast.hidden, false);
+  assert.match(ui.elements.resumeLastMeta.textContent, /Сезон 1 · Серия 4/);
+});
+
+test('dismissal never falls back to another older film', async () => {
+  const olderMovie = { ...movie, id: '987', title: 'Старый фильм', updatedAt: 9000 };
+  const olderHistory = { title: 'Старый фильм', timestamp: 1000,
+    url: 'https://www.kinokino.vip/film/987/' };
+  const ui = await setup({
+    history: [...filmHistory, olderHistory],
+    data: { 'film:447301': movie, 'film:987': olderMovie }
+  });
+  ui.elements.resumeLastClose.events.click();
+  assert.equal(ui.elements.resumeLast.hidden, true);
+  assert.equal(ui.rows[0].querySelector('.history-progress-track')
+    .attrs['aria-valuenow'], '25');
 });
