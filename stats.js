@@ -431,10 +431,11 @@
       button.textContent = '↓ Импорт оценок из профиля';
       const suffix = failure ? ' Остановлено: ' + failure :
         ' Данные сохранены. При необходимости повтори импорт.';
-      display.textContent = (pagesDone
+      const message = (pagesDone
         ? 'За этот запуск: ' + pagesDone + ' стр., ' + votesFound +
           ' оценок на страницах.' : 'Новые оценки не импортированы.') + suffix;
       await reload();
+      display.textContent = message;
     }
   }
 
