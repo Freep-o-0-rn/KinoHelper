@@ -7,6 +7,37 @@
     const MAX_ITEMS = 1000;
     const KINOPOISK_ORIGIN = 'https://www.kinopoisk.ru';
     const WATCH_ORIGIN = 'https://www.kinokino.vip';
+    const posterCache = new Map();
+    const hydrationStarted = new Set();
+    const pendingHydration = [];
+    let hydrationActive = 0;
+    let listObserver = null;
+    const MAX_PARALLEL = 2;
+
+    function validPoster(raw) {
+        if (typeof raw !== 'string' || !raw.trim()) return '';
+        try {
+            const url = new URL(raw);
+            if (url.protocol !== 'https:') return '';
+            const host = url.hostname.toLowerCase();
+            return host === 'kinopoisk.ru' || host.endsWith('.kinopoisk.ru') ||
+                host === 'yandex.net' || host.endsWith('.yandex.net') ||
+                host === 'yandex.ru' || host.endsWith('.yandex.ru')
+                ? url.href : '';
+        } catch {
+            return '';
+        }
+    }
+
+    function cleanGenres(value) {
+        const input = Array.isArray(value) ? value :
+            typeof value === 'string' ? value.split(',') : [];
+        return [...new Set(input.map(entry =>
+            String(typeof entry === 'string' ? entry : entry?.name || '')
+                .replace(/\s+/g, ' ').trim().toLocaleLowerCase('ru'))
+            .filter(item => item.length >= 3 && item.length <= 32 &&
+                /^[\p{L}][\p{L}\s-]*$/u.test(item)))].slice(0, 8);
+    }
 
     function normalize(movie) {
         if (!movie || !['film', 'series'].includes(movie.type)) return null;
@@ -14,15 +45,8 @@
         if (!/^[1-9]\d{0,12}$/.test(id)) return null;
         const type = movie.type;
         const year = Number(movie.year);
-        let posterUrl = '';
-        try {
-            const candidate = movie.posterUrl || movie.poster || movie.posterFallback || '';
-            const url = new URL(candidate);
-            if (url.protocol === 'https:' &&
-                ['avatars.mds.yandex.net', 'st.kp.yandex.net'].includes(url.hostname)) {
-                posterUrl = url.href;
-            }
-        } catch { /* Отсутствие постера допустимо. */ }
+        const posterUrl = validPoster(movie.posterUrl) ||
+            validPoster(movie.poster) || validPoster(movie.posterFallback);
 
         return {
             id, type,
@@ -30,6 +54,7 @@
                 .replace(/\s+/g, ' ').trim().slice(0, 200),
             year: Number.isInteger(year) && year >= 1888 && year <= 2200 ? year : null,
             posterUrl,
+            genres: cleanGenres(movie.genres),
             addedAt: Number.isFinite(movie.addedAt) && movie.addedAt > 0
                 ? movie.addedAt : Date.now()
         };
@@ -88,7 +113,45 @@
         const existing = old.find(item => keyOf(item) === key);
         const items = existing ? old.filter(item => keyOf(item) !== key) : [next, ...old];
         if (!existing && items.length > MAX_ITEMS) return false;
-        return save(items);
+        const ok = save(items);
+        if (ok && !existing) enqueueHydration(next);
+        return ok;
+    }
+
+    // Обогащение уже сохранённой записи не меняет порядок и не создаёт дубль.
+    function updateMetadata(movie, metadata = movie) {
+        const key = keyOf(movie);
+        if (!key) return false;
+        const old = getAll();
+        const index = old.findIndex(item => keyOf(item) === key);
+        if (index < 0) return false;
+
+        const previous = old[index];
+        const incoming = normalize({ ...previous, ...metadata,
+            id: previous.id, type: previous.type, addedAt: previous.addedAt });
+        if (!incoming) return false;
+
+        // Не стираем уже полученные значения пустыми результатами.
+        const goodTitle = incoming.title && !/^(фильм|сериал) №\d+$/i.test(incoming.title);
+        const merged = {
+            ...previous,
+            title: goodTitle ? incoming.title : previous.title,
+            year: incoming.year || previous.year,
+            genres: incoming.genres.length ? incoming.genres : previous.genres,
+            posterUrl: incoming.posterUrl || previous.posterUrl
+        };
+        if (JSON.stringify(previous) === JSON.stringify(merged)) return false;
+        old[index] = merged;
+        return save(old);
+    }
+
+    function adoptPoster(movie, dataUrl) {
+        const key = keyOf(movie);
+        if (!key || !contains(movie) || typeof dataUrl !== 'string' ||
+            !/^data:image\/(?:jpeg|png|webp|gif);base64,/i.test(dataUrl)) return;
+        posterCache.set(key, dataUrl);
+        if (posterCache.size > 30) posterCache.delete(posterCache.keys().next().value);
+        renderList();
     }
 
     function makeButton(label, className, action, title) {
@@ -160,6 +223,117 @@
         status.hidden = !message;
     }
 
+    function posterSources(item) {
+        const sources = [];
+        const append = raw => {
+            const valid = validPoster(raw);
+            if (!valid) return;
+            const url = new URL(valid);
+            const pathname = url.pathname.replace(/\/+$/, '');
+            const avatar = url.hostname === 'avatars.mds.yandex.net' &&
+                /^\/get-kinopoisk-image\/[^/]+\/[^/]+/.test(pathname);
+            if (avatar) {
+                const base = pathname.replace(/\/(?:orig|\d+x\d+)$/i, '');
+                for (const size of ['280x420', '300x450', 'orig']) {
+                    const candidate = url.origin + base + '/' + size;
+                    if (!sources.includes(candidate)) sources.push(candidate);
+                }
+            } else if (!sources.includes(valid)) sources.push(valid);
+        };
+        append(item.posterUrl);
+        // Старый путь иногда работает как резерв, как и в обычном поиске.
+        append('https://st.kp.yandex.net/images/film_iphone/iphone360_' + item.id + '.jpg');
+        append('https://st.kp.yandex.net/images/film_big/' + item.id + '.jpg');
+        return sources.slice(0, 6);
+    }
+
+    async function requestPoster(item) {
+        const key = keyOf(item);
+        if (posterCache.has(key)) return;
+        let urls = posterSources(item);
+        if (!item.posterUrl) {
+            try {
+                const response = await chrome.runtime.sendMessage({
+                    action: 'findPosterOnMoviePage',
+                    payload: { id: item.id, type: item.type }
+                });
+                const poster = validPoster(response?.poster);
+                if (response?.ok && poster) {
+                    updateMetadata(item, { posterUrl: poster });
+                    urls = posterSources({ ...item, posterUrl: poster });
+                }
+            } catch { /* Продолжаем с резервными URL. */ }
+        }
+        for (const url of urls) {
+            if (!contains(item)) return;
+            try {
+                const result = await chrome.runtime.sendMessage({
+                    action: 'loadSearchPoster', payload: { url }
+                });
+                if (result?.ok && result.dataUrl && contains(item)) {
+                    adoptPoster(item, result.dataUrl);
+                    return;
+                }
+            } catch { /* Пробуем следующий адрес. */ }
+        }
+    }
+
+    async function hydrate(item) {
+        if (!contains(item)) return;
+        const current = getAll().find(entry => keyOf(entry) === keyOf(item));
+        if (!current) return;
+
+        // Из GraphQL получаем год и исходный URL постера. Жанр —
+        // из уже существующего парсера страницы Кинопоиска.
+        if (!current.year || !current.posterUrl) {
+            try {
+                const reply = await chrome.runtime.sendMessage({
+                    action: 'getSearchMovieMetadata',
+                    payload: { id: current.id, type: current.type }
+                });
+                if (reply?.ok && reply.metadata) {
+                    const m = reply.metadata;
+                    updateMetadata(current, {
+                        year: m.year,
+                        title: m.title,
+                        posterUrl: validPoster(m.poster) || validPoster(m.posterFallback)
+                    });
+                }
+            } catch { /* Отсутствие метаданных не блокирует закладку. */ }
+        }
+        if (!current.genres.length && window.KinoMovieDetails?.get) {
+            try {
+                const details = await window.KinoMovieDetails.get(current);
+                if (details?.genres?.length) updateMetadata(current, { genres: details.genres });
+            } catch { /* Кинопоиск может не предоставить жанр. */ }
+        }
+        if (!posterCache.has(keyOf(item))) {
+            const latest = getAll().find(entry => keyOf(entry) === keyOf(item));
+            if (latest) await requestPoster(latest);
+        }
+    }
+
+    function pumpHydration() {
+        while (hydrationActive < MAX_PARALLEL && pendingHydration.length) {
+            const item = pendingHydration.shift();
+            hydrationActive++;
+            Promise.resolve().then(() => hydrate(item)).catch(error => {
+                console.warn('[KinoHelper] Ошибка загрузки данных закладки:', error);
+            }).finally(() => {
+                hydrationActive--;
+                pumpHydration();
+            });
+        }
+    }
+
+    function enqueueHydration(item) {
+        const key = keyOf(item);
+        if (!key || hydrationStarted.has(key)) return;
+        hydrationStarted.add(key);
+        pendingHydration.push(item);
+        pumpHydration();
+    }
+
     function renderList() {
         const itemsBox = document.getElementById('watchlistItems');
         const count = document.getElementById('watchlistCount');
@@ -169,24 +343,21 @@
         const items = getAll();
         count.textContent = String(items.length);
         empty.hidden = items.length !== 0;
+        if (listObserver) listObserver.disconnect();
         const nodes = items.map(item => {
             const row = document.createElement('div');
             row.className = 'watchlist-item';
+            row._kinoMovie = item;
 
             const poster = document.createElement('div');
             poster.className = 'watchlist-poster';
             poster.textContent = item.type === 'series' ? '📺' : '🎬';
-            if (item.posterUrl) {
+            const loadedPoster = posterCache.get(keyOf(item));
+            if (loadedPoster) {
                 const image = document.createElement('img');
                 image.alt = '';
-                image.loading = 'lazy';
-                image.src = item.posterUrl;
-                image.addEventListener('error', () => {
-                    image.remove();
-                    poster.textContent = item.type === 'series' ? '📺' : '🎬';
-                });
-                poster.textContent = '';
-                poster.appendChild(image);
+                image.src = loadedPoster;
+                poster.replaceChildren(image);
             }
 
             const info = document.createElement('div');
@@ -200,6 +371,13 @@
             meta.textContent = (item.type === 'series' ? 'Сериал' : 'Фильм') +
                 (item.year ? ' · ' + item.year : '');
             info.append(name, meta);
+            if (item.genres.length) {
+                const genres = document.createElement('div');
+                genres.className = 'watchlist-genres';
+                genres.textContent = 'Жанр: ' + item.genres.join(', ');
+                genres.title = genres.textContent;
+                info.appendChild(genres);
+            }
 
             const actions = document.createElement('div');
             actions.className = 'watchlist-actions';
@@ -219,6 +397,11 @@
             return row;
         });
         itemsBox.replaceChildren(...nodes);
+        if (listObserver) {
+            for (const row of nodes) listObserver.observe(row);
+        } else {
+            for (const item of items.slice(0, 8)) enqueueHydration(item);
+        }
     }
 
     function refresh() {
@@ -245,6 +428,18 @@
             localStorage.setItem(COLLAPSED_KEY, String(value));
         }
 
+        if (typeof IntersectionObserver !== 'undefined') {
+            listObserver = new IntersectionObserver(entries => {
+                for (const entry of entries) {
+                    if (entry.isIntersecting) {
+                        listObserver.unobserve(entry.target);
+                        enqueueHydration(entry.target._kinoMovie);
+                    }
+                }
+            }, { root: document.getElementById('watchlistItems'),
+                 rootMargin: '100px 0px' });
+        }
+
         // Первое состояние из localStorage применяем, не затрагивая историю.
         setCollapsed(collapsed);
         toggleButton.addEventListener('click',
@@ -268,7 +463,7 @@
     }
 
     window.KinoWatchlist = { getAll, contains, toggle, setCurrent,
-        createSearchButton, syncSearchButton };
+        createSearchButton, syncSearchButton, updateMetadata, adoptPoster };
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
