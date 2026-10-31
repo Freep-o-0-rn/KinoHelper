@@ -160,8 +160,7 @@ test('observer skips invalid ad video and sends real progress and pause', () => 
   };
   vm.createContext(context);
   vm.runInContext(observer, context);
-  // Run 40 seconds of video: first checkpoint after confirming playback,
-  // then another one at >=30 seconds. No noisy 10-second writes.
+  // Over 40 seconds: first checkpoint after confirming playback, then ~5s cadence.
   for (let i = 0; i < 160; i++) {
     milliseconds += 250;
     primary.currentTime += 0.25;
@@ -169,8 +168,12 @@ test('observer skips invalid ad video and sends real progress and pause', () => 
   }
   interval();
   const periodic = messages.filter(message => message.payload.event === 'playing');
-  assert.equal(periodic.length, 2);
-  assert.ok(periodic[1].payload.currentTime - periodic[0].payload.currentTime >= 29.5);
+  assert.equal(periodic.length, 8);
+  for (let i = 1; i < periodic.length; i++) {
+    const gap = periodic[i].payload.currentTime - periodic[i - 1].payload.currentTime;
+    assert.ok(gap >= 4.8 && gap <= 5.2,
+      'Expected ~5-second checkpoint interval, got ' + gap);
+  }
   assert.ok(messages.every(message =>
     message.action === 'kinoPlaybackProgress' &&
     message.payload.duration === 3127));
