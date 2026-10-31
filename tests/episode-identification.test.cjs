@@ -158,6 +158,17 @@ test('background accepts same series across frames, rejects a disagreement', asy
   assert.equal(JSON.stringify(t.sessionData).includes('PRIVATE'), false);
 });
 
+test('a lost episode selection clears stale metadata', async () => {
+  const t = makeWorker();
+  const sender = t.sender(457);
+  assert.equal((await t.api.saveEpisodeObservation(
+    { season: 1, episode: 2 }, sender)).ok, true);
+  assert.equal((await t.api.getEpisodeIdentity(7, t.extension)).episode, 2);
+  assert.equal((await t.api.saveEpisodeObservation(
+    { clear: true }, sender)).ok, true);
+  assert.equal(await t.api.getEpisodeIdentity(7, t.extension), null);
+});
+
 test('background refuses film tabs and untrusted sender origins', async () => {
   const t = makeWorker();
   const untrusted = await t.api.saveEpisodeObservation(
