@@ -62,8 +62,24 @@ body.side-panel-host,
   max-height: min(62dvh, 620px);
 }
 
+/* Боковая панель: высота истории определяется числом записей.
+   У длинной истории есть ограничение по высоте с внутренней прокруткой. */
+.side-panel-host .history {
+  height: auto;
+  flex: 0 0 auto;
+}
+
 .side-panel-host .history-items {
-  max-height: 280px;
+  height: auto;
+  max-height: min(48dvh, 360px);
+  overflow-y: auto;
+}
+
+/* Важно: этот селектор специфичнее правила выше.
+   Иначе при сворачивании элементы прозрачны, но сохраняют высоту. */
+.side-panel-host .history-items.collapsed {
+  max-height: 0;
+  overflow: hidden;
 }
 
 .side-panel-host .filters.active {
