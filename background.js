@@ -1831,8 +1831,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   saveResumeProgress(message.payload, sender)
     .then(async result => {
       // Count only playback samples already accepted as verified film progress.
-      if (result?.ok) await statsRecordVerifiedTime(result.key, message.payload)
-        .catch(error => console.warn('[KinoHelper stats] Film time:', error));
+      if (result?.ok) {
+        await statsRememberCompletion(result.key, result.completed)
+          .catch(error => console.warn('[KinoHelper stats] Film catalog:', error));
+        await statsRecordVerifiedTime(result.key, message.payload)
+          .catch(error => console.warn('[KinoHelper stats] Film time:', error));
+      }
       sendResponse(result);
     })
     .catch(error => sendResponse({ ok: false, error: error.message }));
@@ -2197,9 +2201,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   saveSeriesEpisodeProgress(message.payload, sender)
     .then(async result => {
       // The episode was verified against the actual player selection.
-      if (result?.ok) await statsRecordVerifiedTime(
-        'series:' + String(result.key).split(':')[1], message.payload
-      ).catch(error => console.warn('[KinoHelper stats] Series time:', error));
+      if (result?.ok) {
+        await statsRememberCompletion(result.key, result.completed)
+          .catch(error => console.warn('[KinoHelper stats] Episode catalog:', error));
+        await statsRecordVerifiedTime(
+          'series:' + String(result.key).split(':')[1], message.payload
+        ).catch(error => console.warn('[KinoHelper stats] Series time:', error));
+      }
       sendResponse(result);
     })
     .catch(error => sendResponse({ ok:false, error: error.message }));
@@ -2252,5 +2260,29 @@ function statsRecordVerifiedTime(mediaKey, payload) {
   };
   const result = statsTimeQueue.then(task, task);
   statsTimeQueue = result.catch(() => {});
+  return result;
+}
+
+
+// Keep an unpruned index of verified films and individual series episodes.
+// The resume progress stores have intentional 120/300-entry limits; those
+// limits must not silently erase lifetime statistics.
+const STATS_CATALOG_KEY = 'kinoStatsLibraryV1';
+let statsCatalogQueue = Promise.resolve();
+function statsRememberCompletion(key, completed) {
+  const task = async () => {
+    if (!/^(?:film:[1-9]\d{0,12}|series:[1-9]\d{0,12}:\d{1,3}:\d{1,3})$/.test(key))
+      return;
+    const raw = (await chrome.storage.local.get(STATS_CATALOG_KEY))[STATS_CATALOG_KEY];
+    const catalog = raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? { ...raw } : {};
+    const previous = catalog[key];
+    const everCompleted = Boolean(previous?.completed || completed);
+    if (previous && Boolean(previous.completed) === everCompleted) return;
+    catalog[key] = { completed: everCompleted, updatedAt: Date.now() };
+    await chrome.storage.local.set({ [STATS_CATALOG_KEY]: catalog });
+  };
+  const result = statsCatalogQueue.then(task, task);
+  statsCatalogQueue = result.catch(() => {});
   return result;
 }
