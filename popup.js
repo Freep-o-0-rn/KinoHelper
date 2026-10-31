@@ -840,6 +840,7 @@ async function showCurrentMovie({ force = false } = {}) {
         const tabSignature = getTabSignature(tab);
         if (!force && tabSignature === lastRenderedTabSignature) return;
         hideMovieDetails();
+        window.KinoWatchlist?.setCurrent(null);
 
         const legacyOpenButton = document.getElementById('openOnKinopoisk');
         if (legacyOpenButton) legacyOpenButton.style.display = 'none';
@@ -863,6 +864,7 @@ async function showCurrentMovie({ force = false } = {}) {
             if (!isCurrentViewRefresh(refreshSequence)) return;
 
             lastRenderedTabSignature = tabSignature;
+            window.KinoWatchlist?.setCurrent({ ...media, title });
             showMessage(`Текущий ${type}: «${title || 'Страница Кинопоиска'}»`, 'success');
             void showMovieDetails(media);
             await showRatingCard(media);
@@ -877,6 +879,7 @@ async function showCurrentMovie({ force = false } = {}) {
             setConvertButtonMode('return', session.returnUrl);
 
             const fallbackTitle = normalizePlayerTitle(tab.title, session.title);
+            window.KinoWatchlist?.setCurrent({ type: session.type, id: session.id, title: fallbackTitle || session.title });
             showMessage(fallbackTitle ? `Сейчас смотрите: «${fallbackTitle}»` : 'Сейчас идёт просмотр', 'success');
             void showMovieDetails({ type: session.type, id: session.id });
 
@@ -886,6 +889,7 @@ async function showCurrentMovie({ force = false } = {}) {
             const kinopoiskTitle = normalizeKinopoiskTitle(ratingResponse?.movieTitle);
             if (kinopoiskTitle && kinopoiskTitle !== fallbackTitle) {
                 showMessage(`Сейчас смотрите: «${kinopoiskTitle}»`, 'success');
+                window.KinoWatchlist?.setCurrent({ type: session.type, id: session.id, title: kinopoiskTitle });
             }
             return;
         }
@@ -896,6 +900,7 @@ async function showCurrentMovie({ force = false } = {}) {
             setConvertButtonMode('return', `${KINOPOISK_BASE}/${directPlayerMedia.type}/${directPlayerMedia.id}/`);
 
             const fallbackTitle = normalizePlayerTitle(tab.title);
+            window.KinoWatchlist?.setCurrent({ ...directPlayerMedia, title: fallbackTitle });
             showMessage(fallbackTitle ? `Сейчас смотрите: «${fallbackTitle}»` : 'Сейчас идёт просмотр', 'success');
 
             void showMovieDetails(directPlayerMedia);
@@ -905,6 +910,7 @@ async function showCurrentMovie({ force = false } = {}) {
             const kinopoiskTitle = normalizeKinopoiskTitle(ratingResponse?.movieTitle);
             if (kinopoiskTitle && kinopoiskTitle !== fallbackTitle) {
                 showMessage(`Сейчас смотрите: «${kinopoiskTitle}»`, 'success');
+                window.KinoWatchlist?.setCurrent({ ...directPlayerMedia, title: kinopoiskTitle });
             }
             return;
         }
