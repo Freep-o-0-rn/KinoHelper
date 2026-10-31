@@ -1533,12 +1533,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // is independently verified, to prevent restoring an unrelated episode.
 // -------------------------
 const RESUME_STORAGE_KEY = 'kinoPlaybackProgressV1';
-const RESUME_SCRIPT_ID = 'kino-playback-tracker-v1';
 const RESUME_PLAYER_ORIGIN = 'https://theatre.stravers.live/*';
 const RESUME_PLAYER_HOST = 'theatre.stravers.live';
 const RESUME_MAX_ENTRIES = 120;
 let resumeWriteQueue = Promise.resolve();
-let resumeRegistrationQueue = Promise.resolve();
 
 function resumeOrigin(url) {
   try {
@@ -1660,37 +1658,9 @@ async function saveResumeProgress(payload, sender) {
   return result;
 }
 
-async function syncResumeContentScript() {
-  const granted = await chrome.permissions.contains({
-    origins: [RESUME_PLAYER_ORIGIN]
-  });
-  const registered = await chrome.scripting.getRegisteredContentScripts({
-    ids: [RESUME_SCRIPT_ID]
-  });
-
-  if (granted && !registered.length) {
-    await chrome.scripting.registerContentScripts([{
-      id: RESUME_SCRIPT_ID,
-      matches: [RESUME_PLAYER_ORIGIN],
-      js: ['playback-tracker.js'],
-      runAt: 'document_idle',
-      allFrames: true,
-      persistAcrossSessions: true,
-      world: 'ISOLATED'
-    }]);
-  } else if (!granted && registered.length) {
-    await chrome.scripting.unregisterContentScripts({ ids: [RESUME_SCRIPT_ID] });
-  }
-  return granted;
-}
-
-function scheduleResumeRegistration() {
-  const update = resumeRegistrationQueue.then(syncResumeContentScript, syncResumeContentScript);
-  resumeRegistrationQueue = update.catch(error =>
-    console.warn('[KinoHelper] Не удалось подключить отслеживание:', error));
-  return update;
-}
-
+// The tracker now loads declaratively from manifest.content_scripts.
+// On extension update, inject once into already-open matching iframe documents.
+// The script has a global guard against double initialization.
 async function injectResumeIntoOpenTabs() {
   const tabs = await chrome.tabs.query({});
   for (const tab of tabs) {
@@ -1703,42 +1673,24 @@ async function injectResumeIntoOpenTabs() {
       if (ids.length) {
         await chrome.scripting.executeScript({
           target: { tabId: tab.id, frameIds: ids },
-          files: ['playback-tracker.js'],
+          files: ['playback-tracker.js', 'playback-resume.js'],
           world: 'ISOLATED'
         });
       }
     } catch {
-      // A tab may close/navigate while permissions are being granted.
+      // Tab may close or its iframe may navigate during extension update.
     }
   }
 }
 
-chrome.permissions.onAdded.addListener(permissions => {
-  if (permissions.origins?.includes(RESUME_PLAYER_ORIGIN)) {
-    scheduleResumeRegistration().then(() => injectResumeIntoOpenTabs())
-      .catch(error => console.warn('[KinoHelper] Ошибка подключения к плееру:', error));
-  }
-});
-chrome.permissions.onRemoved.addListener(permissions => {
-  if (permissions.origins?.includes(RESUME_PLAYER_ORIGIN)) {
-    void scheduleResumeRegistration();
-  }
-});
-async function registerAndInjectResume() {
-  const granted = await scheduleResumeRegistration();
-  if (granted) await injectResumeIntoOpenTabs();
-}
 chrome.runtime.onInstalled.addListener(() => {
-  void registerAndInjectResume().catch(error =>
-    console.warn('[KinoHelper] Не удалось подключить плееры после обновления:', error));
+  void injectResumeIntoOpenTabs().catch(error =>
+    console.warn('[KinoHelper] Не удалось подключить отслеживание после обновления:', error));
 });
 chrome.runtime.onStartup.addListener(() => {
-  void registerAndInjectResume().catch(error =>
-    console.warn('[KinoHelper] Не удалось подключить плееры после запуска:', error));
+  void injectResumeIntoOpenTabs().catch(error =>
+    console.warn('[KinoHelper] Не удалось подключить отслеживание после запуска:', error));
 });
-// Also register on service-worker wake; injection into already running tabs
-// happens on install, startup, and first-time permission grant.
-void scheduleResumeRegistration();
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.action !== 'kinoPlaybackProgress') return false;
