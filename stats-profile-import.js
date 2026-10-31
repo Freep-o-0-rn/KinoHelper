@@ -50,9 +50,10 @@
       }
       for(const [key,val] of Object.entries(obj)){
         if(!val || typeof val!=='object')continue;
-        if(key.includes('movieReactions') && Array.isArray(val.items))
-          found.push(val.items);
-        else if(depth<4 && !key.startsWith('Movie:'))walk(val,depth+1);
+        const resolved=ref(state,val);
+        if(key.includes('movieReactions') && Array.isArray(resolved?.items))
+          found.push(resolved.items);
+        else if(depth<4 && !key.startsWith('Movie:'))walk(resolved,depth+1);
       }
     }
     for(const [k,v] of Object.entries(state || {})) {
