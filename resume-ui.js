@@ -8,9 +8,8 @@
   const lastTitle = document.getElementById('resumeLastTitle');
   const lastMeta = document.getElementById('resumeLastMeta');
   const lastProgress = document.getElementById('resumeLastProgress');
-  const lastTrack = document.getElementById('resumeLastTrack');
   const lastOpen = document.getElementById('resumeLastOpen');
-  if (!panel || !lastTitle || !lastMeta || !lastProgress || !lastTrack || !lastOpen) return;
+  if (!panel || !lastTitle || !lastMeta || !lastProgress || !lastOpen) return;
 
   let progress = Object.create(null);
   let history = [];
@@ -144,9 +143,7 @@
       lastMeta.textContent = 'Сохранено ' + formatTime(saved.position) + ' / ' +
         formatTime(saved.duration) + ' · ' + percent + '%';
       lastProgress.hidden = false;
-      lastTrack.replaceWith(makeTrack(saved, 'resume-last-track'));
-      // Refresh reference: replaceWith removes the original element but the
-      // next render gets the new track from the DOM.
+      lastProgress.replaceChildren(makeTrack(saved, 'resume-last-track'));
     } else {
       lastMeta.textContent = selected.media.type === 'series'
         ? 'Сериал · таймкод серии пока недоступен'
