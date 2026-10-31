@@ -1597,7 +1597,7 @@ function validatePlaybackEvent(data) {
       !Number.isFinite(played) || played < 2 ||
       duration < 60 || duration > 8 * 3600 ||
       position < 1 || position > duration + 2 ||
-      !['playing', 'pause', 'seeked', 'pagehide', 'ended'].includes(event)) return null;
+      !['playing', 'pause', 'seeked', 'hidden', 'pagehide', 'ended'].includes(event)) return null;
   return { position: Math.min(Math.floor(position), Math.floor(duration)),
     duration: Math.floor(duration), played, event };
 }
