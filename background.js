@@ -1565,6 +1565,8 @@ async function resumeIdentifyFilm(tabId) {
   // Recovered session may have no longer existed after redirect. A stable
   // /film/<id> path on the known parent site is an independent identity.
   const direct = parseMedia(tab.url);
+  // An explicit series URL must NEVER inherit an old film watch session.
+  if (direct && direct.type !== 'film') return null;
   if (direct?.type === 'film' &&
       [resumeOrigin(WATCH_BASE), resumeOrigin(FALLBACK_WATCH_BASE),
         'https://brogiro.cfd'].includes(origin)) {
