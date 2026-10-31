@@ -57,6 +57,7 @@ async function setup({ data = {}, history = [], current = 'https://www.kinopoisk
   const changes = [];
   const tabs = {};
   const opened = [];
+  const openedOptions = [];
   const context = {
     URL, console,
     document: doc,
@@ -73,12 +74,16 @@ async function setup({ data = {}, history = [], current = 'https://www.kinopoisk
         onChanged: { addListener(cb) { changes.push(cb); } }
       }
     },
-    window: { addEventListener() {}, openHistoryUrl: async url => opened.push(url) }
+    window: { addEventListener() {},
+      openHistoryUrl: async (url, title, options) => {
+        opened.push(url);
+        openedOptions.push(options);
+      } }
   };
   vm.runInNewContext(source, context);
   context.window.KinoResumeUI.updateHistory(history);
   for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
-  return { elements, rows, changes, tabs, opened,
+  return { elements, rows, changes, tabs, opened, openedOptions,
     updateHistory: context.window.KinoResumeUI.updateHistory,
     refresh: context.window.KinoResumeUI.readStorage,
     setTab(url) { tabUrl = url; },
@@ -104,6 +109,8 @@ test('history progress bar uses saved position and latest card shows same movie'
   assert.match(ui.elements.resumeLastMeta.textContent, /2:30 \/ 10:00 · 25%/);
   ui.elements.resumeLastOpen.events.click();
   assert.deepEqual(ui.opened, [filmHistory[0].url]);
+  assert.equal(ui.openedOptions[0].resume, true);
+  assert.equal(ui.elements.resumeLastOpen.textContent, '▶ Продолжить');
 });
 
 test('completed films are excluded from last card but retain 100% history bar', async () => {
@@ -158,4 +165,14 @@ test('out-of-range or mismatched data are not shown as progress', async () => {
   });
   assert.equal(ui.rows[0].querySelector('.history-progress-track'), null);
   assert.equal(ui.elements.resumeLastProgress.hidden, true);
+});
+
+
+test('series remains ordinary open action without a false seek request', async () => {
+  const history = [{ title: 'Сериал', timestamp: 5000,
+    url: 'https://www.kinokino.vip/series/123/' }];
+  const ui = await setup({ history });
+  assert.equal(ui.elements.resumeLastOpen.textContent, '▶ Открыть');
+  ui.elements.resumeLastOpen.events.click();
+  assert.equal(ui.openedOptions[0].resume, false);
 });
