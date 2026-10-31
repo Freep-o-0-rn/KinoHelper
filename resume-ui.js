@@ -248,6 +248,7 @@
       console.warn('[KinoHelper resume] Прогресс временно недоступен:', error);
       if (sequence !== storageReadSequence) return;
       progress = Object.create(null);
+      episodeProgress = Object.create(null);
       render();
     }
   }
