@@ -79,28 +79,46 @@
     return track;
   }
 
+  function updateTrack(track, item) {
+    const percent = percentage(item);
+    track.setAttribute('aria-valuenow', String(percent));
+    track.setAttribute('aria-label', item.completed ?
+      'Фильм просмотрен' : 'Прогресс фильма');
+    track.className = track.className.replace(/\\scomplete\\b/g, '') +
+      (item.completed ? ' complete' : '');
+    const fill = track.querySelector('.resume-progress-fill');
+    if (fill) fill.style.width = percent + '%';
+  }
+
   function decorateHistory() {
     const rows = document.querySelectorAll('.history-item[data-kino-media-key]');
     for (const row of rows) {
       const key = row.dataset.kinoMediaKey;
       const item = positionFor(key);
-      const old = row.querySelector('.history-item-progress');
-      if (old) old.remove();
-      if (!item) continue;
+      let block = row.querySelector('.history-item-progress');
+      if (!item) {
+        if (block) block.remove();
+        continue;
+      }
 
       const content = row.querySelector('.history-item-main');
       if (!content) continue;
-      const block = document.createElement('div');
-      block.className = 'history-item-progress';
-      const label = document.createElement('div');
-      label.className = 'history-progress-label';
+      if (!block) {
+        block = document.createElement('div');
+        block.className = 'history-item-progress';
+        const label = document.createElement('div');
+        label.className = 'history-progress-label';
+        block.append(makeTrack(item, 'history-progress-track'), label);
+        content.appendChild(block);
+      }
       const pct = percentage(item);
-      label.textContent = item.completed
+      const track = block.querySelector('.history-progress-track');
+      if (track) updateTrack(track, item);
+      const label = block.querySelector('.history-progress-label');
+      if (label) label.textContent = item.completed
         ? '✓ Просмотрено · ' + formatTime(item.duration)
         : formatTime(item.position) + ' / ' + formatTime(item.duration) +
           ' · ' + pct + '%';
-      block.append(makeTrack(item, 'history-progress-track'), label);
-      content.appendChild(block);
     }
   }
 
@@ -144,7 +162,12 @@
       lastMeta.textContent = 'Сохранено ' + formatTime(saved.position) + ' / ' +
         formatTime(saved.duration) + ' · ' + percent + '%';
       lastProgress.hidden = false;
-      lastProgress.replaceChildren(makeTrack(saved, 'resume-last-track'));
+      let track = lastProgress.querySelector('.resume-last-track');
+      if (!track) {
+        track = makeTrack(saved, 'resume-last-track');
+        lastProgress.replaceChildren(track);
+      }
+      updateTrack(track, saved);
     } else {
       lastMeta.textContent = selected.media.type === 'series'
         ? 'Сериал · таймкод серии пока недоступен'
