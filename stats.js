@@ -229,7 +229,7 @@
     }
   }
 
-  async function recordConfirmedRating({type,id,rating}) {
+  async function recordConfirmedRating({type,id,rating,expectedAccountId=''}) {
     const n = Number(rating);
     const media = type + ':' + String(id);
     if (!/^(?:film|series):[1-9]\d{0,12}$/.test(media) ||
@@ -237,6 +237,10 @@
     // A confirmed movie vote alone does not identify the current user.
     // Verify the *own* profile before associating the rating with an account.
     const detected = await window.KinoStatsAccount?.detect();
+    // Do not write a vote to another profile if the user switched accounts
+    // while an explicit batch sync was running.
+    if (expectedAccountId && (detected?.status !== 'logged-in' ||
+        detected.id !== expectedAccountId)) return;
     const scope = detected?.status === 'logged-in' ? detected.id : '__local__';
     const stored = await chrome.storage.local.get('kinoStatsRatingsV1');
     const all = {...safeObject(stored.kinoStatsRatingsV1)};
@@ -328,7 +332,7 @@
         scanned[mediaKey] = Date.now();
         const rating = Number(response.rating);
         if (Number.isInteger(rating) && rating >= 1 && rating <= 10) {
-          await recordConfirmedRating({type,id,rating});
+          await recordConfirmedRating({type,id,rating,expectedAccountId:verifiedId});
           verified++;
         } else {
           withoutVote++;
@@ -479,6 +483,8 @@
     const refresh = els('statsAccountRefresh');
     status.textContent = 'Проверяем авторизацию на Кинопоиске…';
     refresh.disabled = true;
+    els('statsRatingsSync').disabled = true;
+    els('statsProfileImport').disabled = true;
     await reload();
     try {
       const response = await window.KinoStatsAccount.detect();
@@ -487,6 +493,8 @@
         verifiedAccountId = response.id;
         authState = 'logged-in';
         status.textContent = '✓ Вход выполнен · профиль №' + response.id;
+        els('statsRatingsSync').disabled = false;
+        els('statsProfileImport').disabled = false;
         // Compatibility with existing saved per-profile ratings and imports.
         // Do not copy unscope'd votes or any data from an unrelated account.
         await chrome.storage.local.set({kinoStatsProfileId:response.id});
