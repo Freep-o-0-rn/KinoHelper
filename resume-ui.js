@@ -151,8 +151,13 @@
         : 'Фильм · таймкод пока не сохранён';
       lastProgress.hidden = true;
     }
-    lastOpen.textContent = '▶ Открыть';
-    lastOpen.title = 'Открыть страницу фильма. Перемотка по таймкоду появится позже.';
+    const canResume = selected.media.type === 'film' &&
+      Boolean(saved && !saved.completed && saved.position >= 10 &&
+        saved.position <= saved.duration - 25);
+    lastOpen.textContent = canResume ? '▶ Продолжить' : '▶ Открыть';
+    lastOpen.title = canResume
+      ? 'Открыть фильм и восстановить сохранённую позицию'
+      : 'Открыть фильм или сериал';
   }
 
   function render() {
@@ -222,7 +227,11 @@
     const value = selected;
     if (!value) return;
     if (typeof window.openHistoryUrl === 'function') {
-      void window.openHistoryUrl(value.entry.url, value.entry.title).catch(error =>
+      const saved = value.saved;
+      const resume = value.media.type === 'film' &&
+        Boolean(saved && !saved.completed && saved.position >= 10 &&
+          saved.position <= saved.duration - 25);
+      void window.openHistoryUrl(value.entry.url, value.entry.title, { resume }).catch(error =>
         console.warn('[KinoHelper resume] Не удалось открыть фильм:', error));
     } else {
       void chrome.tabs.create({ url: value.entry.url });
