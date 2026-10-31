@@ -44,7 +44,8 @@
         "https://theatre.stravers.live/*"
       ],
       "js": [
-        "playback-tracker.js"
+        "playback-tracker.js",
+        "playback-resume.js"
       ],
       "all_frames": true,
       "run_at": "document_idle"
