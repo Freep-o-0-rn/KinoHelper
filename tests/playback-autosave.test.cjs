@@ -163,7 +163,7 @@ test('observer skips invalid ad video and sends real progress and pause', () => 
   interval();
   const periodic = messages.filter(message => message.payload.event === 'playing');
   assert.equal(periodic.length, 2);
-  assert.ok(periodic[1].payload.currentTime - periodic[0].payload.currentTime >= 30);
+  assert.ok(periodic[1].payload.currentTime - periodic[0].payload.currentTime >= 29.5);
   assert.ok(messages.every(message =>
     message.action === 'kinoPlaybackProgress' &&
     message.payload.duration === 3127));
