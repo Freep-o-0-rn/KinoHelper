@@ -62,5 +62,10 @@
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) void render();
   });
+  // On a long-lived side panel, refresh after the service worker's 20-second
+  // evidence TTL. A stale series episode must disappear automatically.
+  setInterval(() => {
+    if (!document.hidden) void render();
+  }, 12000);
   void render();
 })();
