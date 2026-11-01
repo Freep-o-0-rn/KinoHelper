@@ -429,7 +429,7 @@
         stats.worker++;
         try{
           const response=await chrome.runtime.sendMessage({
-            action:'loadSearchPoster',payload:{url:source}
+            action:'loadSearchPoster',payload:{url:source,timeoutMs:3500}
           });
           if(response?.ok&&typeof response.dataUrl==='string'&&
              /^data:image\/(?:png|jpe?g|webp);base64,/i.test(response.dataUrl)){
