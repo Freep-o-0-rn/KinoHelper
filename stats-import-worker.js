@@ -270,7 +270,8 @@
     // On browser startup, check for account switches before restoring the
     // old job. No UI action is required even if the active user changed.
     const identity=await self.KinoStatsAccount.detect();
-    if(identity.status==='logged-in' && identity.id!==job?.profileId) {
+    if(identity.status==='logged-in' &&
+       (identity.id!==job?.profileId || job.watchedVersion!==1)) {
       await start(identity.id);
       return;
     }
