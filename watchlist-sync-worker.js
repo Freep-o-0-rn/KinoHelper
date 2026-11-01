@@ -242,15 +242,17 @@
      'button[aria-label*="Буду смотреть"]',
      'button[aria-label*="Добавить в буду смотреть"]'
    ];
+   const target=element=>element.closest('button,[role="button"]')||
+     element.querySelector('button,[role="button"]')||element;
    const candidate=nativeSelectors.flatMap(selector=>
      [...document.querySelectorAll(selector)]).find(element=>{
-       const button=element.closest('button,[role="button"]')||element;
+       const button=target(element);
        return !button.classList?.contains('custom-bookmark-btn') &&
          !button.disabled &&
          button.getAttribute('aria-disabled')!=='true';
      });
    if (!candidate) return {clicked:false,reason:'button-not-found'};
-   const button=candidate.closest('button,[role="button"]')||candidate;
+   const button=target(candidate);
    // This is a browser-executed click on the native control. No invented API.
    button.click();
    return {clicked:true,source:'native-bookmark'};
