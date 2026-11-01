@@ -149,7 +149,7 @@
       for(const anchor of doc.querySelectorAll('a[href*="page="]')){
         const href=String(anchor.getAttribute('href')||'');
         const m=href.match(/[?&]page=(\d+)/);
-        if(m){const page=Number(m[1]);if(page>0 && page<=500)seen.push(page);}
+        if(m){const page=Number(m[1]);if(page>0 && page<=20000)seen.push(page);}
       }
     }else{
       // Useful for DOM-less tests only.
