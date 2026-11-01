@@ -3,6 +3,8 @@
  'use strict';
  const STORE='kinoWatchlistProfilesV1', JOB='kinoWatchlistImportJobV1';
  const ALARM='kinoWatchlistImportV1', STEP=30000, DAY=86400000;
+ const MIN_PAGE_SIZE=20; // Full pages without navigation must be checked further.
+ const MAX_PAGE=2000;
  const validId=id=>/^[1-9]\d{0,12}$/.test(String(id));
  const obj=x=>x&&typeof x==='object'&&!Array.isArray(x)?x:{};
  const keyOf=m=>['film','series'].includes(m?.type)&&validId(m.id)?
@@ -45,6 +47,10 @@
        staged:{},state:'loading',failures:0,count:0,nextAt:Date.now()});
    }
    await schedule(job.nextAt);
+   // Start the first page immediately, rather than waiting for the 30s alarm.
+   // The alarm remains the durable fallback when the panel closes.
+   if(job.state==='loading' && job.page===1 && !current)
+     void scan().catch(error=>console.warn('[KinoHelper] Watchlist:',error));
    return {ok:true,job};
  }
  async function scan(){
@@ -66,7 +72,7 @@
          nextAt:Date.now(),message:'Проверяем изменения'});
      }
      try{
-       if(job.page>2000)throw Error('Превышено число страниц');
+       if(job.page>MAX_PAGE)throw Error('Превышено число страниц');
        const response=await fetch(path(job.profileId)+'?page='+job.page,{
          credentials:'include',cache:'no-store',signal:AbortSignal.timeout(20000)});
        if(!response.ok)throw Error('HTTP '+response.status);
@@ -80,37 +86,59 @@
        if(html.length>9e6)throw Error('Слишком большой ответ');
        const result=await parse(html,job.page);
        if(!Array.isArray(result?.items)||
-          (!result.recognized && !(job.page===1 && result.verifiedEmpty))){
-         // Empty lists need explicit evidence. Preserve existing data.
-         throw Error('Список не распознан — данные оставлены без изменений');
+          (!result.recognized && !result.verifiedEmpty)){
+         throw Error('Список не распознан на странице '+job.page+
+           ' — откройте список на Кинопоиске и попробуйте обновить');
        }
        const actual=await getJob();
        if(actual?.profileId!==job.profileId||actual.page!==job.page)return actual;
        const staged={...obj(job.staged)};
-       for(const item of result.items){
-         const key=keyOf(item);if(key)staged[key]={...item,source:'kinopoisk'};
+       const previousFingerprint=job.fingerprint||'';
+       const fingerprint=result.items.map(item=>keyOf(item)).filter(Boolean)
+         .sort().join('|');
+       // If the server returns the same first page for ?page=2, avoid
+       // an infinite scan and avoid showing duplicate entries.
+       const repeated=job.page>1 && fingerprint &&
+         fingerprint===previousFingerprint;
+       if(!repeated)for(const item of result.items){
+         const key=keyOf(item);
+         if(key)staged[key]={...item,source:'kinopoisk'};
        }
-       if(!result.lastPage && result.items.length>=20)
-         throw Error('Нет подтверждённой пагинации; список оставлен без изменений');
-       const total=Number(result.lastPage)||job.total||1;
-       const complete=job.page>=total;
+       const explicitTotal=Number(result.lastPage)||Number(job.total)||null;
+       const complete=Boolean(
+         result.verifiedEmpty || repeated ||
+         (explicitTotal && job.page>=explicitTotal) ||
+         (!explicitTotal && result.items.length<MIN_PAGE_SIZE)
+       );
+       // A successful individual page can be displayed immediately. Never
+       // delete previous items before the complete verified scan.
+       const stored=(await chrome.storage.local.get(STORE))[STORE];
+       const profiles={...obj(stored)};
+       const previous=obj(profiles[job.profileId]);
+       const intermediate={...previous};
+       for(const [key,value] of Object.entries(staged)){
+         const old=previous[key];
+         intermediate[key]={...value,addedAt:old?.addedAt||Date.now()};
+       }
+       const finalScope=Object.fromEntries(Object.entries(staged)
+         .map(([key,value])=>[key,intermediate[key]]));
+       // Empty first-page listing is authoritative only if SSR explicitly
+       // exposes an empty planned collection; otherwise preserve old data.
        if(complete){
-         const again=await self.KinoStatsAccount.detect();
-         if(again.status!=='logged-in'||again.id!==job.profileId)
-           throw Error('Профиль изменился');
-         const stored=(await chrome.storage.local.get(STORE))[STORE];
-         const profiles={...obj(stored)};
-         const old=obj(profiles[job.profileId]);
-         profiles[job.profileId]=Object.fromEntries(
-           Object.entries(staged).map(([k,v])=>[k,{
-             ...v,addedAt:old[k]?.addedAt||Date.now()}]));
-         await chrome.storage.local.set({[STORE]:profiles});
+         const verified=await self.KinoStatsAccount.detect();
+         if(verified.status!=='logged-in'||verified.id!==job.profileId)
+           throw Error('Аккаунт изменился во время загрузки');
        }
-       job=await putJob({...job,page:job.page+1,done:job.page,total,
-         staged:complete?{}:staged,count:Object.keys(staged).length,
+       profiles[job.profileId]=complete?finalScope:intermediate;
+       await chrome.storage.local.set({[STORE]:profiles});
+       job=await putJob({...job,page:job.page+1,done:job.page,
+         total:explicitTotal,staged:complete?{}:staged,
+         fingerprint, count:Object.keys(staged).length,
          state:complete?'completed':'loading',failures:0,
          nextAt:Date.now()+(complete?DAY:STEP),
-         message:complete?'Список обновлён':'Загружаем список'});
+         message:complete?'Загружено: '+Object.keys(staged).length:
+           'Загружено '+Object.keys(staged).length+
+           ' · страница '+job.page+(explicitTotal?'/'+explicitTotal:'')});
        await schedule(job.nextAt);
        return job;
      }catch(err){
