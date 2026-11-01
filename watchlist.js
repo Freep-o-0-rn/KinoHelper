@@ -6,6 +6,7 @@
     const COLLAPSED_KEY = 'kinoHelperWatchlistCollapsed';
     const MAX_ITEMS = 1000;
     const PROFILE_STORE = 'kinoWatchlistProfilesV1';
+    const SYNC_JOB = 'kinoWatchlistImportJobV1';
     let activeProfileId = '';
     let profileItems = [];
     let authCheckId = 0;
@@ -274,6 +275,28 @@
         refresh();
     }
 
+    async function showSyncJob() {
+        if(!activeProfileId)return;
+        try {
+            const job=(await chrome.storage.local.get(SYNC_JOB))[SYNC_JOB];
+            if(!job||job.profileId!==activeProfileId)return;
+            const count=Number(job.count)||0;
+            const state=job.state;
+            const kind=['retry','paused'].includes(state)?'error'
+                :state==='completed'?'success':'info';
+            const message=state==='completed'
+                ? '✓ Кинопоиск: '+count+' в списке «Буду смотреть»'
+                :state==='loading'
+                    ? '↻ Синхронизация Кинопоиска: '+count+
+                      (job.done?' · стр. '+job.done:'')
+                    : 'Синхронизация: '+String(job.message||'ошибка')+
+                      '. Нажмите ↻ для повторной попытки.';
+            showStatus(message,kind);
+        }catch(error){
+            showStatus('Не удалось прочитать состояние загрузки','error');
+        }
+    }
+
     async function refreshProfile(force=false) {
         if(!window.KinoStatsAccount?.detect || !chrome.storage?.local)return;
         if(!force && Date.now()-lastAuthCheck<45000)return;
@@ -297,19 +320,23 @@
             showStatus('');
             try {
                 await loadProfileItems(newId);
-                await chrome.runtime.sendMessage({
+                const response=await chrome.runtime.sendMessage({
                     action:'kinoWatchlistEnsure',profileId:newId
                 });
+                if(!response?.ok)showStatus(response?.error||
+                    'Не удалось запустить синхронизацию','error');
+                else await showSyncJob();
             }catch(error){
                 showStatus('Автозагрузка недоступна: '+String(error?.message||error));
             }
         }
     }
 
-    function showStatus(message) {
+    function showStatus(message,kind='error') {
         const status = document.getElementById('watchlistStatus');
         if (!status) return;
         status.textContent = message;
+        status.dataset.kind=kind;
         status.hidden = !message;
     }
 
@@ -526,6 +553,7 @@
         const toggleButton = document.getElementById('watchlistToggle');
         const itemsBox = document.getElementById('watchlistBody');
         const currentButton = document.getElementById('watchlistCurrentAction');
+        const syncButton = document.getElementById('watchlistSync');
         if (!section || !toggleButton || !itemsBox || !currentButton) return;
         const collapsed = localStorage.getItem(COLLAPSED_KEY) === 'true';
 
@@ -556,11 +584,32 @@
         currentButton.addEventListener('click', () => {
             if (current) toggle(current);
         });
+        syncButton?.addEventListener('click',async()=>{
+            if(syncButton.disabled)return;
+            syncButton.disabled=true;
+            try{
+                await refreshProfile(true);
+                if(!activeProfileId){
+                    showStatus('Войдите в Кинопоиск, чтобы загрузить список','error');
+                    return;
+                }
+                showStatus('Обновляем список с Кинопоиска…','info');
+                const response=await chrome.runtime.sendMessage({
+                    action:'kinoWatchlistRefresh',profileId:activeProfileId
+                });
+                if(!response?.ok)showStatus(response?.error||
+                    'Синхронизация недоступна','error');
+                else await showSyncJob();
+            }catch(error){
+                showStatus('Ошибка синхронизации: '+String(error?.message||error));
+            }finally{syncButton.disabled=false;}
+        });
         window.addEventListener('kino-watchlist-updated', refresh);
         if(chrome.storage?.onChanged)chrome.storage.onChanged.addListener(
             (changes,area)=>{
-                if(area==='local' && changes[PROFILE_STORE] && activeProfileId)
-                    void loadProfileItems(activeProfileId);
+                if(area!=='local'||!activeProfileId)return;
+                if(changes[PROFILE_STORE])void loadProfileItems(activeProfileId);
+                if(changes[SYNC_JOB])void showSyncJob();
             });
         void refreshProfile(true);
         // Вторая открытая панель/окно использует то же хранилище расширения.
