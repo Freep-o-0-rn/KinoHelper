@@ -241,144 +241,78 @@
    return {ok:true,job:await scan()};
  }
 
- // Chrome runs this function inside the Kinopoisk movie page. It must stay
- // self-contained because scripting.executeScript serializes function source.
- function clickKinopoiskBookmark() {
-   const nativeSelectors=[
-     'button[data-test-id="ContentActions_bookmarkButton"]',
-     '[data-test-id="ContentActions_bookmarkButton"]',
-     'button[title="Буду смотреть"]',
-     '[data-tid="ContentActions"] button[title*="Буду смотреть"]',
-     'button[aria-label*="Буду смотреть"]',
-     'button[aria-label*="Добавить в буду смотреть"]'
-   ];
-   const target=element=>element.closest('button,[role="button"]')||
-     element.querySelector('button,[role="button"]')||element;
-   const candidate=nativeSelectors.flatMap(selector=>
-     [...document.querySelectorAll(selector)]).find(element=>{
-       const button=target(element);
-       return !button.classList?.contains('custom-bookmark-btn') &&
-         !button.disabled &&
-         button.getAttribute('aria-disabled')!=='true';
-     });
-   if (!candidate) return {clicked:false,reason:'button-not-found'};
-   const button=target(candidate);
-   // This is a browser-executed click on the native control. No invented API.
-   button.click();
-   return {clicked:true,source:'native-bookmark'};
- }
-
- async function mutate({movie,desired,profileId,auto=false}){
+ // Direct GraphQL mutations share the authenticated request transport
+ // with rating changes. No page navigation, tabs or synthetic DOM clicks.
+ async function mutate({movie,desired,profileId,auto=false}) {
    const key=keyOf(movie);
    if(!key||typeof desired!=='boolean')
-     return {ok:false,error:'Неверный фильм'};
+     return {ok:false,error:'Неверный фильм или действие'};
    pendingMutations++;
    mutationRevision++;
-   try{
-   // Finish older page reads before applying the explicit user action.
-   // During this mutation the scan will defer rather than overwrite it.
-   if(current)await current;
-   if(minuteWork)await minuteWork;
-   const login=await self.KinoStatsAccount.detect();
-   if(login.status!=='logged-in')
-     return {ok:false,error:'Авторизуйтесь на Кинопоиске'};
-   if(String(profileId||'')!==login.id)
-     return {ok:false,error:'Аккаунт Кинопоиска изменился. Обновите панель.'};
+   try {
+     if(current)await current;
+     if(minuteWork)await minuteWork;
+     const login=await self.KinoStatsAccount.detect();
+     if(login.status!=='logged-in'||String(profileId||'')!==login.id)
+       return {ok:false,error:'Аккаунт Кинопоиска не подтверждён или изменился'};
 
-   const filmUrl='https://www.kinopoisk.ru/'+movie.type+'/'+movie.id+'/';
-   const expectedPath='/'+movie.type+'/'+movie.id;
-   const existing=await getMovieRating(movie).catch(()=>null);
-   if(existing?.authorized!==true||typeof existing?.planned!=='boolean')
-     return {ok:false,error:'Кинопоиск не предоставил состояние «Буду смотреть». Изменение не выполнено.'};
-
-   let confirmed=existing.planned===desired;
-   let tab=null;
-   let error=null;
-   if(!confirmed){
-     try{
-       // A temporary *inactive* tab shares the browser's authenticated session.
-       // Chrome never switches the user away from KinoHelper.
-       tab=await chrome.tabs.create({url:filmUrl,active:false});
-       let clicked=false;
-       for(let attempt=0;attempt<48;attempt++){
-         // Check immediately: waiting 650ms before the first ready-state
-         // check made even a fully loaded page feel unresponsive.
-         if(attempt)await new Promise(done=>setTimeout(
-           done,Math.min(450,100+attempt*20)));
-         const live=await chrome.tabs.get(tab.id).catch(()=>null);
-         if(!live)throw Error('Временная вкладка закрылась');
-         let actual;
-         try{actual=new URL(live.url||'');}catch{continue;}
-         if(actual.protocol!=='https:'||
-           !['www.kinopoisk.ru','kinopoisk.ru'].includes(actual.hostname)||
-           actual.pathname.replace(/\/+$/,'')!==expectedPath)
-           throw Error('Кинопоиск перенаправил страницу фильма');
-         if(live.status!=='complete')continue;
-         const results=await chrome.scripting.executeScript({
-           target:{tabId:tab.id},func:clickKinopoiskBookmark
-         }).catch(()=>[]);
-         if(results[0]?.result?.clicked){clicked=true;break;}
-       }
-       if(!clicked)
-         throw Error('Не удалось найти штатную кнопку «Буду смотреть» на странице Кинопоиска');
-
-       // One click only. Poll the source-of-truth GraphQL state instead of
-       // trusting a changed CSS class, label or an optimistic local flag.
-       for(let check=0;check<10;check++){
-         // The GraphQL read is already a network round-trip; don't add a
-         // fixed 700ms delay before every read, especially the first.
-         if(check)await new Promise(done=>setTimeout(
-           done,Math.min(650,100+check*90)));
-         const latest=await getMovieRating(movie).catch(()=>null);
-         if(latest?.authorized===true && latest.planned===desired){
-           confirmed=true;break;
-         }
-       }
-       if(!confirmed)
-         throw Error('Кинопоиск не подтвердил изменение списка «Буду смотреть»');
-     }catch(err){error=String(err?.message||err);}
-     finally{
-       // Never leave a movie tab open or navigate the user's active tab.
-       if(tab)await chrome.tabs.remove(tab.id).catch(()=>{});
+     // Set/remove are separate idempotent mutations. Don't pre-fetch the
+     // existing state: it costs an extra network request for every click.
+     let changed;
+     try {
+       changed=await setMoviePlanned(movie,desired);
+     }catch(error){
+       return {ok:false,error:String(error?.message||error)};
      }
-   }
-   if(!confirmed)return {ok:false,error:error||'Не удалось обновить Кинопоиск'};
+     if(!changed?.ok)return {ok:false,
+       error:changed?.error||'Кинопоиск не подтвердил операцию',
+       authRequired:Boolean(changed?.authRequired)};
 
-   const currentAuth=await self.KinoStatsAccount.detect();
-   if(currentAuth.status!=='logged-in'||currentAuth.id!==login.id)
-     return {ok:false,error:'Профиль изменился. Данные не сохранены.'};
-   const raw=(await chrome.storage.local.get(STORE))[STORE];
-   const all={...obj(raw)},profile={...obj(all[login.id])};
-   if(desired)profile[key]={...movie,id:String(movie.id),
-     source:'kinopoisk',addedAt:profile[key]?.addedAt||Date.now()};
-   else delete profile[key];
-   all[login.id]=profile;
-   await chrome.storage.local.set({[STORE]:all});
-   // Also edit the partial import snapshot, otherwise a full import
-   // completing moments after the click could resurrect the removed film.
-   const job=await getJob();
-   if(job?.profileId===login.id && job.state==='loading'){
-     const staged={...obj(job.staged)};
-     if(desired)staged[key]=profile[key];
-     else delete staged[key];
-     await putJob({...job,staged});
-   }
-   if(!auto){
-     // Explicit user choices cancel any queued removal for the same title.
-     const pendingAll=(await chrome.storage.local.get(AUTO_KEY))[AUTO_KEY];
-     const queue={...obj(pendingAll)},scope={...obj(queue[login.id])};
-     if(scope[key]){
-       delete scope[key];queue[login.id]=scope;
-       await chrome.storage.local.set({[AUTO_KEY]:queue});
+     // Mutation SUCCESS is necessary, but read after write also confirms
+     // the profile state. Bounded retry covers propagation lag.
+     let verified=false;
+     for(let attempt=0;attempt<4;attempt++){
+       if(attempt)await new Promise(done=>setTimeout(done,attempt*250));
+       const actual=await getMovieRating(movie).catch(()=>null);
+       if(actual?.authorized===true && actual.planned===desired){
+         verified=true;break;
+       }
      }
-   }
-   return {ok:true,profileId:login.id,planned:desired};
-   } finally {
+     if(!verified)return {ok:false,
+       error:'Кинопоиск принял запрос, но не удалось подтвердить состояние. '+
+         'Обновите список через ↻.'};
+
+     const auth=await self.KinoStatsAccount.detect();
+     if(auth.status!=='logged-in'||auth.id!==login.id)
+       return {ok:false,error:'Аккаунт сменился. Локальные данные не изменены'};
+     const old=(await chrome.storage.local.get(STORE))[STORE];
+     const all={...obj(old)},scope={...obj(all[login.id])};
+     if(desired)scope[key]={...movie,id:String(movie.id),
+       source:'kinopoisk',addedAt:scope[key]?.addedAt||Date.now()};
+     else delete scope[key];
+     all[login.id]=scope;
+     await chrome.storage.local.set({[STORE]:all});
+     const job=await getJob();
+     if(job?.profileId===login.id&&job.state==='loading'){
+       const staged={...obj(job.staged)};
+       if(desired)staged[key]=scope[key];
+       else delete staged[key];
+       await putJob({...job,staged});
+     }
+     if(!auto){
+       const queuedRaw=(await chrome.storage.local.get(AUTO_KEY))[AUTO_KEY];
+       const queue={...obj(queuedRaw)},pending={...obj(queue[login.id])};
+       if(pending[key]){
+         delete pending[key];queue[login.id]=pending;
+         await chrome.storage.local.set({[AUTO_KEY]:queue});
+       }
+     }
+     return {ok:true,profileId:login.id,planned:desired};
+   }finally{
      pendingMutations--;
      mutationRevision++;
    }
  }
-
 
  // Serialize changes to the same title from popup, side panel and
  // automatic completion so that concurrent clicks cannot undo each other.
