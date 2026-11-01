@@ -39,6 +39,10 @@
        failures:0,message:'Загрузка списка'});
    } else if(job.state==='paused'&&job.message==='Авторизация не подтверждена'){
      job=await putJob({...job,state:'loading',failures:0,nextAt:Date.now()});
+   } else if(job.state==='completed'&&
+       Date.now()-Number(job.updatedAt||0)>5*60*1000){
+     job=await putJob({...job,page:1,done:0,total:null,
+       staged:{},state:'loading',failures:0,count:0,nextAt:Date.now()});
    }
    await schedule(job.nextAt);
    return {ok:true,job};
