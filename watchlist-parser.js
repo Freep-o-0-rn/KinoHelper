@@ -52,7 +52,8 @@
      // The new profile can expose UserMovieReactions, bare Movie entities,
      // or connection edges. Only scan the list rooted in this dedicated
      // planned-to-watch page, not unrelated recommendations.
-     const lists=[],genericLists=[],visited=new Set();
+     const plannedLists=[],reactionLists=[],genericLists=[],visited=new Set();
+     let plannedEmpty=false,reactionEmpty=false;
      const resolve=x=>deref(state,x);
      function asList(container) {
        const value=resolve(container);
@@ -75,12 +76,16 @@
        }
        for(const [key,value] of Object.entries(item)){
          if(!value||typeof value!=='object')continue;
-         const explicit=/movieReactions|planned|willWatch|watchlist/i.test(key);
+         const planned=/planned|willWatch|watchlist/i.test(key);
+         const reactions=/movieReactions/i.test(key);
          const generic=/movieList|movies\(/i.test(key);
          const list=asList(value);
-         if(explicit&&list){
-           lists.push(list);
-           if(!list.length)verifiedEmpty=true;
+         if(planned&&list){
+           plannedLists.push(list);
+           if(!list.length)plannedEmpty=true;
+         } else if(reactions&&list){
+           reactionLists.push(list);
+           if(!list.length)reactionEmpty=true;
          } else if(generic&&list&&depth<=1){
            // Generic movie arrays may include recommendations elsewhere.
            genericLists.push(list);
@@ -102,7 +107,11 @@
        if(TYPES.has(entry.__typename)&&entry.id)return entry;
        return null;
      }
-     for(const list of (lists.length?lists:genericLists))for(const raw of list){
+     const selected=plannedLists.length?plannedLists:
+       reactionLists.length?reactionLists:genericLists;
+     verifiedEmpty=plannedLists.length?plannedEmpty:
+       reactionLists.length?reactionEmpty:false;
+     for(const list of selected)for(const raw of list){
        const movie=movieFor(raw),item=normalize(movie,state);
        if(!item)continue;
        recognized++;
