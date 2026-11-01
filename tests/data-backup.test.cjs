@@ -78,3 +78,14 @@ test('backup rejects unexpected format and malformed data', () => {
   assert.throws(()=>backup.validateBackup({...base,
     local:{kinopoiskHistory:'{}'}}),/Повреждён список/);
 });
+
+
+test('profile watched marks round-trip without mixing Kinopoisk accounts',()=>{
+  const before={'123':{'film:99':{watched:true,updatedAt:1}}};
+  const incoming={'123':{'series:88':{watched:true,updatedAt:2}},
+    '456':{'film:99':{watched:true,updatedAt:2}}};
+  const result=backup.mergeStorageValue('kinoStatsWatchedV1',before,incoming);
+  assert.equal(Object.keys(result['123']).length,2);
+  assert.equal(Object.keys(result['456']).length,1);
+  assert.equal(result['123']['film:99'].watched,true);
+});
