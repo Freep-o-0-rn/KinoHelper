@@ -226,7 +226,9 @@ test('large watchlist warms up for two pages then batches two sequential pages',
  }
  const m=mock({fixture:largeListing});
  await m.message('kinoWatchlistEnsure',{profileId:'7143359'});
- // Initial warm-up loads page 1 only, respecting the old cadence.
+ for(let i=0;i<150;i++)await Promise.resolve();
+ assert.equal(m.data.kinoWatchlistImportJobV1.done,1);
+ // Initial warm-up keeps page 2 at the ordinary alarm cadence.
  await m.tick();
  assert.equal(m.data.kinoWatchlistImportJobV1.done,2);
  assert.equal(m.waits,0);
