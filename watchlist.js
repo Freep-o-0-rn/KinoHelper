@@ -7,6 +7,7 @@
     const MAX_ITEMS = 1000;
     const PROFILE_STORE = 'kinoWatchlistProfilesV1';
     const SYNC_JOB = 'kinoWatchlistImportJobV1';
+    const AUTO_REMOVE = 'kinoWatchlistAutoRemoveV1';
     let activeProfileId = '';
     let profileItems = [];
     let authCheckId = 0;
@@ -278,7 +279,22 @@
     async function showSyncJob() {
         if(!activeProfileId)return;
         try {
-            const job=(await chrome.storage.local.get(SYNC_JOB))[SYNC_JOB];
+            const snapshot=await chrome.storage.local.get([SYNC_JOB,AUTO_REMOVE]);
+            const waiting=snapshot[AUTO_REMOVE]?.[activeProfileId];
+            const pending=waiting&&typeof waiting==='object'
+                ? Object.values(waiting):[];
+            const failed=pending.find(item=>item?.state==='failed');
+            if(failed){
+                showStatus('Не удалось автоматически убрать просмотренный фильм: '+
+                    (failed.error||'Кинопоиск не подтвердил изменение')+
+                    '. Удалите фильм вручную.','error');
+                return;
+            }
+            if(pending.length){
+                showStatus('Синхронизируем просмотренный фильм с Кинопоиском…','info');
+                return;
+            }
+            const job=snapshot[SYNC_JOB];
             if(!job||job.profileId!==activeProfileId)return;
             const count=Number(job.count)||0;
             const state=job.state;
@@ -609,7 +625,8 @@
             (changes,area)=>{
                 if(area!=='local'||!activeProfileId)return;
                 if(changes[PROFILE_STORE])void loadProfileItems(activeProfileId);
-                if(changes[SYNC_JOB])void showSyncJob();
+                if(changes[SYNC_JOB]||changes[AUTO_REMOVE])
+                    void showSyncJob();
             });
         void refreshProfile(true);
         // Вторая открытая панель/окно использует то же хранилище расширения.
