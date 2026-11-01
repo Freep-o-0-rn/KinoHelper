@@ -16,8 +16,8 @@
   const dots=$('discoveryDots'),link=$('discoveryOpen');
   const copy=x=>String(x||'').replace(/\s+/g,' ').trim();
   let items=[],index=0,nextAt=Date.now()+INTERVAL,hovered=false;
-  let progress=0;
   const imageCache=new Map(),detailsCache=new Map(),inFlight=new Set();
+  const factsPending=new Map();
 
   function validListResponse(response){
     try{
@@ -30,8 +30,10 @@
   function catalogUrl(type){
     const y=new Date().getFullYear();
     return type==='new'
-      ?'https://www.kinopoisk.ru/lists/movies/year--'+y+'/?b=films&b=released'
-      :'https://www.kinopoisk.ru/lists/movies/popular-films/?b=films&b=high_rated';
+      ?y===2026
+        ?'https://www.kinopoisk.ru/lists/movies/mostanic2026/?b=films&b=released'
+        :'https://www.kinopoisk.ru/lists/movies/year--'+y+'/?b=films&b=released'
+      :'https://www.kinopoisk.ru/lists/movies/popular-films/?b=films';
   }
   function urlPoster(el) {
     if(!el)return '';
@@ -60,7 +62,7 @@
       // Only canonical movie links; ignore clips, actor pages, reviews.
       const m=href.match(/^\/film\/([1-9]\d{0,12})\/?(?:\?.*)?$/);
       if(!m)continue;
-      const card=anchor.closest('[data-test-id*="movie-list"], [data-tid*="movie-list"], .styles_root__ti07r, article, li')||
+      const card=anchor.closest('.styles_root__ti07r, [data-test-id*="movie-card"], [class*="styles_root"], article, li')||
         anchor.parentElement?.parentElement||anchor;
       const heading=card.querySelector('h3, h2, [data-test-id*="title"]');
       const img=anchor.querySelector('img')||card.querySelector('img');
@@ -74,7 +76,7 @@
       const ratingMatch=copy(ratingElement?.textContent).match(/(?:^|\s)(\d(?:[.,]\d)?)(?:\s|$)/);
       const parsedRating=ratingMatch?Number(ratingMatch[1].replace(',','.')):null;
       // The list often has one genre after the country separator.
-      const genreMatch=text.match(/(?:Россия|США|Франция|Великобритания|Германия|Канада|Япония|Индия|Корея|Австралия)\s*[•·]\s*([\p{L} -]{3,32})/u);
+      const genreMatch=text.match(/[\p{L} ,]{2,35}\s*[•·]\s*([\p{L}-]{3,24})/u);
       const genres=genreMatch?core.genres([genreMatch[1]]):[];
       const possible=core.movie({type:'film',id:m[1],title:filmTitle,year,
         rating:parsedRating,genres,posterUrl:urlPoster(img)},'for-you');
@@ -97,6 +99,117 @@
     if(!parsed.length)throw Error('Кинопоиск не вернул распознанных фильмов');
     return parsed;
   }
+  const MONTHS=['января','февраля','марта','апреля','мая','июня',
+    'июля','августа','сентября','октября','ноября','декабря'];
+  function premiereDate(value){
+    const text=copy(value).toLocaleLowerCase('ru');
+    const m=text.match(/(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+(20\d{2})/u);
+    if(!m)return '';
+    const d=Number(m[1]),month=MONTHS.indexOf(m[2]),y=Number(m[3]);
+    const candidate=new Date(Date.UTC(y,month,d));
+    if(candidate.getUTCFullYear()!==y||candidate.getUTCMonth()!==month||
+       candidate.getUTCDate()!==d)return '';
+    return candidate.toISOString().slice(0,10);
+  }
+  function premiereFromFilm(doc){
+    // Do not equate production year with the film's release date. Require
+    // an actual Kinopoisk detail row headed "Премьера в России/мире".
+    for(const el of doc.querySelectorAll('dt, th, span, div')){
+      const title=copy(el.textContent);
+      if(title!=='Премьера в России'&&title!=='Премьера в мире')continue;
+      if(el.children.length>1)continue;
+      const row=el.closest('tr, [class*="row"], [class*="Row"]')||
+        el.parentElement;
+      if(!row)continue;
+      const date=premiereDate(copy(row.textContent).slice(0,210));
+      if(date)return date;
+    }
+    return '';
+  }
+  async function filmFacts(item){
+    const id=core.keyOf(item);
+    if(detailsCache.has(id))return detailsCache.get(id);
+    if(factsPending.has(id))return factsPending.get(id);
+    const task=(async()=>{
+      const url='https://www.kinopoisk.ru/film/'+item.id+'/';
+      const response=await fetch(url,{credentials:'include',
+        signal:AbortSignal.timeout(9500)});
+      const resolved=new URL(response.url);
+      if(!response.ok||!['www.kinopoisk.ru','kinopoisk.ru'].includes(resolved.hostname)||
+         resolved.pathname!=='/film/'+item.id+'/')throw Error('Карточка недоступна');
+      const html=await response.text();
+      if(html.length>6e6)throw Error('Карточка слишком большая');
+      const doc=new DOMParser().parseFromString(html,'text/html');
+      const record={genres:[],description:'',releaseDate:premiereFromFilm(doc)};
+      for(const script of doc.querySelectorAll('script[type="application/ld+json"]')){
+        try{
+          const json=JSON.parse(script.textContent);
+          const nodes=Array.isArray(json)?json:[json];
+          for(const node of nodes.flatMap(x=>Array.isArray(x?.['@graph'])?x['@graph']:[x])){
+            if(![].concat(node?.['@type']||[]).includes('Movie'))continue;
+            record.genres=core.genres(typeof node.genre==='string'?
+              node.genre.split(','):node.genre);
+            record.description=copy(node.description).slice(0,230);
+            break;
+          }
+        }catch{}
+        if(record.description&&record.genres.length)break;
+      }
+      if(!record.genres.length){
+        for(const el of doc.querySelectorAll('dt, th, span, div')){
+          if(el.children.length>1||copy(el.textContent)!=='Жанр')continue;
+          const row=el.closest('tr, [class*="row"], [class*="Row"]')||
+            el.parentElement;
+          if(row){
+            const values=[...row.querySelectorAll('a')].map(x=>copy(x.textContent));
+            record.genres=core.genres(values.length?values:
+              copy(row.textContent).replace(/^Жанр\s*/,'').split(','));
+          }
+          if(record.genres.length)break;
+        }
+      }
+      if(!record.description){
+        const alt=doc.querySelector('[data-test-id="film-description"], [class*="filmDescription"]');
+        record.description=copy(alt?.textContent).slice(0,230);
+      }
+      if(!record.description){
+        const meta=doc.querySelector('meta[property="og:description"]');
+        const desc=copy(meta?.content);
+        if(desc.length>=35&&!/смотреть онлайн/i.test(desc))
+          record.description=desc.slice(0,230);
+      }
+      detailsCache.set(id,record);
+      return record;
+    })().finally(()=>factsPending.delete(id));
+    factsPending.set(id,task);
+    return task;
+  }
+  async function enrichCatalog(candidates,type){
+    const result=candidates.map(x=>({...x}));
+    // Limit the read-only detail requests; concurrency <= 2. Explicit
+    // release dates are required for new releases, while popular movies
+    // with known genres do not need extra candidate-detail requests.
+    let cursor=0;
+    const cap=type==='new'?24:16;
+    const jobs=result.map((movie,i)=>({movie,i}))
+      .filter(({movie})=>type==='new'||!movie.genres?.length)
+      .slice(0,cap);
+    const work=async()=>{
+      while(cursor<jobs.length){
+        const {movie,i}=jobs[cursor++];
+        try{
+          const fact=await filmFacts(movie);
+          result[i]={...movie,
+            genres:fact.genres.length?fact.genres:movie.genres,
+            description:fact.description||movie.description||'',
+            releaseDate:fact.releaseDate||movie.releaseDate||''};
+        }catch{/* No verified detail => no "new" classification. */}
+      }
+    };
+    await Promise.all([work(),work()]);
+    return result;
+  }
+
   async function pick(input){
     const raw=await chrome.storage.local.get([
       'kinoStatsRatingsV1','kinoStatsWatchedV1','kinoStatsGenresV1'
@@ -200,49 +313,17 @@
     poster.hidden=false;backdrop.hidden=false;empty.hidden=true;
   }
   async function enrich(item){
-    const id=core.keyOf(item);
-    if(detailsCache.has(id))return;
-    detailsCache.set(id,{genres:[],description:''});
     try{
-      // Read-only: unlike the general details helper, this never writes
-      // recommendation genres into watched-title statistics.
-      const url='https://www.kinopoisk.ru/film/'+item.id+'/';
-      const response=await fetch(url,{credentials:'include',
-        signal:AbortSignal.timeout(9500)});
-      const resolved=new URL(response.url);
-      if(!response.ok||!['www.kinopoisk.ru','kinopoisk.ru'].includes(resolved.hostname)||
-         resolved.pathname!=='/film/'+item.id+'/')return;
-      const html=await response.text();
-      if(html.length>6e6)return;
-      const doc=new DOMParser().parseFromString(html,'text/html');
-      let record={genres:[],description:''};
-      for(const script of doc.querySelectorAll('script[type="application/ld+json"]')){
-        try{
-          const json=JSON.parse(script.textContent);
-          const nodes=Array.isArray(json)?json:[json];
-          for(const node of nodes.flatMap(x=>Array.isArray(x?.['@graph'])?x['@graph']:[x])){
-            if(![].concat(node?.['@type']||[]).includes('Movie'))continue;
-            record.genres=core.genres(typeof node.genre==='string'?
-              node.genre.split(','):node.genre);
-            record.description=copy(node.description).slice(0,230);
-            break;
-          }
-        }catch{}
-        if(record.description)break;
+      const record=await filmFacts(item);
+      if(core.keyOf(items[index])===core.keyOf(item)){
+        // Never rebuild the catalog here: update only visible film details.
+        genre.textContent=(record.genres.length?record.genres:item.genres)
+          .slice(0,3).join(', ');
+        genre.hidden=!genre.textContent;
+        const desc=record.description||item.description||'';
+        description.textContent=desc;description.hidden=!desc;
       }
-      if(!record.description){
-        const alt=doc.querySelector('[data-test-id="film-description"], [class*="filmDescription"]');
-        record.description=copy(alt?.textContent).slice(0,230);
-      }
-      if(!record.description){
-        const meta=doc.querySelector('meta[property="og:description"]');
-        const desc=copy(meta?.content);
-        if(desc.length>=35&&!/смотреть онлайн/i.test(desc))
-          record.description=desc.slice(0,230);
-      }
-      detailsCache.set(id,record);
-      if(core.keyOf(items[index])===id)show();
-    }catch{/* Keep known official title and year when description unavailable. */}
+    }catch{/* Missing metadata is not invented. */}
   }
   async function start(){
     box.hidden=false;
@@ -258,10 +339,13 @@
     }
     if(usable&&age<TTL)return;
     const fetched=await Promise.allSettled([fetchCatalog('popular'),fetchCatalog('new')]);
-    const fresh={
-      popular:fetched[0].status==='fulfilled'?fetched[0].value:(saved?.popular||[]),
-      new:fetched[1].status==='fulfilled'?fetched[1].value:(saved?.new||[])
-    };
+    const rawPopular=fetched[0].status==='fulfilled'?fetched[0].value:(saved?.popular||[]);
+    const rawNew=fetched[1].status==='fulfilled'?fetched[1].value:(saved?.new||[]);
+    const [popular,news]=await Promise.all([
+      fetched[0].status==='fulfilled'?enrichCatalog(rawPopular,'popular'):rawPopular,
+      fetched[1].status==='fulfilled'?enrichCatalog(rawNew,'new'):rawNew
+    ]);
+    const fresh={popular,new:news};
     if(!fresh.popular.length&&!fresh.new.length){
       if(!items.length){
         title.textContent='Подборка недоступна';
@@ -279,6 +363,13 @@
     }
     const feed=await pick(fresh);
     if(feed.length)display(feed);
+    else if(!items.length){
+      title.textContent='Подборка пока недоступна';
+      kind.textContent='Что посмотреть';
+      description.textContent='Недостаточно данных для персонального подбора или нет подтверждённых новинок.';
+      description.hidden=false;counter.textContent='0 / 0';
+      link.removeAttribute('href');
+    }
   }
   $('discoveryPrevious').addEventListener('click',()=>go(index-1));
   $('discoveryNext').addEventListener('click',()=>go(index+1));
