@@ -40,7 +40,53 @@
       return 'logged-out';
     return 'unknown';
   }
-  async function detect(fetcher=fetch) {
+  const CACHE_KEY='kinoVerifiedAuthSessionV1';
+  const VERIFIED_TTL=2 * 60 * 1000;
+  const FAILURE_TTL=30 * 1000;
+  let inFlight=null;
+  let inFlightForced=false;
+
+  function store(){
+    // storage.session is shared by extension views and the MV3 worker,
+    // but unavailable to page content scripts and older test runtimes.
+    return typeof chrome!=='undefined' ? chrome.storage?.session : null;
+  }
+  function validCache(value,now){
+    if(!value||typeof value!=='object'||Number(value.expiresAt)<=now)
+      return false;
+    if(value.status==='logged-in')
+      return ID.test(String(value.id||'')) &&
+        Number.isFinite(value.verifiedAt);
+    return value.status==='logged-out'||value.status==='unavailable';
+  }
+  async function fromCache(){
+    const session=store();
+    if(!session)return null;
+    try{
+      const cached=(await session.get(CACHE_KEY))?.[CACHE_KEY];
+      return validCache(cached,Date.now())?
+        {status:cached.status,id:cached.id||'',
+          reason:cached.reason||'',verifiedAt:cached.verifiedAt||0,
+          cached:true}:null;
+    }catch{return null;}
+  }
+  async function saveCache(result){
+    const session=store();
+    if(!session)return;
+    const ttl=result.status==='logged-in'?VERIFIED_TTL:FAILURE_TTL;
+    const value={
+      status:result.status,
+      id:result.status==='logged-in'?result.id:'',
+      reason:result.status==='logged-in'?'':String(result.reason||'').slice(0,180),
+      verifiedAt:result.status==='logged-in'?
+        Number(result.verifiedAt)||Date.now():0,
+      expiresAt:Date.now()+ttl
+    };
+    try{await session.set({[CACHE_KEY]:value});}
+    catch{/* Cache failure must never block normal authentication. */}
+  }
+
+  async function probe(fetcher=fetch) {
     let lastReason='Невозможно подтвердить профиль по личной странице.';
     let outcome='unknown';
     for(const route of ['/mykp/','/mykp/folders/1/']) {
@@ -79,5 +125,37 @@
     return {status:outcome==='logged-out'?'logged-out':'unavailable',id:'',
       reason:lastReason};
   }
-  return {detect,identityFromResponse,authStatus};
+
+  async function detect(fetcher=fetch, options={}) {
+    // Tests or explicit external fetchers bypass extension-wide storage:
+    // a response produced by a caller's mock must not authenticate a user.
+    if(fetcher!==fetch || !store())return probe(fetcher);
+    const force=options?.force===true;
+    if(inFlight){
+      if(!force||inFlightForced)return inFlight;
+      // A forced refresh cannot settle for an ordinary cache lookup.
+      await inFlight.catch(()=>{});
+    }
+    const task=(async()=>{
+      if(!force){
+        const cached=await fromCache();
+        if(cached)return cached;
+      }
+      const result=await probe(fetcher);
+      await saveCache(result);
+      return result;
+    })();
+    inFlight=task;
+    inFlightForced=force;
+    try{return await task;}
+    finally{
+      if(inFlight===task){inFlight=null;inFlightForced=false;}
+    }
+  }
+
+  async function clearCache(){
+    try{await store()?.remove(CACHE_KEY);}
+    catch{/* Best effort. */}
+  }
+  return {detect,clearCache,identityFromResponse,authStatus};
 });
