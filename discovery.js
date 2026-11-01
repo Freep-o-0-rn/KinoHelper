@@ -128,13 +128,14 @@
       const html=await response.text();
       if(html.length>6e6)throw Error('Карточка слишком большая');
       const doc=new DOMParser().parseFromString(html,'text/html');
-      const record={genres:[],description:'',releaseDate:premiereFromFilm(doc)};
+      const record={title:'',genres:[],description:'',releaseDate:premiereFromFilm(doc)};
       for(const script of doc.querySelectorAll('script[type="application/ld+json"]')){
         try{
           const json=JSON.parse(script.textContent);
           const nodes=Array.isArray(json)?json:[json];
           for(const node of nodes.flatMap(x=>Array.isArray(x?.['@graph'])?x['@graph']:[x])){
             if(![].concat(node?.['@type']||[]).includes('Movie'))continue;
+            record.title=copy(node.name).slice(0,120);
             record.genres=core.genres(typeof node.genre==='string'?
               node.genre.split(','):node.genre);
             record.description=copy(node.description).slice(0,230);
@@ -188,6 +189,7 @@
         try{
           const fact=await filmFacts(movie);
           result[i]={...movie,
+            title:fact.title||movie.title,
             genres:fact.genres.length?fact.genres:movie.genres,
             description:fact.description||movie.description||'',
             releaseDate:fact.releaseDate||movie.releaseDate||''};
