@@ -32,9 +32,18 @@ function mock({failure=false}={}){
        status:'complete'};},
      async remove(){}
    },
-   scripting:{async executeScript({args}){
-     if(args){clicks++;remotePlanned=Boolean(args[0]);return [{result:true}];}
-     return [{result:[]}];
+   scripting:{async executeScript({func}){
+     const button={
+       disabled:false,classList:{contains:()=>false},
+       closest(){return this;},getAttribute(){return null;},
+       click(){clicks++;remotePlanned=!remotePlanned;}
+     };
+     const document={querySelectorAll(selector){
+       return selector==='button[data-test-id="ContentActions_bookmarkButton"]'
+         ?[button]:[];
+     }};
+     return [{result:new Function('document',
+       'return ('+func.toString()+')()')(document)}];
    }}
  };
  const self={KinoStatsAccount:{async detect(){
