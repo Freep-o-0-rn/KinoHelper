@@ -4,6 +4,7 @@
   'use strict';
   const PROGRESS_KEY = 'kinoPlaybackProgressV1';
   const SERIES_KEY = 'kinoSeriesEpisodeProgressV1';
+  const COVERAGE_KEY = 'kinoPlaybackCoverageV1';
   const HISTORY_KEY = 'kinopoiskHistory';
   const DISMISS_KEY = 'kinoLastViewDismissedV1';
   const panel = document.getElementById('resumeLast');
@@ -17,6 +18,7 @@
 
   let progress = Object.create(null);
   let episodeProgress = Object.create(null);
+  let coverage = Object.create(null);
   let history = [];
   let currentKey = '';
   let activeWatchPage = false;
@@ -176,6 +178,23 @@
     if (fill) fill.style.width = percent + '%';
   }
 
+  function coveredPercent(key,item) {
+    const record=coverage[key];
+    if(!record || !Number.isFinite(record.duration) ||
+        Math.abs(record.duration-item.duration)>Math.max(10,item.duration*.015) ||
+        !Array.isArray(record.ranges))return 0;
+    const intervals=record.ranges.filter(v=>
+      Array.isArray(v)&&v.length===2&&v.every(Number.isFinite)&&
+      v[0]>=0&&v[1]<=item.duration&&v[1]>v[0])
+      .map(([a,b])=>[a,b]).sort((a,b)=>a[0]-b[0]);
+    let seconds=0,lastEnd=0;
+    for(const [start,end] of intervals){
+      seconds+=Math.max(0,end-Math.max(lastEnd,start));
+      lastEnd=Math.max(lastEnd,end);
+    }
+    return Math.min(100,seconds/item.duration*100);
+  }
+
   function decorateHistory() {
     const rows = document.querySelectorAll('.history-item[data-kino-media-key]');
     for (const row of rows) {
@@ -212,6 +231,37 @@
           : formatTime(item.position) + ' / ' + formatTime(item.duration) +
             ' · ' + pct + '%');
       }
+      const progressKey=item.type==='series'
+        ? 'series:'+item.id+':'+item.season+':'+item.episode
+        : 'film:'+item.id;
+      const observed=coveredPercent(progressKey,item);
+      let confirm=block.querySelector('.history-confirm-complete');
+      if (!item.completed && observed>=85) {
+        if (!confirm) {
+          confirm=document.createElement('button');
+          confirm.type='button';
+          confirm.className='history-confirm-complete';
+          confirm.addEventListener('click',async()=>{
+            if(confirm.disabled)return;
+            confirm.disabled=true;
+            confirm.textContent='Проверяем…';
+            try{
+              const result=await chrome.runtime.sendMessage({
+                action:'kinoConfirmCoveredPlayback',key:progressKey
+              });
+              if(!result?.ok)throw Error(result?.error||'Не удалось подтвердить');
+              await readStorage();
+            }catch(error){
+              confirm.disabled=false;
+              confirm.textContent='Не удалось: '+String(error.message||error);
+            }
+          });
+          block.appendChild(confirm);
+        }
+        if(!confirm.disabled)confirm.textContent='✓ Досмотрел';
+        confirm.title='Подтвердить окончание просмотра: просмотрено '+
+          Math.floor(observed)+'% уникального материала';
+      } else if(confirm)confirm.remove();
     }
   }
 
@@ -314,13 +364,17 @@
   async function readStorage() {
     const sequence = ++storageReadSequence;
     try {
-      const [filmData, seriesData] = await Promise.all([
+      const [filmData, seriesData, coverageData] = await Promise.all([
         chrome.storage.local.get(PROGRESS_KEY),
-        chrome.storage.local.get(SERIES_KEY)
+        chrome.storage.local.get(SERIES_KEY),
+        chrome.storage.local.get(COVERAGE_KEY)
       ]);
       if (sequence !== storageReadSequence) return;
       const stored = filmData[PROGRESS_KEY];
       const episodes = seriesData[SERIES_KEY];
+      const segments = coverageData[COVERAGE_KEY];
+      coverage = segments&&typeof segments==='object'&&!Array.isArray(segments)
+        ?segments:Object.create(null);
       progress = stored && typeof stored === 'object' && !Array.isArray(stored)
         ? stored : Object.create(null);
       episodeProgress = episodes && typeof episodes === 'object' && !Array.isArray(episodes)
@@ -331,6 +385,7 @@
       if (sequence !== storageReadSequence) return;
       progress = Object.create(null);
       episodeProgress = Object.create(null);
+      coverage = Object.create(null);
       render();
     }
   }
@@ -413,7 +468,8 @@
   });
 
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && (changes[PROGRESS_KEY] || changes[SERIES_KEY]))
+    if (area === 'local' &&
+        (changes[PROGRESS_KEY]||changes[SERIES_KEY]||changes[COVERAGE_KEY]))
       void readStorage();
     if (area === 'session' && changes[DISMISS_KEY]) {
       dismissedIdentity = typeof changes[DISMISS_KEY].newValue === 'string'
