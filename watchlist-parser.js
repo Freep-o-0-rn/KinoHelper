@@ -52,7 +52,7 @@
      // The new profile can expose UserMovieReactions, bare Movie entities,
      // or connection edges. Only scan the list rooted in this dedicated
      // planned-to-watch page, not unrelated recommendations.
-     const lists=[],visited=new Set();
+     const lists=[],genericLists=[],visited=new Set();
      const resolve=x=>deref(state,x);
      function asList(container) {
        const value=resolve(container);
@@ -75,11 +75,15 @@
        }
        for(const [key,value] of Object.entries(item)){
          if(!value||typeof value!=='object')continue;
-         const listKey=/movieReactions|planned|willWatch|watchlist|movieList|movies\(/i.test(key);
+         const explicit=/movieReactions|planned|willWatch|watchlist/i.test(key);
+         const generic=/movieList|movies\(/i.test(key);
          const list=asList(value);
-         if(listKey&&list){
+         if(explicit&&list){
            lists.push(list);
            if(!list.length)verifiedEmpty=true;
+         } else if(generic&&list&&depth<=1){
+           // Generic movie arrays may include recommendations elsewhere.
+           genericLists.push(list);
          } else if(depth<7)walk(value,depth+1,false);
        }
      }
@@ -98,7 +102,7 @@
        if(TYPES.has(entry.__typename)&&entry.id)return entry;
        return null;
      }
-     for(const list of lists)for(const raw of list){
+     for(const list of (lists.length?lists:genericLists))for(const raw of list){
        const movie=movieFor(raw),item=normalize(movie,state);
        if(!item)continue;
        recognized++;
