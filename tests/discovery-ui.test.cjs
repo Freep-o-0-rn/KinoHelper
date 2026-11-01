@@ -336,3 +336,24 @@ test('film page JSON-LD rating used when GraphQL is unavailable',async()=>{
  assert.equal(x.nodes.discoveryRating.hidden,false);
  assert.equal(x.data.kinoDiscoveryFactsV1['film:990'].rating,7.9);
 });
+
+test('expired session poster URL is replaced when the browser reports an image error',async()=>{
+ const broken='https://avatars.mds.yandex.net/get-kinopoisk-image/x/y/orig';
+ const data={kinoDiscoveryCatalogV1:{schema:2,savedAt:Date.now(),
+  enrichedAt:Date.now(),popular:[{type:'film',id:'125',
+   title:'Фильм 125',year:2025,genres:['драма']}],new:[]}};
+ const sessionData={kinoDiscoveryPostersV1:{
+  'film:125':{posterUrl:broken,cachedAt:Date.now()}}};
+ const responder=async request=>{
+  if(request.action==='loadSearchPoster')
+   return {ok:true,dataUrl:'data:image/png;base64,SU1BR0U='};
+  return {ok:false};
+ };
+ const x=setup({data,sessionData,imageResponder:responder});
+ await x.settle();
+ assert.equal(x.nodes.discoveryPoster.src,broken);
+ x.nodes.discoveryPoster.events.error();
+ await x.settle();
+ assert.equal(x.nodes.discoveryPoster.src,'data:image/png;base64,SU1BR0U=');
+ assert.equal(x.nodes.discoveryPoster.hidden,false);
+});
