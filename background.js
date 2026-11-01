@@ -1833,8 +1833,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (result?.ok) {
         await statsRememberCompletion(result.key, result.completed)
           .catch(error => console.warn('[KinoHelper stats] Film catalog:', error));
-        if (result.newlyCompleted) {
-          await self.KinoWatchlistAutoComplete?.onFilmCompleted(result.key)
+        if (result.newlyCompleted &&
+            typeof self !== 'undefined' &&
+            self.KinoWatchlistAutoComplete?.onFilmCompleted) {
+          await self.KinoWatchlistAutoComplete.onFilmCompleted(result.key)
             .catch(error => console.warn('[KinoHelper] Auto watchlist transfer:',error));
         }
         await statsRecordVerifiedTime(result.key, message.payload)
@@ -2431,8 +2433,10 @@ async function confirmCoveredPlayback(mediaKey, sender) {
       completedBy:'user',updatedAt:Date.now()};
     await chrome.storage.local.set({[progressKey]:records});
     await statsRememberCompletion(key,true);
-    if(isFilm && newlyCompleted) {
-      await self.KinoWatchlistAutoComplete?.onFilmCompleted(key)
+    if(isFilm && newlyCompleted &&
+       typeof self !== 'undefined' &&
+       self.KinoWatchlistAutoComplete?.onFilmCompleted) {
+      await self.KinoWatchlistAutoComplete.onFilmCompleted(key)
         .catch(error=>console.warn('[KinoHelper] Watchlist transfer:',error));
     }
     return {ok:true,key,coverage:Math.round(seconds/entry.duration*100)};
