@@ -358,8 +358,25 @@
         if(profileId!==activeProfileId)return;
         const data=store&&typeof store==='object'&&!Array.isArray(store)
             ?store[profileId]:null;
-        profileItems=data&&typeof data==='object'&&!Array.isArray(data)
+        const previous=new Map(profileItems.map(item=>
+            [item.type+':'+item.id,item]));
+        const items=data&&typeof data==='object'&&!Array.isArray(data)
             ?Object.values(data).map(normalize).filter(Boolean):[];
+        const merged=items.map(item=>{
+            const old=previous.get(item.type+':'+item.id);
+            if(!old)return item;
+            return {...item,
+                year:item.year||old.year,
+                genres:item.genres.length?item.genres:old.genres,
+                posterUrl:item.posterUrl||old.posterUrl};
+        });
+        const sorted=items=>items.sort((a,b)=>b.addedAt-a.addedAt);
+        sorted(merged);
+        const now=sorted([...profileItems]);
+        // Background minute checks may rewrite the same snapshot. Avoid
+        // recreating every button/poster when no visible details changed.
+        if(JSON.stringify(now)===JSON.stringify(merged))return;
+        profileItems=merged;
         refresh();
     }
 
