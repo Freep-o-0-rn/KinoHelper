@@ -99,7 +99,9 @@ function setup(options={}){
    const date=new Date();date.setUTCMonth(date.getUTCMonth()-1);
    const months=['января','февраля','марта','апреля','мая','июня',
     'июля','августа','сентября','октября','ноября','декабря'];
-   const dateText=date.getUTCDate()+' '+months[date.getUTCMonth()]+' '+date.getUTCFullYear();
+   const dateText=['601','602'].includes(match?.[2])
+    ?'1 января '+(date.getUTCFullYear()-3)
+    :date.getUTCDate()+' '+months[date.getUTCMonth()]+' '+date.getUTCFullYear();
    return {
     querySelectorAll(selector){
      if(selector.includes('application/ld+json'))
@@ -182,7 +184,7 @@ test('actual film/series catalog parses and survives reopening without re-fetch'
  const first=setup({noCache:true,catalogData});await first.settle();
  assert.equal(first.urls.filter(u=>u.includes('/lists/movies/')).length,4);
  assert.equal(first.data.kinoDiscoveryCatalogV1.popular.length,2);
- assert.equal(first.data.kinoDiscoveryCatalogV1.new.length,2);
+ assert.equal(first.data.kinoDiscoveryCatalogV1.new.length,4);
  assert.equal(first.data.kinoDiscoveryCatalogV1.new.every(x=>Boolean(x.releaseDate)),true);
  assert.equal(first.data.kinoDiscoveryCatalogV1.enrichedAt>0,true);
  const second=setup({data:first.data,catalogData});await second.settle();
