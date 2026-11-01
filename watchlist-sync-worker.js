@@ -53,6 +53,64 @@
      void scan().catch(error=>console.warn('[KinoHelper] Watchlist:',error));
    return {ok:true,job};
  }
+ // A rendered browser page may contain the listing even when the worker's
+ // fetch received a shell/anti-bot response. Use a normal Chrome tab as a
+ // read-only fallback; it shares the user's own session, with no cookie access.
+ async function readRenderedPage(profileId,page){
+   const targetUrl=path(profileId)+'?page='+page;
+   const tab=await chrome.tabs.create({url:targetUrl,active:false});
+   try {
+     let last='Страница ещё загружается';
+     for(let attempt=0;attempt<18;attempt++){
+       await new Promise(done=>setTimeout(done,750));
+       const live=await chrome.tabs.get(tab.id).catch(()=>null);
+       if(!live)throw Error('Вкладка списка закрыта');
+       const actual=new URL(live.url||targetUrl);
+       if(!['www.kinopoisk.ru','kinopoisk.ru'].includes(actual.hostname) ||
+          actual.pathname.replace(/\/+$/,'')!==
+            new URL(path(profileId)).pathname.replace(/\/+$/,''))
+         throw Error('Кинопоиск потребовал вход или подтверждение');
+       if(live.status!=='complete')continue;
+       const script=await chrome.scripting.executeScript({
+         target:{tabId:tab.id},func:()=>document.documentElement.outerHTML
+       }).catch(()=>[]);
+       const html=script?.[0]?.result;
+       if(typeof html!=='string'||html.length>9e6)continue;
+       const result=await parse(html,page);
+       if(result?.recognized || result?.verifiedEmpty)return result;
+       last='Список не появился в открытой странице';
+     }
+     throw Error(last);
+   }finally{
+     await chrome.tabs.remove(tab.id).catch(()=>{});
+   }
+ }
+ async function loadPage(profileId,page) {
+   let firstError=null;
+   try {
+     const response=await fetch(path(profileId)+'?page='+page,{
+       credentials:'include',cache:'no-store',signal:AbortSignal.timeout(20000)});
+     if(!response.ok)throw Error('HTTP '+response.status);
+     const target=new URL(response.url);
+     if(target.protocol!=='https:'||
+        !['kinopoisk.ru','www.kinopoisk.ru'].includes(target.hostname)||
+        target.pathname.replace(/\/+$/,'')!==
+          new URL(path(profileId)).pathname.replace(/\/+$/,''))
+       throw Error('Кинопоиск перенаправил запрос');
+     const html=await response.text();
+     if(html.length>9e6)throw Error('Слишком большой ответ');
+     const result=await parse(html,page);
+     if(result?.recognized||result?.verifiedEmpty)return result;
+     firstError=Error('В фоновом ответе нет списка');
+   }catch(error){firstError=error;}
+   // One fallback per page, not a retry loop that could leave tabs behind.
+   try{return await readRenderedPage(profileId,page);}
+   catch(error){
+     throw Error('Не удалось прочитать список: '+String(firstError?.message||'')+
+       '; '+String(error?.message||error));
+   }
+ }
+
  async function scan(){
    if(current)return current;
    current=(async()=>{
@@ -73,18 +131,7 @@
      }
      try{
        if(job.page>MAX_PAGE)throw Error('Превышено число страниц');
-       const response=await fetch(path(job.profileId)+'?page='+job.page,{
-         credentials:'include',cache:'no-store',signal:AbortSignal.timeout(20000)});
-       if(!response.ok)throw Error('HTTP '+response.status);
-       const target=new URL(response.url);
-       if(target.protocol!=='https:'||
-          !['kinopoisk.ru','www.kinopoisk.ru'].includes(target.hostname)||
-          target.pathname.replace(/\/+$/,'')!==
-            new URL(path(job.profileId)).pathname.replace(/\/+$/,''))
-         throw Error('Кинопоиск перенаправил запрос');
-       const html=await response.text();
-       if(html.length>9e6)throw Error('Слишком большой ответ');
-       const result=await parse(html,job.page);
+       const result=await loadPage(job.profileId,job.page);
        if(!Array.isArray(result?.items)||
           (!result.recognized && !result.verifiedEmpty)){
          throw Error('Список не распознан на странице '+job.page+
@@ -104,7 +151,8 @@
          const key=keyOf(item);
          if(key)staged[key]={...item,source:'kinopoisk'};
        }
-       const explicitTotal=Number(result.lastPage)||Number(job.total)||null;
+       const explicitTotal=(Number(result.lastPage)>1
+         ? Number(result.lastPage):null)||Number(job.total)||null;
        const complete=Boolean(
          result.verifiedEmpty || repeated ||
          (explicitTotal && job.page>=explicitTotal) ||
