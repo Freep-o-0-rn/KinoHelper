@@ -118,7 +118,10 @@ test('different current account pauses without mixing per-account ratings',async
   await env.tick();
   env.logIn('9876543');
   await env.tick();
-  assert.equal(env.data.kinoStatsImportJobV2.nextPage,2);
+  // A profile switch creates a new cursor for the newly verified account;
+  // prior account ratings remain isolated in their own scope.
+  assert.equal(env.data.kinoStatsImportJobV2.profileId,'9876543');
+  assert.equal(env.data.kinoStatsImportJobV2.nextPage,1);
   assert.equal(env.data.kinoStatsRatingsV1['9876543'],undefined);
   assert.equal(Object.keys(env.data.kinoStatsRatingsV1['1234567']).length,1);
 });
