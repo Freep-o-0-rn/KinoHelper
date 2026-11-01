@@ -230,85 +230,115 @@
    await schedule(job.nextAt);
    return {ok:true,job:await scan()};
  }
+
+ // Chrome runs this function inside the Kinopoisk movie page. It must stay
+ // self-contained because scripting.executeScript serializes function source.
+ function clickKinopoiskBookmark() {
+   const nativeSelectors=[
+     'button[data-test-id="ContentActions_bookmarkButton"]',
+     '[data-test-id="ContentActions_bookmarkButton"]',
+     'button[title="Буду смотреть"]',
+     '[data-tid="ContentActions"] button[title*="Буду смотреть"]',
+     'button[aria-label*="Буду смотреть"]',
+     'button[aria-label*="Добавить в буду смотреть"]'
+   ];
+   const candidate=nativeSelectors.flatMap(selector=>
+     [...document.querySelectorAll(selector)]).find(element=>{
+       const button=element.closest('button,[role="button"]')||element;
+       return !button.classList?.contains('custom-bookmark-btn') &&
+         !button.disabled &&
+         button.getAttribute('aria-disabled')!=='true';
+     });
+   if (!candidate) return {clicked:false,reason:'button-not-found'};
+   const button=candidate.closest('button,[role="button"]')||candidate;
+   // This is a browser-executed click on the native control. No invented API.
+   button.click();
+   return {clicked:true,source:'native-bookmark'};
+ }
+
  async function mutate({movie,desired,profileId,auto=false}){
    const key=keyOf(movie);
-   if(!key||typeof desired!=='boolean')return {ok:false,error:'Неверный фильм'};
+   if(!key||typeof desired!=='boolean')
+     return {ok:false,error:'Неверный фильм'};
    const login=await self.KinoStatsAccount.detect();
    if(login.status!=='logged-in')
      return {ok:false,error:'Авторизуйтесь на Кинопоиске'};
    if(String(profileId||'')!==login.id)
      return {ok:false,error:'Аккаунт Кинопоиска изменился. Обновите панель.'};
+
    const filmUrl='https://www.kinopoisk.ru/'+movie.type+'/'+movie.id+'/';
+   const expectedPath='/'+movie.type+'/'+movie.id;
    const existing=await getMovieRating(movie).catch(()=>null);
    if(existing?.authorized!==true||typeof existing?.planned!=='boolean')
-     return {ok:false,error:'Не удалось проверить «Буду смотреть» на Кинопоиске'};
+     return {ok:false,error:'Кинопоиск не предоставил состояние «Буду смотреть». Изменение не выполнено.'};
+
    let confirmed=existing.planned===desired;
-   const tab=confirmed?null:await chrome.tabs.create({url:filmUrl,active:false});
-   try{
-     for(let attempt=0;!confirmed&&attempt<24;attempt++){
-       await new Promise(done=>setTimeout(done,600));
-       const info=await chrome.tabs.get(tab.id).catch(()=>null);
-       if(!info?.url?.startsWith(filmUrl))break;
-       if(info.status!=='complete')continue;
-       const click=await chrome.scripting.executeScript({
-         target:{tabId:tab.id},args:[desired],
-         func:want=>{
-           const norm=x=>String(x||'').replace(/\s+/g,' ').trim().toLowerCase();
-           const buttons=[...document.querySelectorAll('button,[role="button"]')];
-           for(const el of buttons){
-             if(el.disabled||el.getAttribute('aria-disabled')==='true')continue;
-             const t=norm(el.getAttribute('aria-label')||el.innerText||el.textContent);
-             const add=t==='буду смотреть'||t==='в буду смотреть'||
-               /^добавить в .?буду смотреть/.test(t);
-             const remove=(t==='буду смотреть'||t==='в буду смотреть')||
-               (/^(?:убрать|удалить|не буду смотреть|в списке)/.test(t)
-               && /смотр|списк/.test(t));
-             if(want?add:remove){el.click();return true;}
-           }
-           return false;
-         }
-       }).catch(()=>[]);
-       if(!click[0]?.result)continue;
-       // Never trust a visual click alone; read the authenticated server state.
-       for(let check=0;check<8;check++){
-         await new Promise(done=>setTimeout(done,800));
-         const remote=await getMovieRating(movie).catch(()=>null);
-         if(remote?.authorized===true && remote.planned===desired){
+   let tab=null;
+   let error=null;
+   if(!confirmed){
+     try{
+       // A temporary *inactive* tab shares the browser's authenticated session.
+       // Chrome never switches the user away from KinoHelper.
+       tab=await chrome.tabs.create({url:filmUrl,active:false});
+       let clicked=false;
+       for(let attempt=0;attempt<22;attempt++){
+         await new Promise(done=>setTimeout(done,650));
+         const live=await chrome.tabs.get(tab.id).catch(()=>null);
+         if(!live)throw Error('Временная вкладка закрылась');
+         let actual;
+         try{actual=new URL(live.url||'');}catch{continue;}
+         if(actual.protocol!=='https:'||
+           !['www.kinopoisk.ru','kinopoisk.ru'].includes(actual.hostname)||
+           actual.pathname.replace(/\/+$/,'')!==expectedPath)
+           throw Error('Кинопоиск перенаправил страницу фильма');
+         if(live.status!=='complete')continue;
+         const results=await chrome.scripting.executeScript({
+           target:{tabId:tab.id},func:clickKinopoiskBookmark
+         }).catch(()=>[]);
+         if(results[0]?.result?.clicked){clicked=true;break;}
+       }
+       if(!clicked)
+         throw Error('Не удалось найти штатную кнопку «Буду смотреть» на странице Кинопоиска');
+
+       // One click only. Poll the source-of-truth GraphQL state instead of
+       // trusting a changed CSS class, label or an optimistic local flag.
+       for(let check=0;check<12;check++){
+         await new Promise(done=>setTimeout(done,700));
+         const latest=await getMovieRating(movie).catch(()=>null);
+         if(latest?.authorized===true && latest.planned===desired){
            confirmed=true;break;
          }
        }
-       break;
+       if(!confirmed)
+         throw Error('Кинопоиск не подтвердил изменение списка «Буду смотреть»');
+     }catch(err){error=String(err?.message||err);}
+     finally{
+       // Never leave a movie tab open or navigate the user's active tab.
+       if(tab)await chrome.tabs.remove(tab.id).catch(()=>{});
      }
-     if(!confirmed)return {ok:false,manual:true,url:filmUrl,
-       error:'Изменение не подтверждено. Нажмите кнопку на открытой вкладке Кинопоиска.'};
-     const currentAuth=await self.KinoStatsAccount.detect();
-     if(currentAuth.status!=='logged-in'||currentAuth.id!==login.id)
-       return {ok:false,error:'Профиль изменился. Данные не сохранены.'};
-     const raw=(await chrome.storage.local.get(STORE))[STORE];
-     const all={...obj(raw)}, profile={...obj(all[login.id])};
-     if(desired)profile[key]={...movie,id:String(movie.id),
-       source:'kinopoisk',addedAt:Date.now()};
-     else delete profile[key];
-     all[login.id]=profile;
-     await chrome.storage.local.set({[STORE]:all});
-     // Manual user actions take priority over a previously queued
-     // automatic removal (e.g. adding a title again for a rewatch).
-     if(!auto){
-       const raw=(await chrome.storage.local.get(AUTO_KEY))[AUTO_KEY];
-       const queued={...obj(raw)},scope={...obj(queued[login.id])};
-       if(scope[key]){
-         delete scope[key];
-         queued[login.id]=scope;
-         await chrome.storage.local.set({[AUTO_KEY]:queued});
-       }
-     }
-     if(tab)await chrome.tabs.remove(tab.id).catch(()=>{});
-     // Server list remains authoritative and is read on the next scheduled scan.
-     return {ok:true,profileId:login.id,planned:desired};
-   }catch(err){
-     return {ok:false,manual:true,url:filmUrl,
-       error:String(err?.message||err)};
    }
+   if(!confirmed)return {ok:false,error:error||'Не удалось обновить Кинопоиск'};
+
+   const currentAuth=await self.KinoStatsAccount.detect();
+   if(currentAuth.status!=='logged-in'||currentAuth.id!==login.id)
+     return {ok:false,error:'Профиль изменился. Данные не сохранены.'};
+   const raw=(await chrome.storage.local.get(STORE))[STORE];
+   const all={...obj(raw)},profile={...obj(all[login.id])};
+   if(desired)profile[key]={...movie,id:String(movie.id),
+     source:'kinopoisk',addedAt:profile[key]?.addedAt||Date.now()};
+   else delete profile[key];
+   all[login.id]=profile;
+   await chrome.storage.local.set({[STORE]:all});
+   if(!auto){
+     // Explicit user choices cancel any queued removal for the same title.
+     const pendingAll=(await chrome.storage.local.get(AUTO_KEY))[AUTO_KEY];
+     const queue={...obj(pendingAll)},scope={...obj(queue[login.id])};
+     if(scope[key]){
+       delete scope[key];queue[login.id]=scope;
+       await chrome.storage.local.set({[AUTO_KEY]:queue});
+     }
+   }
+   return {ok:true,profileId:login.id,planned:desired};
  }
 
  // v1.571: a completed film leaves "Буду смотреть" only after the
