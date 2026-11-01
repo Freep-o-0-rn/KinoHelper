@@ -291,3 +291,23 @@ test('seeking to credits followed by ended cannot finish with insufficient cover
   },sender);
   assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,false);
 });
+
+
+test('verified film completion triggers one transition, not one per checkpoint',async()=>{
+  const {api,data}=makeBackground();
+  const sender={id:'kino-test',tab:{id:7},
+    url:'https://theatre.stravers.live/player'};
+  data.kinoPlaybackCoverageV1={
+    'film:447301':{duration:600,ranges:[[0,520]],updatedAt:Date.now()}
+  };
+  const first=await api.saveResumeProgress({
+    currentTime:599,duration:600,playedSeconds:140,event:'ended'
+  },sender);
+  assert.equal(first.completed,true);
+  assert.equal(first.newlyCompleted,true);
+  const next=await api.saveResumeProgress({
+    currentTime:599,duration:600,playedSeconds:141,event:'pause'
+  },sender);
+  assert.equal(next.completed,true);
+  assert.equal(next.newlyCompleted,false);
+});
