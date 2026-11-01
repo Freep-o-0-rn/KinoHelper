@@ -17,6 +17,7 @@
   let lastSampleAt = 0;
   let confirmedSamples = 0;
   let playedSeconds = 0;
+  let pendingRanges = [];
   let lastSentAt = 0;
   let scanTimer = null;
   // crypto.randomUUID exists on HTTPS players; deterministic test realms may
@@ -71,11 +72,15 @@
         currentTime: Math.round(time * 10) / 10,
         duration: Math.round(duration * 10) / 10,
         playedSeconds: Math.round(playedSeconds),
+        // Verified media-time intervals since the previous checkpoint.
+        watchedRanges: pendingRanges.map(range => [...range]),
         statsTrackingId,
         event: eventType
       }
     };
     lastSentAt = now();
+    // A checkpoint owns only the intervals collected since the last send.
+    pendingRanges = [];
     try {
       chrome.runtime.sendMessage(data).catch(() => {});
     } catch { /* Service worker may stop during page close. */ }
@@ -90,6 +95,7 @@
       lastTime = null;
       confirmedSamples = 0;
       playedSeconds = 0;
+      pendingRanges = [];
       statsTrackingId = newStatsTrackingId();
       lastSampleAt = 0;
       lastSentAt = 0;
@@ -105,6 +111,16 @@
     if (moving) {
       confirmedSamples += 1;
       playedSeconds += Math.min(dt / Math.max(0.25, video.playbackRate || 1), 5);
+      const start = Math.max(0, lastTime);
+      const end = Math.min(video.duration, time);
+      if (end > start) {
+        const last = pendingRanges[pendingRanges.length - 1];
+        if (last && start >= last[0] && start <= last[1] + 0.35) {
+          last[1] = Math.max(last[1], end);
+        } else if (pendingRanges.length < 64) {
+          pendingRanges.push([start, end]);
+        }
+      }
     }
     if (eventType === 'seeked') {
       lastTime = time;
