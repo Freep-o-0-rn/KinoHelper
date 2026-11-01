@@ -35,12 +35,13 @@
     return d.toISOString().slice(0,10);
   }
   function movie(x,kind){
-    if(!x||x.type!=='film'||!FILM_ID.test(String(x.id)))return null;
+    if(!x||!['film','series'].includes(x.type)||!FILM_ID.test(String(x.id)))return null;
     const title=clean(x.title).slice(0,120);
     if(title.length<2)return null;
     const yr=Number(x.year),r=Number(x.rating);
     return {
-      type:'film',id:String(x.id),title,kind:kind==='new'?'new':'for-you',
+      type:x.type,id:String(x.id),title,
+      kind:kind==='new'?'new':kind==='popular'?'popular':'for-you',
       year:Number.isInteger(yr)&&yr>=1888&&yr<=2200?yr:null,
       rating:Number.isFinite(r)&&r>0&&r<=10?r:null,
       genres:genres(x.genres),description:clean(x.description).slice(0,280),
@@ -55,9 +56,13 @@
     const ids=new Set();
     for(const entry of Array.isArray(history)?history:[]){
       const match=String(entry?.url||'').match(/\/(film|series)\/([1-9]\d{0,12})(?:\/|$)/);
-      if(match)ids.add(match[1]+':'+match[2]);
+      if(match){ids.add('film:'+match[2]);ids.add('series:'+match[2]);}
     }
-    for(const [k,x] of Object.entries(safe(watched)))if(x?.watched)ids.add(k);
+    for(const [k,x] of Object.entries(safe(watched)))if(x?.watched){
+      ids.add(k);
+      const n=k.match(/^(?:film|series):([1-9]\d{0,12})$/)?.[1];
+      if(n){ids.add('film:'+n);ids.add('series:'+n);}
+    }
     return ids;
   }
   function interests(genreRecords,ratings,watched){
@@ -77,48 +82,62 @@
     }
     return weight;
   }
+  // Candidate lists contain actual Kinopoisk catalog entries. "For you" is
+  // reserved for matches with local genre evidence; the fallback is explicitly
+  // labeled "Popular" rather than pretending to be personalized.
   function select({recommended=[],newReleases=[],history=[],watched={},
     ratings={},genreRecords={},count=10,year=new Date().getFullYear()}={}){
     const seen=viewed(history,watched);
-    for(const [id,x] of Object.entries(safe(ratings)))
-      if(Number(x?.rating)>=1)seen.add(id);
-    const interest=interests(genreRecords,ratings,watched);
-    const normalize=(input,kind)=>(
-      Array.isArray(input)?input:[]).map(x=>movie(x,kind))
-      .filter(m=>m&&!seen.has(keyOf(m)));
-    const now=new Date(),today=now.toISOString().slice(0,10);
-    const minDate=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()-5,
-      now.getUTCDate())).toISOString().slice(0,10);
-    const newKeys=new Set();
-    const news=normalize(newReleases,'new')
-      .filter(m=>m.year&&m.year>=year-1&&m.year<=year &&
-        m.releaseDate&&m.releaseDate>=minDate&&m.releaseDate<=today)
-      .sort((a,b)=>b.releaseDate.localeCompare(a.releaseDate))
-      .filter(m=>{
-        const k=keyOf(m);
-        if(newKeys.has(k))return false;
-        newKeys.add(k);return true;
-      });
-    const recKeys=new Set();
-    const rec=normalize(recommended,'for-you').filter(m=>{
-      const k=keyOf(m);
-      if(newKeys.has(k)||recKeys.has(k))return false;
-      recKeys.add(k);return true;
-    });
-    // A popular film is NOT a personal recommendation without evidence
-    // of matching genres and positive preferences from verified local data.
-    const scored=rec.map((m,i)=>{
-      const affinity=m.genres.reduce((n,g)=>n+(interest.get(g)||0),0);
-      return {m,score:affinity*3+(m.rating||0)*.12-i*.02,affinity};
-    }).filter(x=>x.affinity>=0.35)
-      .sort((a,b)=>b.score-a.score).map(x=>x.m);
-    // Mix sources but never invent recommendations or double-list the same movie.
-    const chosen=[],max=Math.min(10,Math.max(1,Number(count)||10));
-    while(chosen.length<max&&(scored.length||news.length)){
-      if(scored.length)chosen.push(scored.shift());
-      if(chosen.length<max&&news.length)chosen.push(news.shift());
+    for(const [key,x] of Object.entries(safe(ratings))){
+      if(Number(x?.rating)>=1){
+        seen.add(key);
+        const id=key.match(/^(?:film|series):([1-9]\d{0,12})$/)?.[1];
+        if(id){seen.add('film:'+id);seen.add('series:'+id);}
+      }
     }
-    return chosen;
+    const interest=interests(genreRecords,ratings,watched);
+    const normalize=(input,kind)=>(Array.isArray(input)?input:[])
+      .map(x=>movie(x,kind)).filter(m=>{
+        const k=keyOf(m);
+        return k&&!seen.has(k)&&!seen.has('film:'+m.id)&&
+          !seen.has('series:'+m.id);
+      });
+    const now=new Date(),today=now.toISOString().slice(0,10);
+    const minDate=new Date(Date.UTC(now.getUTCFullYear(),
+      now.getUTCMonth()-5,now.getUTCDate())).toISOString().slice(0,10);
+    const max=Math.min(10,Math.max(1,Number(count)||10));
+    const accepted=new Set();
+    const unique=arr=>arr.filter(m=>{
+      // Film and series identities can vary between legacy catalog URLs.
+      if(accepted.has(m.id))return false;
+      accepted.add(m.id);return true;
+    });
+    const news=unique(normalize(newReleases,'new')
+      .filter(m=>m.year&&m.year>=year-1&&m.year<=year&&
+        m.releaseDate&&m.releaseDate>=minDate&&m.releaseDate<=today)
+      .sort((a,b)=>b.releaseDate.localeCompare(a.releaseDate)));
+    const raw=unique(normalize(recommended,'for-you'));
+    const scored=raw.map((m,i)=>{
+      const affinity=m.genres.reduce((n,g)=>n+(interest.get(g)||0),0);
+      return {m,affinity,score:affinity*3+(m.rating||0)*.12-i*.015};
+    });
+    const personal=scored.filter(x=>x.affinity>=.35)
+      .sort((a,b)=>b.score-a.score).map(x=>x.m);
+    const popular=scored.filter(x=>x.affinity<.35)
+      .map(x=>({...x.m,kind:'popular'}));
+    const out=[],chosen=new Set();
+    const append=m=>{
+      if(!m||chosen.has(m.id)||out.length>=max)return;
+      chosen.add(m.id);out.push(m);
+    };
+    // Mix genuine personal matches with verified premieres, then fill any
+    // remaining slots with catalog-ranked popular titles (not random picks).
+    while(out.length<max&&(personal.length||news.length)){
+      append(personal.shift());
+      append(news.shift());
+    }
+    for(const m of popular)append(m);
+    return out;
   }
   return {movie,poster,genres,premiereDate,keyOf,interests,viewed,select};
 });
