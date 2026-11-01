@@ -143,7 +143,10 @@
   }
   async function filmFacts(item){
     const id=core.keyOf(item);
-    if(detailsCache.get(id)?.factsChecked)return detailsCache.get(id);
+    const existingFacts=detailsCache.get(id);
+    if(existingFacts?.factsChecked&&
+       (existingFacts.factsSchema===2||Number(item.rating)>0||
+        Number(existingFacts.rating)>0))return existingFacts;
     if((failedFacts.get(id)||0)>Date.now())throw Error('Повтор запроса позже');
     if(factsPending.has(id))return factsPending.get(id);
     const task=(async()=>{
@@ -216,7 +219,7 @@
           record.description=desc.slice(0,230);
       }
       const previous=detailsCache.get(id)||{};
-      const merged={...previous,...record,factsChecked:true,
+      const merged={...previous,...record,factsChecked:true,factsSchema:2,
         rating:record.rating||previous.rating||null,
         posterUrl:record.posterUrl||previous.posterUrl||'',
         posterFallback:record.posterFallback||previous.posterFallback||''};
