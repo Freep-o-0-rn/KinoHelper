@@ -10,6 +10,10 @@
   const LEGACY='kinoStatsProfileImportV1';
   // Chrome may delay alarms; 30 seconds is the conservative MV3 cadence.
   const PAGE_DELAY=30 * 1000;
+  // Bound foreground batches to 3 sequential requests per alarm. On server
+  // failure, stop immediately and preserve the existing retry/backoff policy.
+  const MAX_BURST_PAGES=3, BURST_GAP_MS=4000, BURST_BUDGET_MS=22000;
+  let burstWork=null;
   const REFRESH_DELAY=24 * 60 * 60 * 1000;
   const MAX_PAGE=20000; // Security ceiling, not a per-session batch limit.
   const PROFILE=/^[1-9]\d{0,12}$/;
@@ -313,6 +317,14 @@
       if(!Array.isArray(parsed?.votes)||!Array.isArray(parsed?.watched)||
          (!parsed.recognized && !parsed.votes.length && !parsed.watched.length))
         throw Error('Новые оценки не удалось распознать');
+      // Skip repeated page processing and storage reads when the server's
+      // latest reactions have not changed since the previous minute check.
+      const fingerprint=JSON.stringify([
+        ...parsed.votes.map(v=>v.type+':'+v.id+':'+v.rating).sort(),
+        ...parsed.watched.map(v=>v.type+':'+v.id+':watched').sort()
+      ]);
+      if(job.minuteFingerprint && fingerprint===job.minuteFingerprint)
+        return {ok:true,changed:0,skipped:'unchanged-page'};
       const freshJob=await readJob();
       if(freshJob?.profileId!==id||freshJob.state!=='completed'||
          freshJob.scanId!==job.scanId)return {ok:true,skipped:'job-changed'};
@@ -358,14 +370,20 @@
         }
       }
       const nextJob={...freshJob,lastMinuteSyncAt:now,
-        lastMinuteSyncChanges:changed,
+        lastMinuteSyncChanges:changed,minuteFingerprint:fingerprint,
         importedVotes:Object.values(scoped).filter(v=>
           Number.isInteger(v?.rating)&&v.rating>=1&&v.rating<=10).length,
         importedWatched:Object.keys(watchedScoped).length};
       const updates={[JOB]:nextJob};
       if(changed){
         ratings[id]=scoped;watched[id]=watchedScoped;
-        updates[RATINGS]=ratings;updates[WATCHED]=watched;
+        // Never rewrite unaffected statistics domains.
+        const changedRatings=JSON.stringify(raw[RATINGS]?.[id]||{})!==
+          JSON.stringify(scoped);
+        const changedWatched=JSON.stringify(raw[WATCHED]?.[id]||{})!==
+          JSON.stringify(watchedScoped);
+        if(changedRatings)updates[RATINGS]=ratings;
+        if(changedWatched)updates[WATCHED]=watched;
       }
       await chrome.storage.local.set(updates);
       return {ok:true,changed,checkedAt:now};
@@ -392,8 +410,29 @@
     if(identity.status==='logged-in')await start(identity.id);
   }
 
+  // Opportunistic sequential batch: faster than one page every 30s, but
+  // small enough to avoid a burst of simultaneous Kinopoisk requests.
+  async function importBurst(){
+    if(burstWork)return burstWork;
+    burstWork=(async()=>{
+      const started=Date.now();
+      let last=null;
+      for(let i=0;i<MAX_BURST_PAGES;i++){
+        last=await onePage();
+        if(last?.state!=='loading'||i===MAX_BURST_PAGES-1||
+           Date.now()-started>BURST_BUDGET_MS)break;
+        if(typeof setTimeout==='function')
+          await new Promise(resolve=>setTimeout(resolve,BURST_GAP_MS));
+        const still=await readJob();
+        if(still?.state!=='loading'||still.profileId!==last.profileId||
+           still.scanId!==last.scanId||still.nextPage!==last.nextPage)break;
+      }
+      return last;
+    })().finally(()=>{burstWork=null;});
+    return burstWork;
+  }
   chrome.alarms.onAlarm.addListener(alarm=>{
-    if(alarm.name===ALARM)void onePage().catch(error=>{
+    if(alarm.name===ALARM)void importBurst().catch(error=>{
       console.warn('[KinoHelper] Background profile import:',error);
       void schedule(Date.now()+5*60*1000);
     });
