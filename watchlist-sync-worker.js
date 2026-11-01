@@ -117,9 +117,14 @@
  async function scan(){
    if(current)return current;
    current=(async()=>{
-     // Keep the minute snapshot and full pagination from writing concurrently.
+     // A user-driven remote bookmark operation takes precedence over an
+     // ongoing importer. A delayed page must not restore a deleted title.
      if(minuteWork)await minuteWork;
      let job=await getJob();
+     if(pendingMutations){
+       await schedule(Date.now()+30000);
+       return job;
+     }
      if(!validId(job?.profileId))return null;
      const auth=await self.KinoStatsAccount.detect();
      if(auth.status==='logged-in'&&auth.id!==job.profileId)
@@ -270,6 +275,10 @@
    pendingMutations++;
    mutationRevision++;
    try{
+   // Finish older page reads before applying the explicit user action.
+   // During this mutation the scan will defer rather than overwrite it.
+   if(current)await current;
+   if(minuteWork)await minuteWork;
    const login=await self.KinoStatsAccount.detect();
    if(login.status!=='logged-in')
      return {ok:false,error:'Авторизуйтесь на Кинопоиске'};
@@ -339,6 +348,15 @@
    else delete profile[key];
    all[login.id]=profile;
    await chrome.storage.local.set({[STORE]:all});
+   // Also edit the partial import snapshot, otherwise a full import
+   // completing moments after the click could resurrect the removed film.
+   const job=await getJob();
+   if(job?.profileId===login.id && job.state==='loading'){
+     const staged={...obj(job.staged)};
+     if(desired)staged[key]=profile[key];
+     else delete staged[key];
+     await putJob({...job,staged});
+   }
    if(!auto){
      // Explicit user choices cancel any queued removal for the same title.
      const pendingAll=(await chrome.storage.local.get(AUTO_KEY))[AUTO_KEY];
@@ -355,6 +373,20 @@
    }
  }
 
+
+ // Serialize changes to the same title from popup, side panel and
+ // automatic completion so that concurrent clicks cannot undo each other.
+ const bookmarkQueue=new Map();
+ function queuedMutate(payload){
+   const key=String(payload?.profileId||'')+':'+String(keyOf(payload?.movie)||'');
+   const before=bookmarkQueue.get(key)||Promise.resolve();
+   const next=before.catch(()=>{}).then(()=>mutate(payload));
+   bookmarkQueue.set(key,next);
+   void next.finally(()=>{
+     if(bookmarkQueue.get(key)===next)bookmarkQueue.delete(key);
+   }).catch(()=>{});
+   return next;
+ }
 
  // Fast, read-only check of the newest planned-list page every minute.
  // A full multi-page re-scan is deliberately NOT restarted every minute.
@@ -497,7 +529,7 @@
        // Prevent an earlier profile page fetch from reinserting the removed
        // item after the site has already confirmed its deletion.
        if(current)await current;
-       result=await mutate({
+       result=await queuedMutate({
          movie:entry.movie,desired:false,profileId:auth.id,auto:true
        });
      }catch(error){result={ok:false,error:String(error?.message||error)};}
@@ -545,7 +577,7 @@
    }
    const task=msg.action==='kinoWatchlistEnsure'?ensure(msg.profileId)
      :msg.action==='kinoWatchlistRefresh'?refresh(msg.profileId)
-     :mutate(msg.payload||{});
+     :queuedMutate(msg.payload||{});
    task.then(respond).catch(err=>respond({ok:false,error:String(err?.message||err)}));
    return true;
  });
