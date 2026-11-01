@@ -132,7 +132,7 @@
         showStatus('Проверяем «Буду смотреть» на Кинопоиске…');
         try {
             const response=await chrome.runtime.sendMessage({
-                action:'kinoWatchlistSet',payload:{movie:next,desired}
+                action:'kinoWatchlistSet',payload:{movie:next,desired,profileId:profile}
             });
             if(!response?.ok) {
                 showStatus(response?.error||'Кинопоиск не подтвердил изменение');
@@ -567,7 +567,7 @@
         });
         window.addEventListener('focus', () => {
             refresh();
-            void refreshProfile();
+            void refreshProfile(true);
         });
         refresh();
     }
