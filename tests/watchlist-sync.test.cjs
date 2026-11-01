@@ -42,21 +42,8 @@ function mock(options={}){
        status:'complete'};},
      async remove(){closed++;}
    },
-   scripting:{async executeScript({func}){
-     const button={
-       disabled:false,classList:{contains:()=>false},
-       closest(){return this;},getAttribute(){return null;},
-       click(){clicks++;if(!options.rejectChange)planned=!planned;}
-     };
-     const document={querySelectorAll(selector){
-       return !options.missingButton &&
-         selector==='button[data-test-id="ContentActions_bookmarkButton"]'
-           ?[button]:[];
-     }};
-     const result=new Function('document',
-       'return ('+func.toString()+')()')(document);
-     return [{result}];
-   }}
+   scripting:{async executeScript(){throw Error('No browser page may be opened');}}
+
  };
  const self={KinoStatsAccount:{async detect(){
    return {status:'logged-in',id:account};
@@ -73,11 +60,17 @@ function mock(options={}){
    }
  };
  new Function('chrome','self','fetch','URL','AbortSignal','console',
-   'getMovieRating','setTimeout',worker)(
+   'setMoviePlanned','getMovieRating','setTimeout',worker)(
    chrome,self,
    async url=>({ok:true,url,status:200,text:async()=>
      (options.fixture||fixture)(Number(new URLStub(url).searchParams.get('page')))}),
    URLStub,{timeout(){return undefined;}},console,
+   async (movie,desired)=>{
+     clicks++;
+     if(options.rejectChange)return {ok:false,error:'Кинопоиск отклонил изменение'};
+     if(!options.unconfirmed)planned=desired;
+     return {ok:true,planned:desired};
+   },
    async()=>({authorized:true,planned}),fn=>{waits++;fn();}
  );
  function message(action,details={}){
@@ -145,28 +138,28 @@ test('watchlist imports a 20-item page before finalizing remaining pages without
 });
 
 
-test('native bookmark action opens only an inactive temporary tab and closes it',async()=>{
+test('direct bookmark mutation adds without creating any browser tabs',async()=>{
  const m=mock();
  const response=await m.message('kinoWatchlistSet',{
    payload:{movie:{type:'film',id:'100',title:'Тест'},
      desired:true,profileId:'7143359'}
  });
  assert.equal(response.ok,true);
- assert.equal(m.created,1);
- assert.equal(m.closed,1);
- assert.equal(m.tabArgs[0].active,false);
+ assert.equal(m.created,0);
+ assert.equal(m.closed,0);
+ assert.equal(m.clicks,1);
  assert.equal(m.planned,true);
 });
 
-test('missing Kinopoisk bookmark button never modifies local state or leaves tabs',async()=>{
- const m=mock({missingButton:true});
+test('mutation success without confirmed state leaves local list unchanged',async()=>{
+ const m=mock({unconfirmed:true});
  const response=await m.message('kinoWatchlistSet',{
    payload:{movie:{type:'film',id:'100'},desired:true,profileId:'7143359'}
  });
  assert.equal(response.ok,false);
- assert.match(response.error,/штатную кнопку/);
- assert.equal(m.created,1);
- assert.equal(m.closed,1);
+ assert.match(response.error,/не удалось подтвердить/);
+ assert.equal(m.created,0);
+ assert.equal(m.closed,0);
  assert.equal(m.planned,false);
  assert.equal(m.data.kinoWatchlistProfilesV1,undefined);
 });
@@ -177,9 +170,9 @@ test('site that refuses to save is reported as failure without optimistic list c
    payload:{movie:{type:'film',id:'100'},desired:true,profileId:'7143359'}
  });
  assert.equal(response.ok,false);
- assert.match(response.error,/не подтвердил/);
- assert.equal(m.created,1);
- assert.equal(m.closed,1);
+ assert.match(response.error,/отклонил/);
+ assert.equal(m.created,0);
+ assert.equal(m.closed,0);
  assert.equal(m.data.kinoWatchlistProfilesV1,undefined);
 });
 
@@ -207,7 +200,7 @@ test('confirmed X removal updates a pending import snapshot so title cannot reap
 });
 
 
-test('ready page and confirmed Kinopoisk response do not incur artificial waits',async()=>{
+test('confirmed direct mutation avoids browser and artificial timer waits',async()=>{
  const m=mock();
  const result=await m.message('kinoWatchlistSet',{
    payload:{movie:{type:'film',id:'100'},desired:true,
@@ -215,5 +208,6 @@ test('ready page and confirmed Kinopoisk response do not incur artificial waits'
  });
  assert.equal(result.ok,true);
  assert.equal(m.waits,0);
- assert.equal(m.closed,1);
+ assert.equal(m.closed,0);
+ assert.equal(m.created,0);
 });
