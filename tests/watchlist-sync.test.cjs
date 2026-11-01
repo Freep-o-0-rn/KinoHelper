@@ -20,7 +20,7 @@ function fixture(page) {
 
 function mock(options={}){
  const data={},events={};
- let account='7143359',planned=Boolean(options.initialPlanned),clicks=0,created=0,closed=0;
+ let account='7143359',planned=Boolean(options.initialPlanned),clicks=0,created=0,closed=0,waits=0;
  const tabArgs=[];
  const chrome={
    storage:{local:{
@@ -78,7 +78,7 @@ function mock(options={}){
    async url=>({ok:true,url,status:200,text:async()=>
      (options.fixture||fixture)(Number(new URLStub(url).searchParams.get('page')))}),
    URLStub,{timeout(){return undefined;}},console,
-   async()=>({authorized:true,planned}),fn=>fn()
+   async()=>({authorized:true,planned}),fn=>{waits++;fn();}
  );
  function message(action,details={}){
    return new Promise(resolve=>events.message({action,...details},
@@ -90,7 +90,8 @@ function mock(options={}){
  }
  return {data,message,tick,setAccount(id){account=id;},
    get clicks(){return clicks;},get planned(){return planned;},
-   get created(){return created;},get closed(){return closed;},tabArgs};
+   get created(){return created;},get closed(){return closed;},
+   get waits(){return waits;},tabArgs};
 }
 test('complete profile scan imports film and series independently',async()=>{
  const m=mock();
@@ -203,4 +204,16 @@ test('confirmed X removal updates a pending import snapshot so title cannot reap
  assert.equal(m.data.kinoWatchlistProfilesV1['7143359']['film:100'],undefined);
  assert.equal(m.data.kinoWatchlistImportJobV1.staged['film:100'],undefined);
  assert.ok(m.data.kinoWatchlistProfilesV1['2222']['film:100']);
+});
+
+
+test('ready page and confirmed Kinopoisk response do not incur artificial waits',async()=>{
+ const m=mock();
+ const result=await m.message('kinoWatchlistSet',{
+   payload:{movie:{type:'film',id:'100'},desired:true,
+     profileId:'7143359'}
+ });
+ assert.equal(result.ok,true);
+ assert.equal(m.waits,0);
+ assert.equal(m.closed,1);
 });
