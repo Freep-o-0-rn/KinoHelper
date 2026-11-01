@@ -37,6 +37,8 @@
      job=await putJob({profileId:id,page:1,done:0,total:null,
        staged:{},state:'loading',nextAt:Date.now(),count:0,
        failures:0,message:'Загрузка списка'});
+   } else if(job.state==='paused'&&job.message==='Авторизация не подтверждена'){
+     job=await putJob({...job,state:'loading',failures:0,nextAt:Date.now()});
    }
    await schedule(job.nextAt);
    return {ok:true,job};
