@@ -235,6 +235,15 @@
         ? 'series:'+item.id+':'+item.season+':'+item.episode
         : 'film:'+item.id;
       const observed=coveredPercent(progressKey,item);
+      let verified=block.querySelector('.history-coverage-label');
+      if(!item.completed && observed>0) {
+        if(!verified) {
+          verified=document.createElement('div');
+          verified.className='history-coverage-label';
+          block.appendChild(verified);
+        }
+        verified.textContent='Фактически просмотрено: '+Math.floor(observed)+'%';
+      } else if(verified)verified.remove();
       let confirm=block.querySelector('.history-confirm-complete');
       if (!item.completed && observed>=85) {
         if (!confirm) {
