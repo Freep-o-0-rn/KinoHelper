@@ -287,7 +287,7 @@
     if (known) indicator.value=Math.min(done,total);
     else indicator.removeAttribute('value'); // native indeterminate progress
     const knownVotes=Number(job.importedVotes)||0;
-    const phase=job.state==='completed'?'Оценки и просмотры загружены. Обновление — раз в сутки.'
+    const phase=job.state==='completed'?'Импорт завершён: оценки и просмотры загружены. Обновление — раз в сутки.'
       : job.state==='paused'?'Кинопоиск ограничил доступ. Попробуем позже.'
       : job.state==='retry'?'Ошибка соединения. Повторим позже.'
       : 'Загружаем оценки и просмотры в фоне. Панель можно закрыть.';
