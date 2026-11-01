@@ -20,7 +20,7 @@ function fixture(page) {
 
 function mock(options={}){
  const data={},events={};
- let account='7143359',planned=false,clicks=0,created=0,closed=0;
+ let account='7143359',planned=Boolean(options.initialPlanned),clicks=0,created=0,closed=0;
  const tabArgs=[];
  const chrome={
    storage:{local:{
@@ -180,4 +180,27 @@ test('site that refuses to save is reported as failure without optimistic list c
  assert.equal(m.created,1);
  assert.equal(m.closed,1);
  assert.equal(m.data.kinoWatchlistProfilesV1,undefined);
+});
+
+
+test('confirmed X removal updates a pending import snapshot so title cannot reappear on completion',async()=>{
+ const m=mock({initialPlanned:true});
+ const film={type:'film',id:'100',title:'Тест'};
+ m.data.kinoWatchlistProfilesV1={
+   '7143359':{'film:100':film},
+   '2222':{'film:100':{...film,title:'Чужой профиль'}}
+ };
+ m.data.kinoWatchlistImportJobV1={
+   profileId:'7143359',page:2,done:1,state:'loading',
+   staged:{'film:100':film},nextAt:Date.now()+60000
+ };
+ const reply=await m.message('kinoWatchlistSet',{
+   payload:{movie:film,desired:false,profileId:'7143359'}
+ });
+ assert.equal(reply.ok,true);
+ assert.equal(reply.planned,false);
+ assert.equal(m.planned,false);
+ assert.equal(m.data.kinoWatchlistProfilesV1['7143359']['film:100'],undefined);
+ assert.equal(m.data.kinoWatchlistImportJobV1.staged['film:100'],undefined);
+ assert.ok(m.data.kinoWatchlistProfilesV1['2222']['film:100']);
 });
