@@ -180,3 +180,41 @@ test('missing personal ratings still render all ten categories with zeros',()=>{
   assert.equal(result.meanRating,null);
   assert.ok(result.buckets.every(x=>x.count===0));
 });
+
+
+test('Kinopoisk watched marks and KinoHelper playback are combined once',()=>{
+  const data=core.summarize({
+    films:{'film:101':film(101,true),'film:202':film(202,false)},
+    episodes:{'series:777:1:1':ep(777,1,1,false)},
+    watched:{
+      'film:101':{watched:true,genres:['триллер']},
+      'film:202':{watched:true,genres:['драма']},
+      'film:303':{watched:true,genres:['драма']},
+      'series:777':{watched:true,genres:['драма']},
+      'series:888':{watched:true,genres:['детектив']}
+    },
+    ratings:{'film:999':{rating:10}},
+    watchTime:{'film:101':{seconds:30}}
+  });
+  assert.equal(data.finishedFilms,3);
+  assert.equal(data.unfinishedFilms,0);
+  assert.equal(data.kpFilmCount,3);
+  assert.equal(data.localFilmCount,1);
+  assert.equal(data.filmOverlap,1);
+  assert.equal(data.startedSeries,2);
+  assert.equal(data.completedSeries,2);
+  assert.equal(data.ratingsCount,1);
+  assert.equal(data.filmSeconds,30);
+  assert.equal(data.finishedEpisodes,0);
+  assert.equal(data.taggedTitles,5);
+});
+
+test('rated-only titles do not create watched films or series',()=>{
+  const data=core.summarize({ratings:{
+    'film:999':{rating:8},
+    'series:555':{rating:9}
+  }});
+  assert.equal(data.finishedFilms,0);
+  assert.equal(data.startedSeries,0);
+  assert.equal(data.completedSeries,0);
+});
