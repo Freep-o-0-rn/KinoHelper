@@ -314,8 +314,15 @@
      const scope=await chrome.storage.local.get([STORE,AUTO_KEY]);
      const items=obj(obj(scope[STORE])[auth.id]);
      const key='film:'+id;
-     const movie=items[key];
-     if(!movie)return {ok:true,queued:false,reason:'not in current profile list'};
+     let movie=items[key];
+     if(!movie){
+       // The full profile import may not have run yet. Confirm directly
+       // that this particular title is planned on the active account.
+       const remote=await getMovieRating({type:'film',id}).catch(()=>null);
+       if(remote?.authorized===true && remote.planned===true){
+         movie={type:'film',id,title:'Фильм №'+id};
+       }else return {ok:true,queued:false,reason:'not planned on current account'};
+     }
      const all={...obj(scope[AUTO_KEY])};
      const pending={...obj(all[auth.id])};
      if(pending[key]){
