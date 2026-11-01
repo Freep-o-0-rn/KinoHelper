@@ -22,9 +22,10 @@ test('verified premiere within last five months qualifies as new; future and sta
  assert.deepEqual(result.map(x=>x.id),['11']);
  assert.equal(result[0].kind,'new');
 });
-test('popularity or high Kinopoisk score is not a personal recommendation',()=>{
+test('popular title is visibly labelled popular, not a personal recommendation',()=>{
  const result=core.select({recommended:[film(1,['драма'],{rating:9.5})]});
- assert.equal(result.length,0);
+ assert.equal(result.length,1);
+ assert.equal(result[0].kind,'popular');
 });
 test('positive rated genre affinity qualifies new films as personal recommendations',()=>{
  const result=core.select({recommended:[
@@ -41,7 +42,8 @@ test('low rated genres lower rather than improve personal affinity',()=>{
  ratings:{'film:99':{rating:2}},genreRecords:{
    'film:99':{genres:['ужасы']}
  }});
- assert.equal(r.length,0);
+ assert.equal(r.length,1);
+ assert.equal(r[0].kind,'popular');
 });
 test('rated, watched or opened titles are excluded from recommendations',()=>{
  const r=core.select({
@@ -98,4 +100,33 @@ test('a vintage film rerelease does not count as a new movie',()=>{
    year:2010,releaseDate:date(-1)
  })]});
  assert.equal(result.length,0);
+});
+
+test('series are candidates, can match positively rated genres and keep type',()=>{
+ const r=core.select({recommended:[
+  {...film(55,['драма']),type:'series',title:'Сериал 55'},
+  film(56,['фантастика'])
+ ],ratings:{'film:100':{rating:9}},
+ genreRecords:{'film:100':{genres:['драма']}}});
+ assert.equal(r[0].id,'55');
+ assert.equal(r[0].type,'series');
+ assert.equal(r[0].kind,'for-you');
+ assert.equal(r[1].kind,'popular');
+});
+test('history and ratings suppress the same catalog id across film and series URLs',()=>{
+ const r=core.select({recommended:[
+  {...film(55,['драма']),type:'series'},film(56,['драма'])
+ ],ratings:{'film:55':{rating:8},'film:100':{rating:9}},
+ genreRecords:{'film:100':{genres:['драма']}}});
+ assert.deepEqual(r.map(x=>x.id),['56']);
+ const h=core.select({recommended:[film(55,['драма'])],
+  history:[{url:'https://www.kinopoisk.ru/series/55/'}]});
+ assert.deepEqual(h,[]);
+});
+test('a series needs a verified recent premiere to be labelled new',()=>{
+ const series={...film(75,['драма'],{releaseDate:date(-1)}),type:'series'};
+ const r=core.select({newReleases:[series]});
+ assert.equal(r[0].kind,'new');
+ assert.equal(r[0].type,'series');
+ assert.equal(core.select({newReleases:[{...series,releaseDate:''}]}).length,0);
 });
