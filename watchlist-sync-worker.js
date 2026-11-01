@@ -142,6 +142,10 @@
      try{
        if(job.page>MAX_PAGE)throw Error('Превышено число страниц');
        const result=await loadPage(job.profileId,job.page);
+       // Verify identity immediately before importing data into its scope.
+       const fresh=await self.KinoStatsAccount.detect(undefined,{force:true});
+       if(fresh.status!=='logged-in'||fresh.id!==job.profileId)
+         throw Error('Аккаунт изменился во время импорта');
        if(!Array.isArray(result?.items)||
           (!result.recognized && !result.verifiedEmpty)){
          throw Error('Список не распознан на странице '+job.page+
