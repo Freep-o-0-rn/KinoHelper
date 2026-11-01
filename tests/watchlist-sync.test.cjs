@@ -19,14 +19,14 @@ function fixture(page) {
 }
 
 function mock(options={}){
- const data={},events={};
+ const data={},events={},writes=[];
  let account='7143359',planned=Boolean(options.initialPlanned),clicks=0,created=0,closed=0,waits=0;
  const tabArgs=[];
  const chrome={
    storage:{local:{
      async get(keys){return Object.fromEntries((Array.isArray(keys)?keys:[keys])
        .map(k=>[k,data[k]]));},
-     async set(values){Object.assign(data,values);}
+     async set(values){writes.push(Object.keys(values));Object.assign(data,values);}
    }},
    alarms:{async create(){},onAlarm:{addListener(cb){events.alarm=cb;}}},
    offscreen:{async hasDocument(){return true;},async createDocument(){}},
@@ -81,7 +81,7 @@ function mock(options={}){
    events.alarm({name:'kinoWatchlistImportV1'});
    for(let i=0;i<80;i++)await Promise.resolve();
  }
- return {data,message,tick,setAccount(id){account=id;},
+ return {data,writes,message,tick,setAccount(id){account=id;},
    get clicks(){return clicks;},get planned(){return planned;},
    get created(){return created;},get closed(){return closed;},
    get waits(){return waits;},tabArgs};
@@ -210,4 +210,35 @@ test('confirmed direct mutation avoids browser and artificial timer waits',async
  assert.equal(m.waits,0);
  assert.equal(m.closed,0);
  assert.equal(m.created,0);
+});
+
+
+test('large watchlist warms up for two pages then batches two sequential pages',async()=>{
+ function largeListing(page){
+   const state={apolloState:{ROOT_QUERY:{plannedToWatch:{__ref:'List'}},
+     List:{items:[{__ref:'Reaction'}]},
+     Reaction:{__typename:'UserMovieReactions',movie:{__ref:'Movie'}},
+     Movie:{id:7000+page,__typename:'Film',
+       title:{russian:'Страница '+page},productionYear:2024}
+   }};
+   return '<a href="?page=5">5</a><script>window.Ya.__ssr_initial_data = '+
+      JSON.stringify(state)+';</script>';
+ }
+ const m=mock({fixture:largeListing});
+ await m.message('kinoWatchlistEnsure',{profileId:'7143359'});
+ // Initial warm-up loads page 1 only, respecting the old cadence.
+ await m.tick();
+ assert.equal(m.data.kinoWatchlistImportJobV1.done,2);
+ assert.equal(m.waits,0);
+ // Once two pages are verified, one alarm can read pages 3 and 4.
+ await m.tick();
+ assert.equal(m.data.kinoWatchlistImportJobV1.done,4);
+ assert.equal(m.waits,1);
+ await m.tick();
+ assert.equal(m.data.kinoWatchlistImportJobV1.state,'completed');
+ assert.equal(Object.keys(m.data.kinoWatchlistProfilesV1['7143359']).length,5);
+ assert.ok(m.writes.filter(keys=>
+   keys.includes('kinoWatchlistProfilesV1')).every(keys=>
+     keys.includes('kinoWatchlistImportJobV1')),
+   'importer must atomically persist list and cursor');
 });
