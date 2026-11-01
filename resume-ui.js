@@ -378,15 +378,15 @@
   async function readStorage() {
     const sequence = ++storageReadSequence;
     try {
-      const [filmData, seriesData, coverageData] = await Promise.all([
-        chrome.storage.local.get(PROGRESS_KEY),
-        chrome.storage.local.get(SERIES_KEY),
-        chrome.storage.local.get(COVERAGE_KEY)
+      // A single IPC read instead of three separate Chrome storage calls.
+      // This path runs frequently while the player saves its 5s checkpoints.
+      const snapshot = await chrome.storage.local.get([
+        PROGRESS_KEY, SERIES_KEY, COVERAGE_KEY
       ]);
       if (sequence !== storageReadSequence) return;
-      const stored = filmData[PROGRESS_KEY];
-      const episodes = seriesData[SERIES_KEY];
-      const segments = coverageData[COVERAGE_KEY];
+      const stored = snapshot[PROGRESS_KEY];
+      const episodes = snapshot[SERIES_KEY];
+      const segments = snapshot[COVERAGE_KEY];
       coverage = segments&&typeof segments==='object'&&!Array.isArray(segments)
         ?segments:Object.create(null);
       progress = stored && typeof stored === 'object' && !Array.isArray(stored)
