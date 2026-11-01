@@ -67,12 +67,14 @@
        const target=new URL(response.url);
        if(target.protocol!=='https:'||
           !['kinopoisk.ru','www.kinopoisk.ru'].includes(target.hostname)||
-          target.pathname!==new URL(path(job.profileId)).pathname)
+          target.pathname.replace(/\/+$/,'')!==
+            new URL(path(job.profileId)).pathname.replace(/\/+$/,''))
          throw Error('Кинопоиск перенаправил запрос');
        const html=await response.text();
        if(html.length>9e6)throw Error('Слишком большой ответ');
        const result=await parse(html,job.page);
-       if(!Array.isArray(result?.items)||!result.recognized){
+       if(!Array.isArray(result?.items)||
+          (!result.recognized && !(job.page===1 && result.verifiedEmpty))){
          // Empty lists need explicit evidence. Preserve existing data.
          throw Error('Список не распознан — данные оставлены без изменений');
        }
@@ -82,6 +84,8 @@
        for(const item of result.items){
          const key=keyOf(item);if(key)staged[key]={...item,source:'kinopoisk'};
        }
+       if(!result.lastPage && result.items.length>=20)
+         throw Error('Нет подтверждённой пагинации; список оставлен без изменений');
        const total=Number(result.lastPage)||job.total||1;
        const complete=job.page>=total;
        if(complete){
