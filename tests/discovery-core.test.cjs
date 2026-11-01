@@ -34,8 +34,9 @@ test('positive rated genre affinity qualifies new films as personal recommendati
  ],ratings:{'film:99':{rating:9}},genreRecords:{
    'film:99':{genres:['драма']}
  }});
- assert.deepEqual(result.map(x=>x.id),['10']);
+ assert.deepEqual(result.map(x=>x.id),['10','11']);
  assert.equal(result[0].kind,'for-you');
+ assert.equal(result[1].kind,'popular');
 });
 test('low rated genres lower rather than improve personal affinity',()=>{
  const r=core.select({recommended:[film(10,['ужасы'],{rating:9})],
