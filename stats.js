@@ -145,7 +145,7 @@
   }
   function render(model) {
     const films = [
-      {name:'Завершено', value:model.finishedFilms,
+      {name:'Просмотрено', value:model.finishedFilms,
         valueLabel:count(model.finishedFilms),color:palette.film},
       {name:'В процессе', value:model.unfinishedFilms,
         valueLabel:count(model.unfinishedFilms),color:palette.other}
