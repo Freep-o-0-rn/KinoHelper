@@ -18,7 +18,7 @@ function fixture(page) {
     JSON.stringify(state)+';</script>';
 }
 
-function mock(){
+function mock(options={}){
  const data={},events={};
  let account='7143359',planned=false,clicks=0;
  const chrome={
@@ -64,7 +64,7 @@ function mock(){
    'getMovieRating','setTimeout',worker)(
    chrome,self,
    async url=>({ok:true,url,status:200,text:async()=>
-     fixture(Number(new URLStub(url).searchParams.get('page')))}),
+     (options.fixture||fixture)(Number(new URLStub(url).searchParams.get('page')))}),
    URLStub,{timeout(){return undefined;}},console,
    async()=>({authorized:true,planned}),fn=>fn()
  );
@@ -104,4 +104,28 @@ test('verified add and remove affect only the active account',async()=>{
    payload:{movie:film,desired:true,profileId:'999999'}
  })).ok,false);
  assert.equal(m.clicks,2);
+});
+
+
+test('watchlist imports a 20-item page before finalizing remaining pages without pager links',async()=>{
+ function listing(page){
+   const count=page===1?20:3;
+   const state={apolloState:{ROOT_QUERY:{plannedToWatch:{__ref:'List'}},
+     List:{items:Array.from({length:count},(_,i)=>({__ref:'Item:'+i}))}}};
+   for(let i=0;i<count;i++){
+     state.apolloState['Item:'+i]={__typename:'UserMovieReactions',
+       movie:{__ref:'Movie:'+i}};
+     state.apolloState['Movie:'+i]={__typename:i===0?'TvSeries':'Film',
+       id:1000+(page-1)*20+i,title:{russian:'Название '+i}};
+   }
+   return '<script>window.Ya.__ssr_initial_data = '+JSON.stringify(state)+'</script>';
+ }
+ const m=mock({fixture:listing});
+ await m.message('kinoWatchlistEnsure',{profileId:'7143359'});
+ await m.tick();
+ assert.equal(Object.keys(m.data.kinoWatchlistProfilesV1['7143359']).length,20);
+ assert.equal(m.data.kinoWatchlistImportJobV1.state,'loading');
+ await m.tick();
+ assert.equal(Object.keys(m.data.kinoWatchlistProfilesV1['7143359']).length,23);
+ assert.equal(m.data.kinoWatchlistImportJobV1.state,'completed');
 });
