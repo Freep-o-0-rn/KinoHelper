@@ -20,8 +20,10 @@
   let items=[],index=0,nextAt=Date.now()+INTERVAL,hovered=false;
   const imageCache=new Map(),detailsCache=new Map(),inFlight=new Set();
   const failedFacts=new Map(),failedPosters=new Map();
+  const metadataPending=new Map(),metadataFailures=new Map();
   const posterJobs=[];
   let activePosterJobs=0;
+  const limitPosterJobs=4;
   let persistedFacts={},persistedPosters={};
   const factsPending=new Map();
 
@@ -155,7 +157,7 @@
       const html=await response.text();
       if(html.length>6e6)throw Error('Карточка слишком большая');
       const doc=new DOMParser().parseFromString(html,'text/html');
-      const record={title:'',genres:[],description:'',
+      const record={title:'',genres:[],description:'',rating:null,
         posterUrl:'',posterFallback:'',releaseDate:premiereFromFilm(doc)};
       for(const script of doc.querySelectorAll('script[type="application/ld+json"]')){
         try{
@@ -168,6 +170,9 @@
             record.genres=core.genres(typeof node.genre==='string'?
               node.genre.split(','):node.genre);
             record.description=copy(node.description).slice(0,230);
+            const rawRating=Number(String(node.aggregateRating?.ratingValue||'').replace(',','.'));
+            if(Number.isFinite(rawRating)&&rawRating>0&&rawRating<=10)
+              record.rating=rawRating;
             const imgs=[node.image,node.thumbnailUrl].flat().map(x=>
               typeof x==='string'?x:(x?.url||x?.contentUrl||''));
             record.posterUrl=imgs.map(core.poster).find(Boolean)||'';
@@ -210,11 +215,15 @@
         if(desc.length>=35&&!/смотреть онлайн/i.test(desc))
           record.description=desc.slice(0,230);
       }
-      detailsCache.set(id,record);
-      persistedFacts[id]={...record,cachedAt:Date.now()};
-      // Persist metadata, but never account data or full HTML pages.
+      const previous=detailsCache.get(id)||{};
+      const merged={...previous,...record,
+        rating:record.rating||previous.rating||null,
+        posterUrl:record.posterUrl||previous.posterUrl||'',
+        posterFallback:record.posterFallback||previous.posterFallback||''};
+      detailsCache.set(id,merged);
+      persistedFacts[id]={...merged,cachedAt:Date.now()};
       try{await chrome.storage.local.set({[FACT_CACHE]:persistedFacts});}catch{}
-      return record;
+      return merged;
     })().catch(error=>{
       failedFacts.set(id,Date.now()+RETRY_TTL);
       throw error;
@@ -241,6 +250,7 @@
             title:fact.title||movie.title,
             genres:fact.genres.length?fact.genres:movie.genres,
             description:fact.description||movie.description||'',
+            rating:fact.rating||movie.rating||null,
             releaseDate:fact.releaseDate||movie.releaseDate||'',
             posterUrl:fact.posterUrl||movie.posterUrl||'',
             posterFallback:fact.posterFallback||movie.posterFallback||''};
@@ -299,7 +309,7 @@
     const desc=cached?.description||item.description||'';
     description.textContent=desc;
     description.hidden=!desc;
-    const kpRating=Number(item.rating);
+    const kpRating=Number(cached?.rating||item.rating);
     rating.textContent=Number.isFinite(kpRating)&&kpRating>0
       ?'★ КП '+kpRating.toFixed(1).replace('.',','):'';
     rating.hidden=!rating.textContent;
@@ -311,8 +321,8 @@
     link.setAttribute('aria-label','Открыть «'+item.title+'» на Кинопоиске');
     drawDots();
     void enrich(item);
-    void preparePoster(item);
-    if(items.length>1)void preparePoster(items[(index+1)%items.length]);
+    preparePoster(item);
+    if(items.length>1)preparePoster(items[(index+1)%items.length]);
   }
   function go(i){
     if(!items.length)return;
@@ -328,6 +338,9 @@
     index=current>=0?current:0;
     box.hidden=false;
     show();
+    // Download the visible slide first, then fill remaining posters in the
+    // background. The queue deduplicates movie IDs across rapid navigation.
+    for(const movie of items)preparePoster(movie);
   }
   function preparePoster(item){
     if(!item)return;
@@ -339,7 +352,7 @@
     pumpPosterJobs();
   }
   function pumpPosterJobs(){
-    while(activePosterJobs<2&&posterJobs.length){
+    while(activePosterJobs<limitPosterJobs&&posterJobs.length){
       const {item,id}=posterJobs.shift();
       activePosterJobs++;
       Promise.resolve().then(()=>loadPoster(item)).catch(error=>{
@@ -389,7 +402,7 @@
         img.onload=null;img.onerror=null;
         if(error)reject(error);else resolve(src);
       };
-      const timeout=setTimeout(()=>finish(Error('Image timeout')),5000);
+      const timeout=setTimeout(()=>finish(Error('Image timeout')),2700);
       img.onload=()=>finish(img.naturalWidth>=1?null:Error('Empty image'));
       img.onerror=()=>finish(Error('Image blocked or not found'));
       img.src=src;
@@ -429,7 +442,9 @@
       }
       return false;
     };
-    // First reuse images already embedded in the *actual* catalog card.
+    // Use the catalog's image immediately if it works. Prefer this fast
+    // path, but independently fetch verified metadata to fill in КП ratings.
+    const official=ensureMetadata(item);
     const sourceCatalog=core.posterSources({...item,id:''});
     if(await trySources(sourceCatalog,'catalog'))return;
     // Film facts and metadata can contain original poster links absent
@@ -439,14 +454,10 @@
       posterUrl:facts?.posterUrl,posterFallback:facts?.posterFallback,id:''
     }),'facts'))return;
     try{
-      const response=await chrome.runtime.sendMessage({
-        action:'getSearchMovieMetadata',payload:{type:item.type,id:item.id}
-      });
-      if(response?.ok&&response.metadata&&await trySources(core.posterSources({
-        posterUrl:response.metadata.poster,
-        posterFallback:response.metadata.posterFallback,id:''
+      const record=await official;
+      if(record&&await trySources(core.posterSources({
+        posterUrl:record.posterUrl,posterFallback:record.posterFallback,id:''
       }),'metadata'))return;
-      if(!response?.ok)errors.push('metadata: '+(response?.error||'unavailable'));
     }catch(e){errors.push('metadata: '+String(e?.message||e));}
     try{
       const response=await chrome.runtime.sendMessage({
@@ -462,11 +473,54 @@
     console.warn('[KinoHelper] Диагностика постера:',stats);
     throw Error('Нет доступных изображений: '+stats.results.join('; ').slice(0,160));
   }
+  // One verification per title and popup view. Do not wait for the poster
+  // failure before requesting its official score: these are independent.
+  async function ensureMetadata(item){
+    const id=core.keyOf(item);
+    const cached=detailsCache.get(id);
+    if(cached?.metadataChecked)return cached;
+    if((metadataFailures.get(id)||0)>Date.now())return cached||null;
+    if(metadataPending.has(id))return metadataPending.get(id);
+    const work=(async()=>{
+      const response=await chrome.runtime.sendMessage({
+        action:'getSearchMovieMetadata',payload:{id:item.id,type:item.type}
+      });
+      if(!response?.ok||!response.metadata)
+        throw Error(response?.error||'Метаданные Кинопоиска недоступны');
+      const value=response.metadata;
+      const previous=detailsCache.get(id)||{};
+      const score=Number(value.rating);
+      const record={...previous,
+        rating:Number.isFinite(score)&&score>0&&score<=10
+          ?score:(previous.rating||null),
+        posterUrl:core.poster(value.poster)||previous.posterUrl||'',
+        posterFallback:core.poster(value.posterFallback)||previous.posterFallback||'',
+        metadataChecked:true};
+      detailsCache.set(id,record);
+      persistedFacts[id]={...record,cachedAt:Date.now()};
+      try{await chrome.storage.local.set({[FACT_CACHE]:persistedFacts});}catch{}
+      if(items[index]&&core.keyOf(items[index])===id) {
+        const n=Number(record.rating||item.rating);
+        rating.textContent=Number.isFinite(n)&&n>0
+          ?'★ КП '+n.toFixed(1).replace('.',','):'';
+        rating.hidden=!rating.textContent;
+      }
+      return record;
+    })().catch(error=>{
+      metadataFailures.set(id,Date.now()+5*60*1000);
+      console.debug('[KinoHelper] Рейтинг/метаданные '+id+': '+String(error?.message||error));
+      return detailsCache.get(id)||null;
+    }).finally(()=>metadataPending.delete(id));
+    metadataPending.set(id,work);
+    return work;
+  }
   function showImage(url){
     poster.src=url;backdrop.src=url;
     poster.hidden=false;backdrop.hidden=false;empty.hidden=true;
   }
   async function enrich(item){
+    // Metadata and HTML can load in parallel; either can supply the КП score.
+    const verified=ensureMetadata(item);
     try{
       const record=await filmFacts(item);
       if(core.keyOf(items[index])===core.keyOf(item)){
@@ -479,8 +533,14 @@
         genre.hidden=!genre.textContent;
         const desc=record.description||item.description||'';
         description.textContent=desc;description.hidden=!desc;
+        const value=Number(record.rating||item.rating);
+        if(value>0&&value<=10){
+          rating.textContent='★ КП '+value.toFixed(1).replace('.',',');
+          rating.hidden=false;
+        }
       }
     }catch{/* Missing metadata is not invented. */}
+    await verified;
   }
   function dedupe(list){
     const seen=new Set();
