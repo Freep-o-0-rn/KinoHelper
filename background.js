@@ -1706,10 +1706,8 @@ async function saveResumeProgress(payload, sender) {
       !Array.isArray(store[RESUME_STORAGE_KEY])
       ? { ...store[RESUME_STORAGE_KEY] } : {};
     const older = entries[key];
-    // The video may have long closing credits. Recognize a verified
-    // >=90% playback checkpoint, without requiring the player to emit "ended".
-    // A seeked event alone never completes a title.
-    const completed = playbackCompletionStatus(item, older);
+    const coverage = await rememberPlaybackCoverage(key,item,payload);
+    const completed = playbackCompletionStatus(item, older, coverage);
 
     // If playback restarted from the beginning after completion, a new
     // verified session creates a fresh unfinished entry.
@@ -2106,22 +2104,94 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
 // when the iframe's own confirmed selector AND the parent series ID agree.
 // No automatic series seeking/selecting in this stage.
 
-// One completion rule for films and individually verified series episodes.
-// 90% is an end-credits heuristic, not a claim that every second was watched.
-// Require 60–120 seconds of actual play in this player session to reduce
-// false positives from a quick seek to the end. Keep the explicit "ended"
-// path for players that produce it. Never count an isolated seeked event.
-function playbackCompletionStatus(item, previous) {
-  const fullyEnded = item.event === 'ended' && item.played >= 30 &&
-    item.position >= item.duration - 5;
-  const minPlayed = Math.min(120, Math.max(60, item.duration * 0.02));
-  const nearCredits = item.event !== 'seeked' &&
-    item.position >= item.duration * 0.9 && item.played >= minPlayed;
-  // Completed checkpoints survive later pauses. An intentional rewatch
-  // starting within the first 10% opens a new incomplete checkpoint.
-  const alreadyCompleted = Boolean(previous?.completed &&
-    item.position >= item.duration * 0.1);
-  return fullyEnded || nearCredits || alreadyCompleted;
+// v1.569: only unique *observed* sections count towards 90% completion.
+// Position alone (including a video "ended" after a seek) never counts.
+const PLAYBACK_COVERAGE_KEY = 'kinoPlaybackCoverageV1';
+const PLAYBACK_COVERAGE_MAX_RANGES = 512;
+const PLAYBACK_COVERAGE_MAX_TITLES = 600;
+let playbackCoverageQueue = Promise.resolve();
+
+function unionPlaybackRanges(ranges) {
+  const ordered = ranges
+    .filter(pair => Array.isArray(pair) && pair.length === 2 &&
+      Number.isFinite(pair[0]) && Number.isFinite(pair[1]) &&
+      pair[1] > pair[0])
+    .sort((a,b) => a[0] - b[0] || a[1] - b[1]);
+  const result = [];
+  for(const item of ordered) {
+    const end = result[result.length - 1];
+    if(end && item[0] <= end[1] + 0.05) {
+      end[1] = Math.max(end[1],item[1]);
+    } else {
+      result.push([item[0],item[1]]);
+    }
+  }
+  return result;
+}
+
+function playbackCoverageSeconds(ranges) {
+  return ranges.reduce((sum,[from,to]) => sum + (to-from),0);
+}
+
+function validateObservedRanges(payload, duration) {
+  if (!Array.isArray(payload?.watchedRanges) ||
+      payload.watchedRanges.length > 64) return [];
+  return payload.watchedRanges.filter(pair =>
+    Array.isArray(pair) && pair.length === 2 &&
+    Number.isFinite(pair[0]) && Number.isFinite(pair[1]) &&
+    pair[0] >= 0 && pair[1] <= duration + 0.1 &&
+    pair[1] - pair[0] >= 0.05 && pair[1] - pair[0] <= 20
+  ).map(([start,end]) => [Math.max(0,start),Math.min(end,duration)]);
+}
+
+// Called only after verifying tab identity, permissions, and the active
+// film or individual series episode. Serialize writes across tabs/sessions.
+function rememberPlaybackCoverage(mediaKey, item, payload) {
+  const task = async () => {
+    if (!/^(?:film:[1-9]\d{0,12}|series:[1-9]\d{0,12}:\d{1,3}:\d{1,3})$/
+      .test(mediaKey)) return {completed:false,seconds:0};
+    const fresh = validateObservedRanges(payload,item.duration);
+    const stored = (await chrome.storage.local.get(PLAYBACK_COVERAGE_KEY))
+      [PLAYBACK_COVERAGE_KEY];
+    const all = stored && typeof stored === 'object' && !Array.isArray(stored)
+      ? {...stored} : {};
+    const old = all[mediaKey];
+    const sameDuration = Number.isFinite(old?.duration) &&
+      Math.abs(old.duration - item.duration) <=
+        Math.max(10,item.duration * 0.015);
+    const oldRanges = sameDuration && Array.isArray(old.ranges) ?
+      old.ranges.filter(x => Array.isArray(x) && x.length===2 &&
+        Number.isFinite(x[0]) && Number.isFinite(x[1]) &&
+        x[0]>=0 && x[1]<=item.duration && x[1]>x[0]) : [];
+    const ranges = unionPlaybackRanges([...oldRanges,...fresh]);
+    // For excessively fragmented histories, retain a conservative bounded
+    // subset. Dropping intervals can delay completion, but never invent it.
+    const bounded = ranges.length > PLAYBACK_COVERAGE_MAX_RANGES
+      ? ranges.slice(-PLAYBACK_COVERAGE_MAX_RANGES) : ranges;
+    const seconds = playbackCoverageSeconds(bounded);
+    if(fresh.length || !sameDuration) {
+      all[mediaKey]={duration:item.duration,ranges:bounded,updatedAt:Date.now()};
+      const keys = Object.keys(all);
+      if(keys.length > PLAYBACK_COVERAGE_MAX_TITLES) {
+        keys.sort((a,b)=>Number(all[b]?.updatedAt||0)-
+          Number(all[a]?.updatedAt||0));
+        for(const key of keys.slice(PLAYBACK_COVERAGE_MAX_TITLES))delete all[key];
+      }
+      await chrome.storage.local.set({[PLAYBACK_COVERAGE_KEY]:all});
+    }
+    return {seconds,completed:seconds >= item.duration*0.9};
+  };
+  const result = playbackCoverageQueue.then(task,task);
+  playbackCoverageQueue = result.catch(error => console.warn(
+    '[KinoHelper] Coverage save failed:',error));
+  return result;
+}
+
+function playbackCompletionStatus(item, previous, coverage) {
+  // Previously completed films remain completed when their old checkpoint is
+  // updated; restarting from the opening can create a new incomplete replay.
+  return Boolean(coverage?.completed ||
+    (previous?.completed && item.position >= item.duration * 0.1));
 }
 const SERIES_PROGRESS_KEY = 'kinoSeriesEpisodeProgressV1';
 const SERIES_PROGRESS_LIMIT = 300;
@@ -2185,7 +2255,8 @@ async function saveSeriesEpisodeProgress(payload, sender) {
     const entries = data && typeof data === 'object' && !Array.isArray(data)
       ? { ...data } : {};
     const older = entries[key];
-    const completed = playbackCompletionStatus(item, older);
+    const coverage = await rememberPlaybackCoverage(key,item,payload);
+    const completed = playbackCompletionStatus(item, older, coverage);
     const cleanTitle = String(current.title || '').replace(/\s+/g, ' ').trim().slice(0, 150);
     entries[key] = {
       type: 'series', id: series.id,
