@@ -19,7 +19,8 @@
     'kinoHelperDisplayMode', 'kinoPlaybackProgressV1',
     'kinoSeriesEpisodeProgressV1', 'kinoStatsLibraryV1',
     'kinoStatsWatchTimeV1', 'kinoStatsGenresV1', 'kinoStatsRatingsV1',
-    'kinoStatsProfileId', 'kinoStatsProfileImportV1', 'kinoStatsWatchedV1'
+    'kinoStatsProfileId', 'kinoStatsProfileImportV1', 'kinoStatsWatchedV1',
+    'kinoWatchlistProfilesV1'
   ];
   const OBJECT_KEYS = new Set(STORAGE_KEYS.filter(key =>
     key !== 'kinoHelperDisplayMode' && key !== 'kinoStatsProfileId'));
@@ -125,6 +126,13 @@
   function mergeStorageValue(key, existing, imported) {
     if (key === 'kinoStatsRatingsV1') return mergeRatings(existing, imported);
     if (key === 'kinoStatsWatchedV1') return mergeWatched(existing, imported);
+    if (key === 'kinoWatchlistProfilesV1') {
+      return mergeMap(existing, imported,
+        id => /^[1-9]\d{0,12}$/.test(id),
+        (a,b)=>mergeMap(a,b,
+          (id,item)=>/^(?:film|series):[1-9]\d{0,12}$/.test(id) &&
+            object(item),newest));
+    }
     if (key === 'kinoStatsProfileImportV1') {
       return mergeProfileImports(existing, imported);
     }
