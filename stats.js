@@ -66,6 +66,29 @@
     const visibleSegments = entries.filter(item =>
       Number.isFinite(item.value) && item.value > 0).length;
     let offset = 0;
+    const segments = [];
+    const resetSelection = () => {
+      strong.textContent = center || '—';
+      small.textContent = sub;
+      wrap.classList.remove('stats-tip-visible');
+      for (const piece of segments) {
+        piece.setAttribute('stroke-width','13');
+        piece.setAttribute('opacity','1');
+      }
+    };
+    const selectRow = row => {
+      if (!row) return resetSelection();
+      const index = entries.indexOf(row);
+      if (index < 0) return;
+      strong.textContent = row.valueLabel || '—';
+      small.textContent = row.name;
+      tooltip.textContent = row.tooltipLabel || (row.name + ': ' + row.valueLabel);
+      wrap.classList.add('stats-tip-visible');
+      segments.forEach((piece,i) => {
+        piece.setAttribute('stroke-width',i === index?'16':'13');
+        piece.setAttribute('opacity',i === index?'1':'0.4');
+      });
+    };
     const makeCircle = (color, portion, start, description, interactive, gapPx = 0) => {
       const circle = document.createElementNS('http://www.w3.org/2000/svg','circle');
       circle.setAttribute('cx','50'); circle.setAttribute('cy','50');
@@ -81,6 +104,7 @@
       circle.setAttribute('stroke-dashoffset',
         String(-(start * circumference + gapPx / 2)));
       if (interactive) {
+        segments.push(circle);
         circle.setAttribute('class','stats-donut-piece');
         circle.setAttribute('tabindex','0');
         circle.setAttribute('aria-label',description);
@@ -116,15 +140,35 @@
     }
     wrap.append(svg,centerNode,tooltip);
     host.appendChild(wrap);
+    return { select: selectRow, reset: resetSelection };
   }
 
-  function makeLegend(container, data, { showZeros = false } = {}) {
+  function makeLegend(container, data, { showZeros = false,
+    onSelect = null, onClear = null } = {}) {
     const previousScroll = container.scrollTop;
     container.replaceChildren();
     for (const row of data) {
       if (!row.value && !showZeros) continue;
       const line = document.createElement('div');
       line.className = 'stats-legend-row';
+      if (typeof onSelect === 'function') {
+        line.classList.add('stats-genre-selectable');
+        line.setAttribute('role','button');
+        line.setAttribute('tabindex','0');
+        line.setAttribute('aria-label',row.tooltipLabel ||
+          row.name+': '+row.valueLabel);
+        line.addEventListener('mouseenter',()=>onSelect(row));
+        line.addEventListener('focus',()=>onSelect(row));
+        line.addEventListener('click',()=>onSelect(row));
+        line.addEventListener('mouseleave',()=>onClear?.());
+        line.addEventListener('blur',()=>onClear?.());
+        line.addEventListener('keydown',event=>{
+          if(event.key==='Enter'||event.key===' '){
+            event.preventDefault();
+            onSelect(row);
+          }
+        });
+      }
       const dot = document.createElement('span');
       dot.className = 'stats-legend-dot';
       dot.style.background = row.color;
@@ -202,10 +246,13 @@
       : 'Время появится после начала просмотра.';
 
     const genres = genreRows(model);
-    createSvgChart(els('statsGenresChart'), genres,'Любимые жанры',
+    const genreChart = createSvgChart(els('statsGenresChart'), genres,'Любимые жанры',
       {big:true,center:genres[0]?.valueLabel || '—',
         sub:genres[0]?.name || 'Нет данных',separateSegments:true});
-    makeLegend(els('statsGenresLegend'),genres);
+    makeLegend(els('statsGenresLegend'),genres,{
+      onSelect: genreChart.select,
+      onClear: genreChart.reset
+    });
     const n=genres.length;
     const word=n%100>=11&&n%100<=14 ? 'жанров'
       : n%10===1 ? 'жанр' : [2,3,4].includes(n%10) ? 'жанра' : 'жанров';
