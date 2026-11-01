@@ -126,6 +126,7 @@ function setup(options={}){
      if(selector.includes('application/ld+json'))
       return [{textContent:JSON.stringify({'@type':match?.[1]==='series'?'TVSeries':'Movie',
        image:options.filmPoster||undefined,
+       aggregateRating:options.filmRating?{ratingValue:options.filmRating}:undefined,
        name:'Проверенный '+(match?.[2]||''),genre:'драма',
        description:'Описание из официальной карточки'})}];
      if(selector==='dt, th, span, div')
@@ -294,7 +295,7 @@ test('native HTML Image preload can recover where fetch-based poster worker fail
  const second=setup({data,sessionData:x.sessionData,
   nativePoster:url=>url===base+'/300x450'});await second.settle();
  assert.equal(second.nodes.discoveryPoster.src,base+'/300x450');
- assert.equal(second.messages.length,0);
+ assert.equal(second.messages.filter(m=>m.action==='loadSearchPoster').length,0);
 });
 test('film page JSON-LD image becomes verified cached poster metadata',async()=>{
  const poster='https://avatars.mds.yandex.net/get-kinopoisk-image/777/document/orig';
@@ -304,4 +305,34 @@ test('film page JSON-LD image becomes verified cached poster metadata',async()=>
  }};
  const x=setup({data,filmPoster:poster,catalogData:{}});await x.settle();
  assert.equal(x.data.kinoDiscoveryFactsV1['film:777'].posterUrl,poster);
+});
+
+test('official GraphQL rating appears even when poster loads independently',async()=>{
+ const url='https://avatars.mds.yandex.net/get-kinopoisk-image/1/2/orig';
+ const data={kinoDiscoveryCatalogV1:{schema:2,savedAt:Date.now(),
+  enrichedAt:Date.now(),popular:[{type:'film',id:'880',
+   title:'Фильм с оценкой',year:2025,genres:['драма'],posterUrl:url}],
+  new:[]}};
+ const x=setup({data,nativePoster:src=>src===url,
+  imageResponder:async request=>request.action==='getSearchMovieMetadata'
+   ?{ok:true,metadata:{rating:8.7,poster:url}}
+   :{ok:false}});
+ await x.settle();
+ assert.equal(x.nodes.discoveryRating.hidden,false);
+ assert.equal(x.nodes.discoveryRating.textContent,'★ КП 8,7');
+ assert.equal(x.nodes.discoveryPoster.hidden,false);
+ assert.equal(x.data.kinoDiscoveryFactsV1['film:880'].rating,8.7);
+ const second=setup({data,sessionData:x.sessionData});
+ await second.settle();
+ assert.equal(second.nodes.discoveryRating.textContent,'★ КП 8,7');
+});
+test('film page JSON-LD rating used when GraphQL is unavailable',async()=>{
+ const data={kinoDiscoveryCatalogV1:{schema:2,savedAt:Date.now(),
+  enrichedAt:Date.now(),popular:[{type:'film',id:'990',
+   title:'Фильм с рейтингом',year:2025,genres:['драма']}],new:[]}};
+ const x=setup({data,catalogData:{},filmRating:'7.9'});
+ await x.settle();
+ assert.equal(x.nodes.discoveryRating.textContent,'★ КП 7,9');
+ assert.equal(x.nodes.discoveryRating.hidden,false);
+ assert.equal(x.data.kinoDiscoveryFactsV1['film:990'].rating,7.9);
 });
