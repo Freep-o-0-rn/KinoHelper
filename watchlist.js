@@ -131,7 +131,8 @@
         const desired=!contains(next);
         const profile=activeProfileId;
         savingRemote.add(key);
-        showStatus('Проверяем «Буду смотреть» на Кинопоиске…');
+        refresh();
+        showStatus('Синхронизируем «Буду смотреть» с Кинопоиском…','info');
         try {
             const response=await chrome.runtime.sendMessage({
                 action:'kinoWatchlistSet',payload:{movie:next,desired,profileId:profile}
@@ -147,7 +148,10 @@
         }catch(error){
             showStatus('Не удалось сохранить: '+String(error?.message||error));
             return false;
-        }finally{savingRemote.delete(key);}
+        }finally{
+            savingRemote.delete(key);
+            refresh();
+        }
     }
 
     function toggle(movie) {
@@ -218,7 +222,10 @@
         if (!button || !normalize(movie)) return;
         button._kinoMovie = movie;
         const saved = contains(movie);
-        button.textContent = saved ? '✓ В списке' : '☆ Буду смотреть';
+        const busy = savingRemote.has(keyOf(movie));
+        button.disabled = busy;
+        button.textContent = busy ? '↻ Сохраняем…'
+            : saved ? '✓ В списке' : '☆ Буду смотреть';
         button.setAttribute('aria-pressed', String(saved));
         button.title = saved ? 'Убрать из «Буду смотреть»' : 'Добавить в «Буду смотреть»';
         button.classList.toggle('saved', saved);
@@ -240,7 +247,10 @@
         button.hidden = !current;
         if (!current) return;
         const saved = contains(current);
-        button.textContent = saved ? '✓ В списке «Буду смотреть»' : '☆ В «Буду смотреть»';
+        const busy = savingRemote.has(keyOf(current));
+        button.disabled = busy;
+        button.textContent = busy ? '↻ Сохраняем…'
+            : saved ? '✓ В списке «Буду смотреть»' : '☆ В «Буду смотреть»';
         button.setAttribute('aria-pressed', String(saved));
         button.title = saved ? 'Убрать из списка' : 'Сохранить на потом';
         button.classList.toggle('saved', saved);
