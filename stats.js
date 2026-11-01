@@ -39,7 +39,9 @@
   }
   const count = value => Number.isFinite(value) ? String(value) : '—';
 
-  function createSvgChart(host, entries, label, { big = false, center = '', sub = '' } = {}) {
+  function createSvgChart(host, entries, label, {
+    big = false, center = '', sub = '', separateSegments = false
+  } = {}) {
     host.replaceChildren();
     host.setAttribute('aria-label', label);
     const wrap = document.createElement('div');
@@ -60,17 +62,23 @@
     tooltip.setAttribute('role', 'status');
     const total = entries.reduce((sum, item) => sum + item.value, 0);
     const circumference = 2 * Math.PI * 39;
+    const visibleSegments = entries.filter(item =>
+      Number.isFinite(item.value) && item.value > 0).length;
     let offset = 0;
-    const makeCircle = (color, portion, start, description, interactive) => {
+    const makeCircle = (color, portion, start, description, interactive, gapPx = 0) => {
       const circle = document.createElementNS('http://www.w3.org/2000/svg','circle');
       circle.setAttribute('cx','50'); circle.setAttribute('cy','50');
       circle.setAttribute('r','39'); circle.setAttribute('fill','none');
       circle.setAttribute('stroke',color);
       circle.setAttribute('stroke-width','13');
       circle.setAttribute('transform','rotate(-90 50 50)');
+      // Small unpainted gaps reveal the background and visually distinguish
+      // neighboring ratings; proportions and tooltip values remain unchanged.
+      const arcLength = Math.max(0, portion * circumference - gapPx);
       circle.setAttribute('stroke-dasharray',
-        (portion * circumference) + ' ' + circumference);
-      circle.setAttribute('stroke-dashoffset', String(-start * circumference));
+        arcLength + ' ' + circumference);
+      circle.setAttribute('stroke-dashoffset',
+        String(-(start * circumference + gapPx / 2)));
       if (interactive) {
         circle.setAttribute('class','stats-donut-piece');
         circle.setAttribute('tabindex','0');
@@ -96,8 +104,11 @@
         if (!row.value || !Number.isFinite(row.value)) continue;
         const portion = row.value / total;
         const pct = (portion * 100).toFixed(portion < .01 ? 1 : 0);
+        // The gap is capped for tiny categories, preserving narrow slices.
+        const gapPx = separateSegments && visibleSegments > 1
+          ? Math.min(1.9, portion * circumference * 0.24) : 0;
         makeCircle(row.color, portion, offset,
-          row.name + ': ' + row.valueLabel + ' (' + pct + '%)',true);
+          row.name + ': ' + row.valueLabel + ' (' + pct + '%)',true, gapPx);
         offset += portion;
       }
     }
@@ -186,7 +197,7 @@
     }));
     createSvgChart(els('statsRatingsChart'),ratings,'Мои оценки',
       {big:true,center:model.meanRating === null ? '—' :
-        model.meanRating.toFixed(1),sub:'средняя'});
+        model.meanRating.toFixed(1),sub:'средняя',separateSegments:true});
     makeLegend(els('statsRatingsLegend'),ratings,{showZeros:true});
     els('statsRatingsNote').textContent = model.ratingsCount
       ? 'Всего оценок: ' + model.ratingsCount
