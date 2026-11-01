@@ -73,10 +73,13 @@ function setup(options={}){
  const localStorage={getItem:()=> '[]'};
  class NativeImage {
   naturalWidth=0;
+  naturalHeight=0;
   set src(url){
    browserRequests.push(url);
-   if(options.nativePoster && options.nativePoster(url)){
-    this.naturalWidth=280;
+   const result=options.nativePoster?.(url);
+   if(result){
+    this.naturalWidth=typeof result==='object'?result.width:280;
+    this.naturalHeight=typeof result==='object'?result.height:420;
     Promise.resolve().then(()=>this.onload?.());
    }else Promise.resolve().then(()=>this.onerror?.());
   }
@@ -238,7 +241,7 @@ test('carousel tries another image size after first CDN failure and stores poste
  assert.equal(pictureCalls[1].payload.url,base+'/300x450');
  assert.equal(x.nodes.discoveryPoster.hidden,false);
  assert.equal(x.nodes.discoveryPoster.src,'data:image/png;base64,SU1BR0U=');
- assert.equal(x.sessionData.kinoDiscoveryPostersV1['film:100'].dataUrl,
+ assert.equal(x.sessionData.kinoDiscoveryPostersV2['film:100'].dataUrl,
   'data:image/png;base64,SU1BR0U=');
  const second=setup({data,sessionData:x.sessionData,imageResponder});await second.settle();
  assert.equal(second.nodes.discoveryPoster.src,'data:image/png;base64,SU1BR0U=');
@@ -290,7 +293,7 @@ test('native HTML Image preload can recover where fetch-based poster worker fail
  assert.equal(x.nodes.discoveryPoster.hidden,false);
  assert.equal(x.nodes.discoveryPoster.src,base+'/300x450');
  assert.equal(x.messages.filter(m=>m.action==='loadSearchPoster').length,0);
- assert.equal(x.sessionData.kinoDiscoveryPostersV1['film:100'].posterUrl,
+ assert.equal(x.sessionData.kinoDiscoveryPostersV2['film:100'].posterUrl,
   base+'/300x450');
  const second=setup({data,sessionData:x.sessionData,
   nativePoster:url=>url===base+'/300x450'});await second.settle();
@@ -342,8 +345,8 @@ test('expired session poster URL is replaced when the browser reports an image e
  const data={kinoDiscoveryCatalogV1:{schema:2,savedAt:Date.now(),
   enrichedAt:Date.now(),popular:[{type:'film',id:'125',
    title:'Фильм 125',year:2025,genres:['драма']}],new:[]}};
- const sessionData={kinoDiscoveryPostersV1:{
-  'film:125':{posterUrl:broken,cachedAt:Date.now()}}};
+ const sessionData={kinoDiscoveryPostersV2:{
+  'film:125':{posterUrl:broken,cachedAt:Date.now(),verifiedPortrait:true}}};
  const responder=async request=>{
   if(request.action==='loadSearchPoster')
    return {ok:true,dataUrl:'data:image/png;base64,SU1BR0U='};
@@ -356,4 +359,52 @@ test('expired session poster URL is replaced when the browser reports an image e
  await x.settle();
  assert.equal(x.nodes.discoveryPoster.src,'data:image/png;base64,SU1BR0U=');
  assert.equal(x.nodes.discoveryPoster.hidden,false);
+});
+
+test('landscape catalog images are rejected and actual portrait metadata poster wins',async()=>{
+ const wide='https://avatars.mds.yandex.net/get-kinopoisk-image/777/wide/orig';
+ const portrait='https://avatars.mds.yandex.net/get-kinopoisk-image/777/real/orig';
+ const data={kinoDiscoveryCatalogV1:{schema:2,savedAt:Date.now(),
+  enrichedAt:Date.now(),popular:[{type:'film',id:'126',
+   title:'Постер против кадра',year:2026,genres:['триллер'],posterUrl:wide}],new:[]}};
+ const responder=async request=>{
+  if(request.action==='getSearchMovieMetadata')
+    return {ok:true,metadata:{poster:portrait,rating:8.3}};
+  return {ok:false,error:'network blocked'};
+ };
+ const x=setup({data,imageResponder:responder,
+  nativePoster:src=>src.includes('/wide/')
+    ?{width:640,height:360}
+    :src.includes('/real/')?{width:300,height:450}:false});
+ await x.settle();
+ assert.equal(x.nodes.discoveryPoster.src,portrait.replace('/orig','/280x420'));
+ assert.equal(x.nodes.discoveryRating.textContent,'★ КП 8,3');
+ assert.equal(x.sessionData.kinoDiscoveryPostersV2['film:126'].verifiedPortrait,true);
+ assert.equal(x.browserRequests.some(u=>u.includes('/wide/')),true);
+});
+test('landscape pictures from the background poster worker are not cached',async()=>{
+ const wide='https://st.kp.yandex.net/images/film_big/127.jpg';
+ const data={kinoDiscoveryCatalogV1:{schema:2,savedAt:Date.now(),
+  enrichedAt:Date.now(),popular:[{type:'film',id:'127',
+   title:'Не тот кадр',year:2026,genres:['драма']}],new:[]}};
+ const x=setup({data,nativePoster:src=>src.startsWith('data:')
+    ?{width:640,height:360}:false,
+  imageResponder:async request=>request.action==='loadSearchPoster'
+    ?{ok:true,dataUrl:'data:image/png;base64,SU1BR0U='}:{ok:false}});
+ await x.settle();
+ assert.equal(x.nodes.discoveryPoster.hidden,true);
+ assert.equal(x.sessionData.kinoDiscoveryPostersV2?.['film:127'],undefined);
+ assert.equal(x.messages.some(m=>m.action==='loadSearchPoster'),true);
+});
+test('old cached thumbnails are ignored after upgrading to poster validation V2',async()=>{
+ const data={kinoDiscoveryCatalogV1:{schema:2,savedAt:Date.now(),
+  enrichedAt:Date.now(),popular:[{type:'film',id:'128',
+   title:'Тест кэша',year:2026,genres:['драма']}],new:[]}};
+ const sessionData={kinoDiscoveryPostersV1:{
+  'film:128':{posterUrl:'https://st.kp.yandex.net/images/film_big/128.jpg',
+   cachedAt:Date.now()}}};
+ const x=setup({data,sessionData});
+ await x.settle();
+ assert.equal(x.nodes.discoveryPoster.hidden,true);
+ assert.equal(x.sessionData.kinoDiscoveryPostersV2?.['film:128'],undefined);
 });
