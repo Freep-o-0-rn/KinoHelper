@@ -72,40 +72,78 @@
         return item ? item.type + ':' + item.id : null;
     }
 
-    function getAll() {
-        if (activeProfileId) {
-            return profileItems.map(normalize).filter(Boolean)
-                .sort((a,b)=>b.addedAt-a.addedAt);
-        }
-        let raw;
-        try {
-            raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-        } catch {
-            return [];
-        }
-        if (!Array.isArray(raw)) return [];
+    // Keep sorted/normalized entries and membership together. Previously each
+    // contains() parsed/sorted the entire list and scanned it (O(n²) over a
+    // rendered list). The raw JSON fingerprint detects external local changes.
+    let cachedItems=null;
+    let cachedIndex=new Set();
+    let cachedRaw=null;
+    let cachedProfile='';
+    let cachedProfileItems=null;
+    let notificationQueued=false;
 
-        const unique = new Map();
-        for (const input of raw.slice(0, MAX_ITEMS)) {
-            const item = normalize(input);
-            if (!item) continue;
-            const key = item.type + ':' + item.id;
-            if (!unique.has(key)) unique.set(key, item);
+    function notifyChanged(defer=false){
+        if(!defer){
+            window.dispatchEvent(new Event('kino-watchlist-updated'));
+            return;
         }
-        return [...unique.values()].sort((a, b) => b.addedAt - a.addedAt);
+        if(notificationQueued)return;
+        notificationQueued=true;
+        Promise.resolve().then(()=>{
+            notificationQueued=false;
+            window.dispatchEvent(new Event('kino-watchlist-updated'));
+        });
+    }
+
+    function getAll() {
+        if(activeProfileId){
+            if(cachedItems && cachedProfile===activeProfileId &&
+               cachedProfileItems===profileItems)return cachedItems;
+            const items=profileItems.map(normalize).filter(Boolean)
+                .sort((a,b)=>b.addedAt-a.addedAt);
+            cachedItems=items;
+            cachedIndex=new Set(items.map(item=>item.type+':'+item.id));
+            cachedProfile=activeProfileId;
+            cachedProfileItems=profileItems;
+            cachedRaw=null;
+            return items;
+        }
+        const rawText=localStorage.getItem(STORAGE_KEY)||'[]';
+        if(cachedItems && cachedProfile==='' && cachedRaw===rawText)
+            return cachedItems;
+        let raw;
+        try {raw=JSON.parse(rawText);}catch {raw=[];}
+        const unique=new Map();
+        if(Array.isArray(raw)){
+            for(const input of raw.slice(0,MAX_ITEMS)){
+                const item=normalize(input);
+                if(!item)continue;
+                const key=item.type+':'+item.id;
+                if(!unique.has(key))unique.set(key,item);
+            }
+        }
+        const items=[...unique.values()].sort((a,b)=>b.addedAt-a.addedAt);
+        cachedItems=items;
+        cachedIndex=new Set(items.map(item=>item.type+':'+item.id));
+        cachedRaw=rawText;
+        cachedProfile='';
+        cachedProfileItems=null;
+        return items;
     }
 
     function contains(movie) {
-        const key = keyOf(movie);
-        return Boolean(key && getAll().some(item => keyOf(item) === key));
+        const key=keyOf(movie);
+        if(!key)return false;
+        getAll();
+        return cachedIndex.has(key);
     }
 
-    function save(items) {
+    function save(items,deferNotification=false) {
         if (activeProfileId) {
             // Metadata updates may improve the visible list. Only verified
             // site writes or the background profile importer own persistence.
             profileItems = items;
-            window.dispatchEvent(new Event('kino-watchlist-updated'));
+            notifyChanged(deferNotification);
             return true;
         }
         try {
@@ -119,7 +157,7 @@
             }
             return false;
         }
-        window.dispatchEvent(new Event('kino-watchlist-updated'));
+        notifyChanged(deferNotification);
         return true;
     }
 
@@ -222,7 +260,7 @@
         };
         if (JSON.stringify(previous) === JSON.stringify(merged)) return false;
         old[index] = merged;
-        return save(old);
+        return save(old,true);
     }
 
     function adoptPoster(movie, dataUrl) {
@@ -232,7 +270,19 @@
         if (posterCache.get(key) === dataUrl) return;
         posterCache.set(key, dataUrl);
         if (posterCache.size > 30) posterCache.delete(posterCache.keys().next().value);
-        renderList();
+        // A poster arrival changes only its image, not every row and button.
+        const box=document.getElementById('watchlistItems');
+        if(!box)return;
+        for(const row of box.children){
+            if(keyOf(row._kinoMovie)!==key)continue;
+            const holder=row.children?.[0];
+            if(!holder)break;
+            const image=document.createElement('img');
+            image.alt='';
+            image.src=dataUrl;
+            holder.replaceChildren(image);
+            break;
+        }
     }
 
     function makeButton(label, className, action, title) {
