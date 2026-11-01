@@ -357,3 +357,46 @@
   outline-offset: 2px;
   border-radius: 3px;
 }
+
+
+/* v1.571: all 24+ genres remain separate, but narrow donut slices
+   can be selected by a comfortable, keyboard-accessible legend row. */
+.stats-genre-legend {
+  max-height: 220px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 2px 5px 2px 0;
+}
+.stats-genre-legend .stats-legend-row {
+  min-height: 25px;
+  padding: 4px 5px;
+  margin: 0;
+  border-radius: 5px;
+  font-size: 11px;
+  gap: 7px;
+}
+.stats-genre-legend .stats-legend-row b {
+  font-size: 11px;
+  font-weight: 750;
+}
+.stats-genre-legend .stats-legend-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+}
+.stats-genre-selectable {
+  cursor: pointer;
+  transition: background-color .14s ease;
+}
+.stats-genre-selectable:hover,
+.stats-genre-selectable:focus-visible {
+  background: var(--bg-secondary);
+  color: var(--text);
+}
+.stats-genre-selectable:focus-visible {
+  outline: 2px solid var(--secondary);
+  outline-offset: -2px;
+}
+.stats-donut-piece {
+  transition: stroke-width .12s ease, opacity .12s ease;
+}
