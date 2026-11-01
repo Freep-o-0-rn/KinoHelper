@@ -117,6 +117,8 @@
  async function scan(){
    if(current)return current;
    current=(async()=>{
+     // Keep the minute snapshot and full pagination from writing concurrently.
+     if(minuteWork)await minuteWork;
      let job=await getJob();
      if(!validId(job?.profileId))return null;
      const auth=await self.KinoStatsAccount.detect();
