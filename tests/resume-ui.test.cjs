@@ -34,7 +34,7 @@ function node(tag = 'div', cls = '') {
   return element;
 }
 
-async function setup({ data = {}, seriesData = {}, history = [],
+async function setup({ data = {}, seriesData = {}, coverageData = {}, history = [],
   current = 'https://www.kinopoisk.ru/', delayedTabQuery = false,
   session = null, sharedSession = {} } = {}) {
   const elements = {
@@ -66,6 +66,7 @@ async function setup({ data = {}, seriesData = {}, history = [],
   const tabs = {};
   const opened = [];
   const openedOptions = [];
+  const actions = [];
   const context = {
     URL, console,
     document: doc,
@@ -82,13 +83,18 @@ async function setup({ data = {}, seriesData = {}, history = [],
       },
       runtime: {
         onMessage: { addListener(cb) { runtimeEvents.message = cb; } },
-        sendMessage: async message => message.action === 'getWatchSession'
-          ? { ok: true, session } : { ok: false }
+        sendMessage: async message => {
+          actions.push(message);
+          return message.action === 'getWatchSession'
+            ? { ok: true, session } : { ok: false };
+        }
       },
       storage: {
         local: { get: async key => key === 'kinoSeriesEpisodeProgressV1'
           ? { kinoSeriesEpisodeProgressV1: seriesData }
-          : { kinoPlaybackProgressV1: data } },
+          : key === 'kinoPlaybackCoverageV1'
+            ? {kinoPlaybackCoverageV1:coverageData}
+            : { kinoPlaybackProgressV1: data } },
         session: {
           get: async key => ({ [key]: sharedSession[key] }),
           set: async values => {
@@ -113,7 +119,7 @@ async function setup({ data = {}, seriesData = {}, history = [],
   vm.runInNewContext(source, context);
   context.window.KinoResumeUI.updateHistory(history);
   for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
-  return { elements, rows, changes, tabs, opened, openedOptions,
+  return { elements, rows, changes, tabs, opened, openedOptions, actions,
     documentEvents, runtimeEvents, sharedSession,
     releaseTab: () => gate?.release(),
     setSession: value => { session = value; },
@@ -483,4 +489,42 @@ test('dismissal never falls back to another older film', async () => {
   assert.equal(ui.elements.resumeLast.hidden, true);
   assert.equal(ui.rows[0].querySelector('.history-progress-track')
     .attrs['aria-valuenow'], '25');
+});
+
+
+test('85% actual coverage unlocks explicit finish button, not automatic completion',async()=>{
+  const ui=await setup({
+    history:filmHistory,
+    data:{'film:447301':{...movie,position:565}},
+    coverageData:{'film:447301':{duration:600,ranges:[[0,510]]}}
+  });
+  const button=ui.rows[0].querySelector('.history-confirm-complete');
+  assert.ok(button);
+  assert.equal(button.textContent,'✓ Досмотрел');
+  assert.match(ui.rows[0].querySelector('.history-progress-label').textContent,/94%/);
+  assert.equal(ui.elements.resumeLast.hidden,false);
+  await button.events.click();
+  assert.equal(ui.actions.at(-1).action,'kinoConfirmCoveredPlayback');
+  assert.equal(ui.actions.at(-1).key,'film:447301');
+});
+
+test('94% timeline after seeking shows no completion action',async()=>{
+  const ui=await setup({
+    history:filmHistory,
+    data:{'film:447301':{...movie,position:565}},
+    coverageData:{'film:447301':{duration:600,ranges:[[550,565]]}}
+  });
+  assert.equal(ui.rows[0].querySelector('.history-confirm-complete'),null);
+});
+
+test('episode completion button identifies the exact season and episode',async()=>{
+  const ui=await setup({
+    history:seriesHistory,
+    seriesData:{'series:404900:1:3':{...episode,position:1700}},
+    coverageData:{'series:404900:1:3':{duration:1800,ranges:[[0,1540]]}}
+  });
+  const button=ui.rows[0].querySelector('.history-confirm-complete');
+  assert.ok(button);
+  await button.events.click();
+  assert.equal(ui.actions.at(-1).key,'series:404900:1:3');
 });
