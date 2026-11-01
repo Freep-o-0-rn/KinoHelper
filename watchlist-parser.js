@@ -136,7 +136,8 @@
    }else for(const m of html.matchAll(/[?&]page=(\d+)/g)){
      const n=Number(m[1]);if(n>=1&&n<=20000)pages.push(n);
    }
-   return {items:[...entries.values()],recognized,verifiedEmpty,
+   return {items:[...entries.values()],recognized,
+     verifiedEmpty:verifiedEmpty && recognized===0,
      lastPage:pages.length?Math.max(page,...pages):null,
      source:recognized?'listing':verifiedEmpty?'verified-empty':'empty'};
  }
