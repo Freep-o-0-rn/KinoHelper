@@ -6,6 +6,11 @@
  let mutationRevision=0,pendingMutations=0;
  const MIN_PAGE_SIZE=20; // Full pages without navigation must be checked further.
  const MAX_PAGE=2000;
+ // Stable, sorted signature of the latest parsed list page.
+ const itemSignature=item=>[keyOf(item)||'',item?.title||'',
+   item?.year||'',Array.isArray(item?.genres)?item.genres.join(','):'',
+   item?.posterUrl||''].join('|');
+ const fingerprintOf=items=>items.map(itemSignature).sort().join('\n');
  const validId=id=>/^[1-9]\d{0,12}$/.test(String(id));
  const obj=x=>x&&typeof x==='object'&&!Array.isArray(x)?x:{};
  const keyOf=m=>['film','series'].includes(m?.type)&&validId(m.id)?
@@ -191,26 +196,11 @@
          if(verified.status!=='logged-in'||verified.id!==job.profileId)
            throw Error('Аккаунт изменился во время загрузки');
        }
-       profiles[job.profileId]=complete&&!repeated?finalScope:intermediate;
-       await chrome.storage.local.set({[STORE]:profiles});
-       if(complete&&!repeated){
-         // A user may manually clear a failed automatic removal on
-         // Kinopoisk. A verified full scan then clears its stale warning.
-         const rawQueue=(await chrome.storage.local.get('kinoWatchlistAutoRemoveV1'))
-           .kinoWatchlistAutoRemoveV1;
-         const queued={...obj(rawQueue)},pending={...obj(queued[job.profileId])};
-         let changed=false;
-         for(const key of Object.keys(pending)){
-           if(!finalScope[key]){delete pending[key];changed=true;}
-         }
-         if(changed){
-           queued[job.profileId]=pending;
-           await chrome.storage.local.set({kinoWatchlistAutoRemoveV1:queued});
-         }
-       }
-       job=await putJob({...job,page:job.page+1,done:job.page,
+       const merged=complete&&!repeated?finalScope:intermediate;
+       profiles[job.profileId]=merged;
+       const nextJob={...job,page:job.page+1,done:job.page,
          total:explicitTotal,staged:complete?{}:staged,
-         fingerprint, count:Object.keys(staged).length,
+         fingerprint,count:Object.keys(staged).length,
          state:repeated?'partial':complete?'completed':'loading',failures:0,
          nextAt:Date.now()+(complete?DAY:STEP),
          message:repeated
@@ -218,7 +208,30 @@
              '. Проверьте список на Кинопоиске.'
            :complete?'Загружено: '+Object.keys(staged).length:
              'Загружено '+Object.keys(staged).length+
-             ' · страница '+job.page+(explicitTotal?'/'+explicitTotal:'')});
+             ' · страница '+job.page+(explicitTotal?'/'+explicitTotal:''),
+         updatedAt:Date.now()};
+       const changes={[JOB]:nextJob};
+       // No need to notify all open popup/sidepanel views when the profile
+       // contents did not change, e.g. a periodic full verification.
+       if(JSON.stringify(previous)!==JSON.stringify(merged))
+         changes[STORE]=profiles;
+       if(complete&&!repeated){
+         const rawQueue=(await chrome.storage.local.get('kinoWatchlistAutoRemoveV1'))
+           .kinoWatchlistAutoRemoveV1;
+         const queued={...obj(rawQueue)},pending={...obj(queued[job.profileId])};
+         let queueChanged=false;
+         for(const key of Object.keys(pending)){
+           if(!finalScope[key]){delete pending[key];queueChanged=true;}
+         }
+         if(queueChanged){
+           queued[job.profileId]=pending;
+           changes.kinoWatchlistAutoRemoveV1=queued;
+         }
+       }
+       // Atomically persist cursor and list. A service-worker restart
+       // cannot leave the cursor ahead of the committed entries.
+       await chrome.storage.local.set(changes);
+       job=nextJob;
        await schedule(job.nextAt);
        return job;
      }catch(err){
@@ -362,6 +375,9 @@
      if(latest?.profileId!==id||latest.state!=='completed'||
         pendingMutations||mutationRevision!==revision)
        return {ok:true,skipped:'job-or-user-action-changed'};
+     const fingerprint=fingerprintOf(result.items);
+     if(latest.minuteFingerprint===fingerprint)
+       return {ok:true,changed:0,skipped:'unchanged-page'};
      const now=Date.now();
      const scope=(await chrome.storage.local.get(STORE))[STORE];
      const profiles={...obj(scope)};
@@ -388,8 +404,10 @@
      const desired=singlePage ? Object.fromEntries(result.items
        .map(item=>[keyOf(item),next[keyOf(item)]])
        .filter(([key,value])=>key&&value)) : next;
-     const changes=Object.keys(desired).length-
-       Object.keys(before).length;
+     // Count actual changed titles, not only list-size differences.
+     const allKeys=new Set([...Object.keys(before),...Object.keys(desired)]);
+     const changes=[...allKeys].filter(key=>
+       JSON.stringify(before[key])!==JSON.stringify(desired[key])).length;
      const verified=await self.KinoStatsAccount.detect();
      if(verified.status!=='logged-in'||verified.id!==id)
        return {ok:false,skipped:'account-changed'};
@@ -398,7 +416,7 @@
         pendingMutations||revision!==mutationRevision)
        return {ok:true,skipped:'concurrent-change'};
      const updates={[JOB]:{...still,lastMinuteSyncAt:now,
-       lastMinuteSyncChanges:changes}};
+       lastMinuteSyncChanges:changes,minuteFingerprint:fingerprint}};
      if(JSON.stringify(before)!==JSON.stringify(desired)){
        profiles[id]=desired;updates[STORE]=profiles;
      }
