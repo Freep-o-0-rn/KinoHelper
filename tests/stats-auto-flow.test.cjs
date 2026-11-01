@@ -86,3 +86,26 @@ test('background page updates refresh score and progress UI automatically',async
   assert.match(ui.nodes.statsImportStatus.textContent,/Импорт завершён/);
   assert.equal(ui.nodes.statsImportProgress.value,20);
 });
+
+
+test('statistics lists every genre and percentage, including uncommon categories',async()=>{
+  const ui=setup();
+  const films={}, genres={};
+  for(let i=0;i<18;i++){
+    const id=String(1000+i);
+    films['film:'+id]={type:'film',id,position:120,duration:300,completed:true};
+    genres['film:'+id]={genres:['драма','жанр '+(i+1)]};
+  }
+  ui.state.kinoPlaybackProgressV1=films;
+  ui.state.kinoStatsGenresV1=genres;
+  ui.open();
+  await ui.settle();
+  const rows=ui.nodes.statsGenresLegend.children;
+  assert.equal(rows.length,19);
+  assert.equal(rows[0].children[1].textContent,'драма');
+  assert.equal(rows[0].children[2].textContent,'50%');
+  assert.ok(rows.some(row=>row.children[1].textContent==='жанр 18'));
+  assert.ok(rows.every(row=>row.children[1].textContent!=='Другие'));
+  assert.ok(rows.slice(1).every(row=>row.children[2].textContent==='2,8%'));
+  assert.match(ui.nodes.statsGenresNote.textContent,/19 жанров/);
+});
