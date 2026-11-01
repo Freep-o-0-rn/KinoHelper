@@ -157,8 +157,11 @@ test('one-minute alarm runs both checks, retains account scope and schedules its
   const state=storage();
   const {chrome,events}=chromeMock(state,()=>null);
   let ratings=0,planned=0;
+  const checks=[];
   const self={
-    KinoStatsAccount:{async detect(){return identity;}},
+    KinoStatsAccount:{async detect(_fetcher,options){
+      checks.push(options);return identity;
+    }},
     KinoStatsMinuteSync:{async run(){ratings++;return {ok:true,changed:1};}},
     KinoWatchlistMinuteSync:{async run(){planned++;return {ok:true,changed:2};}}
   };
@@ -169,6 +172,8 @@ test('one-minute alarm runs both checks, retains account scope and schedules its
   assert.equal(outcome.ok,true);
   assert.equal(ratings,1);
   assert.equal(planned,1);
+  assert.equal(checks.length,1);
+  assert.equal(checks[0].force,true);
   assert.equal(state.data.kinoProfileMinuteSyncStatusV1.profileId,'7143359');
   assert.equal(state.data.kinoProfileMinuteSyncStatusV1.ratings.changed,1);
   assert.ok(events.created.some(v=>v.name==='kinoProfileMinuteSyncV1'&&
