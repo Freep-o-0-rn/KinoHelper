@@ -19,7 +19,9 @@
   const copy=x=>String(x||'').replace(/\s+/g,' ').trim();
   let items=[],index=0,nextAt=Date.now()+INTERVAL,hovered=false;
   const imageCache=new Map(),detailsCache=new Map(),inFlight=new Set();
-  const failedFacts=new Map();
+  const failedFacts=new Map(),failedPosters=new Map();
+  const posterJobs=[];
+  let activePosterJobs=0;
   let persistedFacts={},persistedPosters={};
   const factsPending=new Map();
 
@@ -41,18 +43,22 @@
     };
     return paths[source]?'https://www.kinopoisk.ru'+paths[source]:'';
   }
-  function urlPoster(el) {
-    if(!el)return '';
-    const raw=el.getAttribute('data-src')||el.getAttribute('src')||
-      el.getAttribute('data-original')||'';
-    const candidate=core.poster(raw);
-    if(candidate)return candidate;
-    const source=el.getAttribute('srcset')||el.getAttribute('data-srcset')||'';
-    for(const item of source.split(',')){
-      const url=core.poster(item.trim().split(/\s+/)[0]);
-      if(url)return url;
+  function posterAttributes(el) {
+    if(!el)return [];
+    const result=[],add=raw=>{
+      const url=core.poster(raw);
+      if(url&&!result.includes(url))result.push(url);
+    };
+    // Some Kinopoisk templates use a placeholder in data-src and the
+    // actual poster in src, data-original, data-lazy-src or srcset.
+    for(const name of ['data-original','data-lazy-src','src',
+      'data-src','data-srcset','srcset']){
+      const value=el.getAttribute(name)||'';
+      if(name.endsWith('srcset')){
+        for(const part of value.split(','))add(part.trim().split(/\s+/)[0]);
+      }else add(value);
     }
-    return '';
+    return result;
   }
   function extractYear(text){
     const match=copy(text).match(/(?:18|19|20)\d{2}/);
@@ -85,8 +91,10 @@
       // The list often has one genre after the country separator.
       const genreMatch=text.match(/[\p{L} ,]{2,35}\s*[•·]\s*([\p{L}-]{3,24})/u);
       const genres=genreMatch?core.genres([genreMatch[1]]):[];
+      const imageUrls=posterAttributes(img);
       const possible=core.movie({type:mediaType,id,title:filmTitle,year,
-        rating:parsedRating,genres,posterUrl:urlPoster(img)},'for-you');
+        rating:parsedRating,genres,posterUrl:imageUrls[0]||'',
+        posterFallback:imageUrls[1]||''},'for-you');
       if(!possible)continue;
       const old=results.get(id);
       if(!old||(!old.posterUrl&&possible.posterUrl))
@@ -295,40 +303,98 @@
     box.hidden=false;
     show();
   }
-  async function preparePoster(item){
+  function preparePoster(item){
     if(!item)return;
     const id=core.keyOf(item);
-    if(imageCache.has(id)||inFlight.has(id))return;
+    if(!id||imageCache.has(id)||inFlight.has(id)||
+       (failedPosters.get(id)||0)>Date.now())return;
     inFlight.add(id);
-    try{
-      let imageUrl=core.poster(item.posterUrl);
-      if(!imageUrl){
-        const result=await chrome.runtime.sendMessage({
-          action:'findPosterOnMoviePage',payload:{type:item.type,id:item.id}
-        });
-        if(result?.ok)imageUrl=core.poster(result.poster);
-      }
-      if(!imageUrl)return;
-      const result=await chrome.runtime.sendMessage({
-        action:'loadSearchPoster',payload:{url:imageUrl}
+    posterJobs.push({item,id});
+    pumpPosterJobs();
+  }
+  function pumpPosterJobs(){
+    while(activePosterJobs<2&&posterJobs.length){
+      const {item,id}=posterJobs.shift();
+      activePosterJobs++;
+      Promise.resolve().then(()=>loadPoster(item)).catch(error=>{
+        failedPosters.set(id,Date.now()+2*60*1000);
+        console.warn('[KinoHelper] Постер '+id+': '+String(error?.message||error));
+      }).finally(()=>{
+        inFlight.delete(id);
+        activePosterJobs--;
+        pumpPosterJobs();
       });
-      if(result?.ok&&typeof result.dataUrl==='string'&&
-         /^data:image\/(?:png|jpe?g|webp);base64,/i.test(result.dataUrl)){
-        imageCache.set(id,result.dataUrl);
-        if(core.keyOf(items[index])===id)showImage(result.dataUrl);
-        // Session cache avoids repeated poster downloads when popup closes;
-        // keep binaries out of backups and long-term account storage.
-        if(chrome.storage.session&&result.dataUrl.length<=256000){
-          persistedPosters[id]={dataUrl:result.dataUrl,cachedAt:Date.now()};
-          const compact=Object.entries(persistedPosters)
-            .sort((a,b)=>b[1].cachedAt-a[1].cachedAt).slice(0,12);
-          persistedPosters=Object.fromEntries(compact);
-          try{await chrome.storage.session.set({[POSTER_CACHE]:persistedPosters});}
-          catch{/* Image remains available in memory. */}
-        }
+    }
+  }
+  async function loadPoster(item){
+    const id=core.keyOf(item),attempted=new Set(),errors=[];
+    const trySources=async sources=>{
+      for(const url of sources){
+        if(attempted.size>=12)break;
+        const source=core.poster(url);
+        if(!source||attempted.has(source))continue;
+        attempted.add(source);
+        try{
+          const response=await chrome.runtime.sendMessage({
+            action:'loadSearchPoster',payload:{url:source}
+          });
+          if(!response?.ok||typeof response.dataUrl!=='string'||
+             !/^data:image\/(?:png|jpe?g|webp);base64,/i.test(response.dataUrl)){
+            errors.push(response?.error||'Недействительный ответ изображения');
+            continue;
+          }
+          imageCache.set(id,response.dataUrl);
+          if(items[index]&&core.keyOf(items[index])===id)
+            showImage(response.dataUrl);
+          // Image data is account-independent, but too large for persistent
+          // backup. Keep a bounded session cache instead.
+          if(chrome.storage.session&&response.dataUrl.length<=600000){
+            persistedPosters[id]={dataUrl:response.dataUrl,cachedAt:Date.now()};
+            persistedPosters=Object.fromEntries(
+              Object.entries(persistedPosters)
+                .sort((a,b)=>b[1].cachedAt-a[1].cachedAt).slice(0,10)
+            );
+            try{await chrome.storage.session.set({[POSTER_CACHE]:persistedPosters});}
+            catch{/* Image remains available in memory. */}
+          }
+          return true;
+        }catch(error){errors.push(String(error?.message||error));}
       }
-    }catch{/* A missing poster is a visual-only failure. */}
-    finally{inFlight.delete(id);}
+      return false;
+    };
+    // 1. Try real poster URLs present in the ranking card, including CDN sizes.
+    const catalogSources=core.posterSources({...item,id:''});
+    if(await trySources(catalogSources))return;
+    // 2. Reuse verified facts if already loaded by the new-release parser.
+    const facts=detailsCache.get(id);
+    if(facts?.posterUrl&&await trySources(core.posterSources({
+      posterUrl:facts.posterUrl,posterFallback:facts.posterFallback,id:''
+    })))return;
+    // 3. Search metadata uses the existing KinoHelper GraphQL integration.
+    try{
+      const response=await chrome.runtime.sendMessage({
+        action:'getSearchMovieMetadata',payload:{type:item.type,id:item.id}
+      });
+      if(response?.ok&&response.metadata&&await trySources(core.posterSources({
+        posterUrl:response.metadata.poster,
+        posterFallback:response.metadata.posterFallback,id:''
+      })))return;
+      if(!response?.ok)errors.push(response?.error||'GraphQL недоступен');
+    }catch(error){errors.push(String(error?.message||error));}
+    // 4. Finally inspect Kinopoisk's HTML/SSR, as title search already does.
+    try{
+      const response=await chrome.runtime.sendMessage({
+        action:'findPosterOnMoviePage',payload:{type:item.type,id:item.id}
+      });
+      if(response?.ok&&response.poster&&await trySources(core.posterSources({
+        posterUrl:response.poster,id:''
+      })))return;
+      if(!response?.ok)errors.push(response?.error||'Страница фильма недоступна');
+    }catch(error){errors.push(String(error?.message||error));}
+    // 5. Official static image URLs are fallback only, not fabricated posters.
+    if(await trySources(core.posterSources({id:item.id})))return;
+    throw Error('Нет доступных изображений ('+
+      [...new Set(errors)].slice(0,3).join('; ').slice(0,180)+')');
   }
   function showImage(url){
     poster.src=url;backdrop.src=url;
@@ -437,7 +503,7 @@
           for(const [id,item] of Object.entries(saved)){
             if(!new RegExp('^(?:film|series):[1-9][0-9]{0,12}$').test(id)||
               !item||Date.now()-Number(item.cachedAt||0)>STALE_TTL||
-              typeof item.dataUrl!=='string'||item.dataUrl.length>256000||
+              typeof item.dataUrl!=='string'||item.dataUrl.length>600000||
               !new RegExp('^data:image/(?:png|jpe?g|webp);base64,','i').test(item.dataUrl))continue;
             persistedPosters[id]=item;
             imageCache.set(id,item.dataUrl);
