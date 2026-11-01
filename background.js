@@ -706,6 +706,8 @@ async function getMovieRating(payload) {
     return {
       authorized: true,
       rating: Number.isInteger(rating) && rating >= 1 && rating <= 10 ? rating : null,
+      planned: typeof userData.isPlannedToWatch === 'boolean'
+        ? userData.isPlannedToWatch : null,
       ...previewMeta
     };
   });
@@ -2289,4 +2291,4 @@ function statsRememberCompletion(key, completed) {
 
 
 // Alarm-driven profile sync, isolated from the movie playback logic.
-importScripts('stats-account.js','stats-import-worker.js');
+importScripts('stats-account.js','stats-import-worker.js','watchlist-sync-worker.js');
