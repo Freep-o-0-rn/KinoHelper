@@ -146,3 +146,23 @@ test('upgrading a finished ratings-only job restarts its watched scan from page 
   await env.tick();
   assert.equal(Object.keys(env.data.kinoStatsWatchedV1['1234567']).length,1);
 });
+
+
+test('completed SSR scan prunes outdated votes and watched marks of the active account',async()=>{
+  const env=simulate({data:{
+    kinoStatsRatingsV1:{
+      '1234567':{'film:999':{rating:2,source:'kinopoisk-profile',updatedAt:1}},
+      '9876543':{'film:777':{rating:10,source:'kinopoisk-profile',updatedAt:1}}
+    },
+    kinoStatsWatchedV1:{
+      '1234567':{'film:999':{watched:true,source:'kinopoisk-profile',updatedAt:1}}
+    }
+  }});
+  env.allowRetries();
+  await env.ensure();
+  for(let i=0;i<23;i++)await env.tick();
+  assert.equal(env.data.kinoStatsImportJobV2.state,'completed');
+  assert.equal(env.data.kinoStatsRatingsV1['1234567']['film:999'],undefined);
+  assert.equal(env.data.kinoStatsWatchedV1['1234567']['film:999'],undefined);
+  assert.equal(env.data.kinoStatsRatingsV1['9876543']['film:777'].rating,10);
+});
