@@ -311,7 +311,7 @@
             const kind=['retry','paused','partial'].includes(state)?'error'
                 :state==='completed'?'success':'info';
             const message=state==='completed'
-                ? '✓ Кинопоиск: '+count+' в списке «Буду смотреть»'
+                ? '✓ Кинопоиск: '+count+' в списке «Буду смотреть» · синхронизация раз в минуту'
                 :state==='loading'
                     ? '↻ Синхронизация Кинопоиска: '+count+
                       (job.done?' · стр. '+job.done:'')
