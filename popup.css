@@ -1975,3 +1975,25 @@ button.btn-convert:active:not(:disabled) {
   font-size: 9px;
   line-height: 1.2;
 }
+
+
+/* Small explicit refresh and readable background import status. */
+.watchlist-title { margin-right: auto; }
+.watchlist-sync {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--secondary);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+.watchlist-sync:hover:not(:disabled) {
+  background: var(--bg-elevated);
+}
+.watchlist-sync:disabled { opacity: .5; cursor: wait; }
+.watchlist-status[data-kind="info"] { color: var(--text-muted); }
+.watchlist-status[data-kind="success"] { color: var(--success); }
