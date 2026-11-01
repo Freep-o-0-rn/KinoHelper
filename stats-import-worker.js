@@ -265,6 +265,84 @@
     })().finally(()=>{work=null;});
     return work;
   }
+
+  // Minute heartbeat (after initial full import): pull only the first
+  // recently-changed page. Existing 20+ page imports are never restarted.
+  // Full page-by-page reconciliation still runs at the normal daily cadence.
+  let minuteWork=null;
+  async function minuteSync(identity) {
+    if(minuteWork)return minuteWork;
+    minuteWork=(async()=>{
+      const job=await readJob();
+      const id=String(identity?.id||'');
+      if(identity?.status!=='logged-in'||!PROFILE.test(id))
+        return {ok:false,skipped:'auth'};
+      if(!job||job.profileId!==id){
+        await start(id);
+        return {ok:true,skipped:'started-import'};
+      }
+      if(job.state!=='completed')return {
+        ok:true,skipped:'full-import-'+job.state
+      };
+      // Respect full-refresh alarms and avoid overlapping writes.
+      if(work || Number(job.nextAt||0)<=Date.now()+60000)
+        return {ok:true,skipped:'full-import-due'};
+      const parsed=await fetchProfilePage({...job,nextPage:1});
+      if(!Array.isArray(parsed?.votes)||!Array.isArray(parsed?.watched)||
+         (!parsed.recognized && !parsed.votes.length && !parsed.watched.length))
+        throw Error('Новые оценки не удалось распознать');
+      const freshJob=await readJob();
+      if(freshJob?.profileId!==id||freshJob.state!=='completed'||
+         freshJob.scanId!==job.scanId)return {ok:true,skipped:'job-changed'};
+      // Avoid mixing two Kinopoisk accounts after a session switch.
+      const still=await self.KinoStatsAccount.detect();
+      if(still.status!=='logged-in'||still.id!==id)
+        return {ok:false,skipped:'account-switched'};
+      const raw=await chrome.storage.local.get([RATINGS,WATCHED]);
+      const ratings={...safeObj(raw[RATINGS])};
+      const scoped={...safeObj(ratings[id])};
+      const watched={...safeObj(raw[WATCHED])};
+      const watchedScoped={...safeObj(watched[id])};
+      let changed=0;
+      const now=Date.now();
+      for(const vote of parsed.votes){
+        if(!['film','series'].includes(vote?.type) ||
+           !PROFILE.test(String(vote.id)) ||
+           !Number.isInteger(vote.rating)||vote.rating<1||vote.rating>10)continue;
+        const key=vote.type+':'+vote.id;
+        if(scoped[key]?.rating!==vote.rating){
+          scoped[key]={rating:vote.rating,source:'kinopoisk-profile',
+            updatedAt:now};
+          changed++;
+        }
+      }
+      for(const item of parsed.watched){
+        if(!['film','series'].includes(item?.type)||
+           !PROFILE.test(String(item.id)))continue;
+        const key=item.type+':'+item.id;
+        if(!watchedScoped[key]?.watched) {
+          watchedScoped[key]={watched:true,
+            genres:Array.isArray(item.genres)?
+              item.genres.filter(g=>typeof g==='string').slice(0,12):[],
+            source:'kinopoisk-profile',updatedAt:now};
+          changed++;
+        }
+      }
+      const nextJob={...freshJob,lastMinuteSyncAt:now,
+        lastMinuteSyncChanges:changed};
+      const updates={[JOB]:nextJob};
+      if(changed){
+        ratings[id]=scoped;watched[id]=watchedScoped;
+        updates[RATINGS]=ratings;updates[WATCHED]=watched;
+      }
+      await chrome.storage.local.set(updates);
+      return {ok:true,changed,checkedAt:now};
+    })().catch(error=>({ok:false,error:String(error?.message||error)}))
+      .finally(()=>{minuteWork=null});
+    return minuteWork;
+  }
+  self.KinoStatsMinuteSync={run:minuteSync};
+
   async function wake() {
     const job=await readJob();
     // On browser startup, check for account switches before restoring the
