@@ -328,3 +328,32 @@
   opacity:.65;
   font-variant-numeric:tabular-nums;
 }
+
+
+/* v1.567: all genres remain accessible without stretching the paired tiles. */
+.stats-genre-legend {
+  max-height: 188px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 2px 4px 2px 0;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-hover) transparent;
+}
+.stats-genre-legend::-webkit-scrollbar { width: 5px; }
+.stats-genre-legend::-webkit-scrollbar-thumb {
+  border-radius: 8px;
+  background: var(--border-hover);
+}
+.stats-genre-legend .stats-legend-row {
+  min-height: 15px;
+  gap: 5px;
+}
+.stats-genre-legend .stats-legend-row b {
+  flex: 0 0 auto;
+}
+.stats-genre-legend:focus-visible {
+  outline: 2px solid var(--secondary);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
