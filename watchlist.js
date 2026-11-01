@@ -594,6 +594,13 @@
         pumpHydration();
     }
 
+    const renderedRows = new Map();
+    function renderSignature(item) {
+        return JSON.stringify([item.type,item.id,item.title,item.year,
+            item.genres,item.posterUrl,Boolean(posterCache.get(keyOf(item))),
+            savingRemote.has(keyOf(item)),activeProfileId]);
+    }
+
     function renderList() {
         const itemsBox = document.getElementById('watchlistItems');
         const count = document.getElementById('watchlistCount');
@@ -603,8 +610,16 @@
         const items = getAll();
         count.textContent = String(items.length);
         empty.hidden = items.length !== 0;
-        if (listObserver) listObserver.disconnect();
+        const previous= new Map(renderedRows);
+        renderedRows.clear();
         const nodes = items.map(item => {
+            const key=keyOf(item);
+            const signature=renderSignature(item);
+            const existing=previous.get(key);
+            if(existing?.signature===signature){
+                renderedRows.set(key,existing);
+                return existing.row;
+            }
             const row = document.createElement('div');
             row.className = 'watchlist-item';
             row._kinoMovie = item;
@@ -659,8 +674,14 @@
             if (busy) remove.setAttribute('aria-busy','true');
             actions.append(watch, kp, remove);
             row.append(poster, info, actions);
+            renderedRows.set(key,{row,signature});
             return row;
         });
+        const previousNodes=[...itemsBox.children];
+        const changed=nodes.length!==previousNodes.length ||
+            nodes.some((node,i)=>node!==previousNodes[i]);
+        if(!changed)return;
+        if (listObserver) listObserver.disconnect();
         itemsBox.replaceChildren(...nodes);
         if (listObserver) {
             for (const row of nodes) listObserver.observe(row);
