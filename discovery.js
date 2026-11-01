@@ -19,6 +19,7 @@
   let items=[],index=0,nextAt=Date.now()+INTERVAL,hovered=false;
   const imageCache=new Map(),detailsCache=new Map(),inFlight=new Set();
   const failedFacts=new Map();
+  let persistedFacts={};
   const factsPending=new Map();
 
   function validListResponse(response){
@@ -123,6 +124,7 @@
   async function filmFacts(item){
     const id=core.keyOf(item);
     if(detailsCache.has(id))return detailsCache.get(id);
+    if((failedFacts.get(id)||0)>Date.now())throw Error('Повтор запроса позже');
     if(factsPending.has(id))return factsPending.get(id);
     const task=(async()=>{
       const url='https://www.kinopoisk.ru/'+item.type+'/'+item.id+'/';
@@ -175,8 +177,14 @@
           record.description=desc.slice(0,230);
       }
       detailsCache.set(id,record);
+      persistedFacts[id]={...record,cachedAt:Date.now()};
+      // Persist metadata, but never account data or full HTML pages.
+      try{await chrome.storage.local.set({[FACT_CACHE]:persistedFacts});}catch{}
       return record;
-    })().finally(()=>factsPending.delete(id));
+    })().catch(error=>{
+      failedFacts.set(id,Date.now()+RETRY_TTL);
+      throw error;
+    }).finally(()=>factsPending.delete(id));
     factsPending.set(id,task);
     return task;
   }
@@ -186,7 +194,7 @@
     // release dates are required for new releases, while popular movies
     // with known genres do not need extra candidate-detail requests.
     let cursor=0;
-    const cap=type==='new'?24:16;
+    const cap=type==='new'?16:6;
     const jobs=result.map((movie,i)=>({movie,i}))
       .filter(({movie})=>type==='new'||!movie.genres?.length)
       .slice(0,cap);
@@ -278,7 +286,10 @@
   }
   function display(list){
     if(!list.length)return;
-    items=list.slice(0,10);index=0;
+    const previous=items[index]?.id;
+    items=list.slice(0,10);
+    const current=items.findIndex(x=>x.id===previous);
+    index=current>=0?current:0;
     box.hidden=false;
     show();
   }
@@ -324,64 +335,112 @@
       }
     }catch{/* Missing metadata is not invented. */}
   }
+  function dedupe(list){
+    const seen=new Set();
+    return list.filter(item=>{
+      const key=core.keyOf(item);
+      if(!key||seen.has(item.id))return false;
+      seen.add(item.id);return true;
+    });
+  }
+  function compose(sources,fallback){
+    const has=key=>Array.isArray(sources?.[key]);
+    const popular=has('filmsPopular')||has('seriesPopular')
+      ?dedupe([...(sources.filmsPopular||[]),...(sources.seriesPopular||[])])
+      :Array.isArray(fallback?.popular)?fallback.popular:[];
+    const news=has('filmsNew')||has('seriesNew')
+      ?dedupe([...(sources.filmsNew||[]),...(sources.seriesNew||[])])
+      :Array.isArray(fallback?.new)?fallback.new:[];
+    return {popular,new:news};
+  }
+  function unavailable(message){
+    if(items.length)return;
+    title.textContent='Подборка временно недоступна';
+    kind.textContent='Что посмотреть';
+    counter.textContent='0 / 0';
+    description.textContent=message;
+    description.hidden=false;
+    link.removeAttribute('href');
+    dots.replaceChildren();
+  }
+  async function showFrom(catalog){
+    const feed=await pick(catalog);
+    if(feed.length)display(feed);
+    else unavailable('Не удалось подобрать фильмы и сериалы из доступных каталогов.');
+  }
+  async function enrichAndSave(catalog){
+    // Catalog data is already persisted before slow metadata requests start.
+    // If the popup is closed during enrichment, the next opening reuses
+    // that raw catalog instead of downloading all list pages again.
+    const y=new Date().getFullYear();
+    const candidates=dedupe((catalog.new||[])
+      .filter(x=>x.year>=y-1&&x.year<=y));
+    const enriched=await enrichCatalog(candidates,'new');
+    const replacements=new Map(enriched.map(x=>[core.keyOf(x),x]));
+    const patched={
+      ...catalog,
+      new:(catalog.new||[]).map(x=>replacements.get(core.keyOf(x))||x),
+      enrichedAt:Date.now()
+    };
+    const previous=(await chrome.storage.local.get(CACHE))[CACHE];
+    if(previous?.savedAt!==catalog.savedAt)return;
+    await chrome.storage.local.set({[CACHE]:patched});
+    await showFrom(patched);
+  }
   async function start(){
     box.hidden=false;
-    title.textContent='Подбираем фильмы…';
-    const cached=(await chrome.storage.local.get(CACHE))[CACHE];
-    const saved=cached&&typeof cached==='object'?cached:null;
-    const age=Date.now()-Number(saved?.savedAt||0);
-    const usable=age>=0&&age<STALE_TTL &&
-      Array.isArray(saved?.popular)&&Array.isArray(saved?.new);
-    if(usable){
-      const feed=await pick(saved);
-      if(feed.length)display(feed);
+    title.textContent='Подбираем фильмы и сериалы…';
+    const raw=await chrome.storage.local.get([CACHE,FACT_CACHE]);
+    const stored=raw[CACHE],cached=stored&&typeof stored==='object'?stored:null;
+    persistedFacts=raw[FACT_CACHE]&&typeof raw[FACT_CACHE]==='object'
+      &&!Array.isArray(raw[FACT_CACHE])?raw[FACT_CACHE]:{};
+    // Cached factual metadata survives popup and side-panel restarts.
+    for(const [key,record] of Object.entries(persistedFacts)){
+      const at=Number(record?.cachedAt||0);
+      if(at>0&&Date.now()-at<FACT_TTL&&record&&typeof record==='object'&&
+        /^(?:film|series):[1-9]\d{0,12}$/.test(key)){
+        detailsCache.set(key,record);
+      }else delete persistedFacts[key];
     }
-    if(usable&&age<TTL)return;
-    const fetched=await Promise.allSettled([fetchCatalog('popular'),fetchCatalog('new')]);
-    const rawPopular=fetched[0].status==='fulfilled'?fetched[0].value:(saved?.popular||[]);
-    const rawNew=fetched[1].status==='fulfilled'?fetched[1].value:(saved?.new||[]);
-    // Check up-to-date popular films too, not just the editorial yearly
-    // list: a recent October premiere may not be among its first entries.
-    const currentYear=new Date().getFullYear();
-    const candidates=[],candidateIds=new Set();
-    for(const film of [
-      ...rawPopular.filter(x=>x.year>=currentYear-1).slice(0,12),
-      ...rawNew
-    ]){
-      if(candidateIds.has(film.id))continue;
-      candidateIds.add(film.id);candidates.push(film);
-    }
-    const [popular,news]=await Promise.all([
-      fetched[0].status==='fulfilled'?enrichCatalog(rawPopular,'popular'):rawPopular,
-      (fetched[0].status==='fulfilled'||fetched[1].status==='fulfilled')
-        ?enrichCatalog(candidates,'new')
-        :(saved?.new||[])
-    ]);
-    const fresh={popular,new:news};
-    if(!fresh.popular.length&&!fresh.new.length){
-      if(!items.length){
-        title.textContent='Подборка недоступна';
-        kind.textContent='Что посмотреть';
-        description.textContent='Не удалось получить фильмы с Кинопоиска.';
-        description.hidden=false;
-        link.removeAttribute('href');
-        dots.replaceChildren();
-      }
+    const age=Date.now()-Number(cached?.savedAt||0);
+    const usable=age>=0&&age<STALE_TTL&&
+      Array.isArray(cached?.popular)&&Array.isArray(cached?.new);
+    if(usable)await showFrom(cached);
+    if(usable&&cached.schema===2&&age<TTL){
+      if(!cached.enrichedAt)await enrichAndSave(cached);
       return;
     }
-    // Cache public catalog only; personal ratings/history never enter it.
-    if(fetched.some(x=>x.status==='fulfilled')){
-      await chrome.storage.local.set({[CACHE]:{...fresh,savedAt:Date.now()}});
+    // Back off across window restarts and network errors, including when
+    // Kinopoisk denies access. No retry on every popup opening.
+    if(Date.now()<Number(cached?.retryAt||0)){
+      if(!usable)unavailable('Кинопоиск не ответил. Повторная попытка позже.');
+      return;
     }
-    const feed=await pick(fresh);
-    if(feed.length)display(feed);
-    else if(!items.length){
-      title.textContent='Подборка пока недоступна';
-      kind.textContent='Что посмотреть';
-      description.textContent='Недостаточно данных для персонального подбора или нет подтверждённых новинок.';
-      description.hidden=false;counter.textContent='0 / 0';
-      link.removeAttribute('href');
+    const attemptedAt=Date.now();
+    await chrome.storage.local.set({[CACHE]:{
+      ...(cached||{}),retryAt:attemptedAt+RETRY_TTL
+    }});
+    const names=['filmsPopular','seriesPopular','filmsNew','seriesNew'];
+    const responses=await Promise.allSettled(names.map(name=>fetchCatalog(name)));
+    const sources={...(cached?.sources||{})};
+    let successes=0;
+    for(let i=0;i<names.length;i++){
+      if(responses[i].status==='fulfilled'){
+        sources[names[i]]=responses[i].value;
+        successes++;
+      }
     }
+    if(!successes){
+      if(!usable)unavailable('Списки Кинопоиска сейчас недоступны. Повторим запрос позже.');
+      return;
+    }
+    const combined=compose(sources,cached);
+    const fresh={schema:2,sources,...combined,savedAt:attemptedAt,
+      retryAt:attemptedAt+TTL,enrichedAt:0};
+    // Save BEFORE slow detail lookups; data remains after the popup closes.
+    await chrome.storage.local.set({[CACHE]:fresh});
+    await showFrom(fresh);
+    await enrichAndSave(fresh);
   }
   $('discoveryPrevious').addEventListener('click',()=>go(index-1));
   $('discoveryNext').addEventListener('click',()=>go(index+1));
