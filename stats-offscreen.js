@@ -23,7 +23,9 @@
         respond({ok:false,error:'bad profile document'});
         return false;
       }
-      const result=window.KinoProfileVotes.parsePage(html,page);
+      const result=message.action==='kinoWatchlistParsePage'
+        ? window.KinoPlannedParser.parsePage(html,page)
+        : window.KinoProfileVotes.parsePage(html,page);
       respond({ok:true,result});
     } catch(error) {
       respond({ok:false,error:String(error?.message||error).slice(0,200)});
