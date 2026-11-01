@@ -634,6 +634,7 @@ let searchMetadataOfflineUntil=0;
 
 async function getSearchMovieMetadata(payload) {
   const media = normalizeMediaPayload(payload);
+  const discovery=payload?.discovery===true;
   const key = media.type + ':' + media.id;
   const cached = searchMetadataCache.get(key);
   if (cached && Date.now() - cached.time < SEARCH_META_TTL_MS) {
@@ -645,7 +646,7 @@ async function getSearchMovieMetadata(payload) {
   const data = await runRatingRequest(async () => {
     // Check inside the serialized queue too: after a network outage the
     // other queued discovery cards should not each wait for a timeout.
-    if(Date.now()<searchMetadataOfflineUntil)
+    if(discovery&&Date.now()<searchMetadataOfflineUntil)
       throw Error('Метаданные временно недоступны, повторим позже');
     const fetchMetadata = async query => {
       const response = await fetch(
@@ -677,7 +678,7 @@ async function getSearchMovieMetadata(payload) {
       const message=String(error?.message||error);
       const isNetwork=/fetch|network|timeout|timed out|abort|ERR_|HTTP (?:403|429|5\d\d)/i.test(message);
       if(isNetwork){
-        searchMetadataOfflineUntil=Date.now()+45*1000;
+        if(discovery)searchMetadataOfflineUntil=Date.now()+45*1000;
         throw error;
       }
       console.warn("[KinoHelper] Дополнительные поля постера недоступны:", message);
