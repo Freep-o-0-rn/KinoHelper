@@ -245,7 +245,9 @@
         verified.textContent='Фактически просмотрено: '+Math.floor(observed)+'%';
       } else if(verified)verified.remove();
       let confirm=block.querySelector('.history-confirm-complete');
-      if (!item.completed && observed>=85) {
+      const manualEligible=observed>=85 ||
+        item.position>=item.duration*.85;
+      if (!item.completed && manualEligible) {
         if (!confirm) {
           confirm=document.createElement('button');
           confirm.type='button';
@@ -268,8 +270,11 @@
           block.appendChild(confirm);
         }
         if(!confirm.disabled)confirm.textContent='✓ Досмотрел';
-        confirm.title='Подтвердить окончание просмотра: просмотрено '+
-          Math.floor(observed)+'% уникального материала';
+        confirm.title=observed>=85
+          ? 'Подтвердить окончание: '+Math.floor(observed)+
+            '% уникального материала просмотрено'
+          : 'Ручное подтверждение для сохранённого таймкода: '+
+            'позиция не доказывает просмотр';
       } else if(confirm)confirm.remove();
     }
   }
