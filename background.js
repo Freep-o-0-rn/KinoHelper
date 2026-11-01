@@ -377,7 +377,10 @@ async function findPosterOnMoviePage(payload) {
 }
 
 const imageDataCache = new Map();
+const imageInFlight = new Map();
 const IMAGE_CACHE_MAX = 40;
+const IMAGE_CACHE_MAX_CHARS = 16 * 1024 * 1024;
+let imageCacheChars = 0;
 async function loadSearchPoster(payload) {
   const raw = String(payload?.url || '').trim();
   const address = new URL(raw);
@@ -386,7 +389,16 @@ async function loadSearchPoster(payload) {
       !['avatars.mds.yandex.net', 'st.kp.yandex.net'].includes(host)) {
     throw new Error('Недопустимый источник постера');
   }
-  if (imageDataCache.has(address.href)) return imageDataCache.get(address.href);
+  const cached = imageDataCache.get(address.href);
+  if (cached) {
+    // Recent images remain cached; rarely used images are evicted first.
+    imageDataCache.delete(address.href);
+    imageDataCache.set(address.href,cached);
+    return cached;
+  }
+  const existing = imageInFlight.get(address.href);
+  if(existing)return existing;
+  const task=(async()=>{
   const result = await fetch(address.href, {
     credentials: 'omit',
     cache: 'force-cache',
@@ -406,11 +418,22 @@ async function loadSearchPoster(payload) {
     binary += String.fromCharCode(...bytes.subarray(start, start + 8192));
   }
   const dataUrl = 'data:' + mime + ';base64,' + btoa(binary);
-  imageDataCache.set(address.href, dataUrl);
-  if (imageDataCache.size > IMAGE_CACHE_MAX) {
-    imageDataCache.delete(imageDataCache.keys().next().value);
+  // Bound the base64 cache by memory, not only by entry count.
+  // A single image can be nearly 2 MB; 40 such images are expensive.
+  if(dataUrl.length <= IMAGE_CACHE_MAX_CHARS) {
+    imageDataCache.set(address.href,dataUrl);
+    imageCacheChars += dataUrl.length;
+    while(imageDataCache.size > IMAGE_CACHE_MAX ||
+          imageCacheChars > IMAGE_CACHE_MAX_CHARS) {
+      const oldest=imageDataCache.keys().next().value;
+      imageCacheChars -= imageDataCache.get(oldest).length;
+      imageDataCache.delete(oldest);
+    }
   }
   return dataUrl;
+  })().finally(()=>imageInFlight.delete(address.href));
+  imageInFlight.set(address.href,task);
+  return task;
 }
 
 function convertSuggestedMovie(movie) {
@@ -569,6 +592,7 @@ async function searchMovieTitles(payload) {
 }
 
 const searchMetadataCache = new Map();
+const metadataInFlight = new Map();
 const SEARCH_META_TTL_MS = 30 * 60 * 1000;
 const SEARCH_META_MAX_CACHE = 100;
 
@@ -579,7 +603,9 @@ async function getSearchMovieMetadata(payload) {
   if (cached && Date.now() - cached.time < SEARCH_META_TTL_MS) {
     return cached.data;
   }
-
+  const existing = metadataInFlight.get(key);
+  if(existing)return existing;
+  const task=(async()=>{
   const data = await runRatingRequest(async () => {
     const fetchMetadata = async query => {
       const response = await fetch(
@@ -642,6 +668,9 @@ async function getSearchMovieMetadata(payload) {
     }
   }
   return data;
+  })().finally(()=>metadataInFlight.delete(key));
+  metadataInFlight.set(key,task);
+  return task;
 }
 
 async function getMovieRating(payload) {
