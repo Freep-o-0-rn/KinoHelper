@@ -284,8 +284,96 @@
        error:String(err?.message||err)};
    }
  }
+
+ // v1.571: a completed film leaves "Буду смотреть" only after the
+ // authenticated Kinopoisk state confirms its removal. The old watchlist
+ // remains visible when the website cannot be changed, with a clear error.
+ const AUTO_KEY='kinoWatchlistAutoRemoveV1';
+ const AUTO_ALARM='kinoWatchlistAutoRemoveAlarmV1';
+ let autoRunner=null;
+ let autoWrite=Promise.resolve();
+ const filmId=key=>/^film:([1-9]\d{0,12})$/.exec(String(key||''))?.[1]||'';
+ async function queueCompletedFilm(mediaKey){
+   const id=filmId(mediaKey);
+   if(!id)return {ok:false,reason:'not a film'};
+   const task=async()=>{
+     const auth=await self.KinoStatsAccount.detect();
+     if(auth.status!=='logged-in'||!validId(auth.id))
+       return {ok:false,reason:'no confirmed profile'};
+     const scope=await chrome.storage.local.get([STORE,AUTO_KEY]);
+     const items=obj(obj(scope[STORE])[auth.id]);
+     const key='film:'+id;
+     const movie=items[key];
+     if(!movie)return {ok:true,queued:false,reason:'not in current profile list'};
+     const all={...obj(scope[AUTO_KEY])};
+     const pending={...obj(all[auth.id])};
+     if(pending[key]){
+       return {ok:true,queued:true,reason:'already pending'};
+     }
+     pending[key]={movie:{...movie,type:'film',id},attempts:0,
+       state:'queued',nextAt:Date.now(),updatedAt:Date.now(),error:''};
+     all[auth.id]=pending;
+     await chrome.storage.local.set({[AUTO_KEY]:all});
+     await chrome.alarms.create(AUTO_ALARM,{when:Date.now()+30000});
+     void processAutoRemovals().catch(err=>
+       console.warn('[KinoHelper] Auto watchlist removal:',err));
+     return {ok:true,queued:true};
+   };
+   const result=autoWrite.then(task,task);
+   autoWrite=result.catch(()=>{});
+   return result;
+ }
+ async function processAutoRemovals(){
+   if(autoRunner)return autoRunner;
+   autoRunner=(async()=>{
+     const auth=await self.KinoStatsAccount.detect();
+     if(auth.status!=='logged-in'||!validId(auth.id))return;
+     const raw=(await chrome.storage.local.get(AUTO_KEY))[AUTO_KEY];
+     const profiles={...obj(raw)},pending={...obj(profiles[auth.id])};
+     const candidate=Object.entries(pending)
+       .filter(([key,entry])=>filmId(key)&&entry?.state!=='failed'&&
+         Number(entry?.nextAt||0)<=Date.now())
+       .sort((a,b)=>Number(a[1]?.nextAt||0)-Number(b[1]?.nextAt||0))[0];
+     if(!candidate)return;
+     const [key,entry]=candidate;
+     let result;
+     try{
+       result=await mutate({
+         movie:entry.movie,desired:false,profileId:auth.id
+       });
+     }catch(error){result={ok:false,error:String(error?.message||error)};}
+     const after=(await chrome.storage.local.get(AUTO_KEY))[AUTO_KEY];
+     const all={...obj(after)},scope={...obj(all[auth.id])};
+     // User may have changed profile or removed/replaced this job.
+     if(!scope[key]||scope[key].updatedAt!==entry.updatedAt)return;
+     if(result?.ok){
+       delete scope[key];
+       // mutate already removed the verified movie from the profile store.
+     }else{
+       const attempts=(Number(entry.attempts)||0)+1;
+       scope[key]={...entry,attempts,updatedAt:Date.now(),
+         state:attempts>=3?'failed':'retry',
+         nextAt:Date.now()+Math.min(3600000,300000*attempts),
+         error:String(result?.error||'Не удалось изменить список на Кинопоиске')
+           .slice(0,160)};
+     }
+     all[auth.id]=scope;
+     await chrome.storage.local.set({[AUTO_KEY]:all});
+     const next=Object.values(scope)
+       .filter(v=>v?.state!=='failed')
+       .map(v=>Number(v.nextAt)||Date.now()+30000)
+       .sort((a,b)=>a-b)[0];
+     if(next)await chrome.alarms.create(AUTO_ALARM,{
+       when:Math.max(Date.now()+30000,next)});
+   })().finally(()=>{autoRunner=null});
+   return autoRunner;
+ }
+ self.KinoWatchlistAutoComplete={onFilmCompleted:queueCompletedFilm};
+
  chrome.alarms.onAlarm.addListener(alarm=>{
    if(alarm.name===ALARM)void scan().catch(err=>console.warn('[KinoHelper] Planned:',err));
+   if(alarm.name===AUTO_ALARM)void processAutoRemovals().catch(err=>
+     console.warn('[KinoHelper] Auto watchlist:',err));
  });
  chrome.runtime.onMessage.addListener((msg,sender,respond)=>{
    if(!['kinoWatchlistEnsure','kinoWatchlistRefresh','kinoWatchlistSet'].includes(msg?.action))
@@ -301,7 +389,9 @@
    return true;
  });
  const wake=async()=>{const auth=await self.KinoStatsAccount.detect();
-   if(auth.status==='logged-in')await ensure(auth.id);};
+   if(auth.status==='logged-in')await ensure(auth.id);
+   void processAutoRemovals().catch(err=>
+     console.warn('[KinoHelper] Restore auto watchlist jobs:',err));};
  chrome.runtime.onStartup.addListener(()=>{void wake();});
  chrome.runtime.onInstalled.addListener(()=>{void wake();});
 })();
