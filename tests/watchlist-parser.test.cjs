@@ -87,3 +87,17 @@ test('one unrelated empty list cannot overwrite a nonempty planned list',()=>{
  assert.equal(result.items.length,1);
  assert.equal(result.verifiedEmpty,false);
 });
+
+
+test('planned list excludes unrelated recommendation or rating reactions',()=>{
+ const apolloState={
+   ROOT_QUERY:{movieReactions:{__ref:'Ratings'},plannedToWatch:{__ref:'Planned'}},
+   Ratings:{items:[{__ref:'Film:99'}]},
+   Planned:{items:[{node:{__ref:'Film:42'}}]},
+   'Film:99':{__typename:'Film',id:99,title:{russian:'Не добавлен'}},
+   'Film:42':{__typename:'Film',id:42,title:{russian:'Мой список'}}
+ };
+ const result=parser.parsePage('<script>window.Ya.__ssr_initial_data = '+
+   JSON.stringify({apolloState})+';</script>');
+ assert.deepEqual(result.items.map(x=>x.id),['42']);
+});
