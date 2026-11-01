@@ -2193,7 +2193,8 @@ function playbackCompletionStatus(item, previous, coverage) {
   // No automatic completion at 85%: the story can still be in progress.
   // An actual player ended event is accepted only after 85% verified unique
   // coverage. The viewer can separately confirm after 85% (UI action).
-  const verifiedEnd = item.event === 'ended' && Boolean(coverage?.eligible);
+  const verifiedEnd = item.event === 'ended' && Boolean(coverage?.eligible) &&
+    item.position >= item.duration - 5;
   return verifiedEnd || Boolean(previous?.completed &&
     item.position >= item.duration * 0.1);
 }
