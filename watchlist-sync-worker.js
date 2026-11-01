@@ -3,6 +3,7 @@
  'use strict';
  const STORE='kinoWatchlistProfilesV1', JOB='kinoWatchlistImportJobV1';
  const ALARM='kinoWatchlistImportV1', STEP=30000, DAY=86400000;
+ let mutationRevision=0,pendingMutations=0;
  const MIN_PAGE_SIZE=20; // Full pages without navigation must be checked further.
  const MAX_PAGE=2000;
  const validId=id=>/^[1-9]\d{0,12}$/.test(String(id));
@@ -41,11 +42,9 @@
        failures:0,message:'Загрузка списка'});
    } else if(job.state==='paused'&&job.message==='Авторизация не подтверждена'){
      job=await putJob({...job,state:'loading',failures:0,nextAt:Date.now()});
-   } else if(['completed','partial'].includes(job.state)&&
-       Date.now()-Number(job.updatedAt||0)>5*60*1000){
-     job=await putJob({...job,page:1,done:0,total:null,
-       staged:{},state:'loading',failures:0,count:0,nextAt:Date.now()});
    }
+   // Completed imports are refreshed by the minute heartbeat. A full
+   // re-scan remains scheduled for the existing daily nextAt.
    await schedule(job.nextAt);
    // Start the first page immediately, rather than waiting for the 30s alarm.
    // The alarm remains the durable fallback when the panel closes.
@@ -85,7 +84,7 @@
      await chrome.tabs.remove(tab.id).catch(()=>{});
    }
  }
- async function loadPage(profileId,page) {
+ async function loadPage(profileId,page,allowBrowserFallback=true) {
    let firstError=null;
    try {
      const response=await fetch(path(profileId)+'?page='+page,{
@@ -103,6 +102,10 @@
      if(result?.recognized||result?.verifiedEmpty)return result;
      firstError=Error('В фоновом ответе нет списка');
    }catch(error){firstError=error;}
+   // Automated minute checks never open browser tabs. Keep the rendered
+   // fallback only for the initial/full import and explicit refresh.
+   if(!allowBrowserFallback)throw firstError ||
+     Error('Профиль не удалось прочитать');
    // One fallback per page, not a retry loop that could leave tabs behind.
    try{return await readRenderedPage(profileId,page);}
    catch(error){
@@ -262,6 +265,9 @@
    const key=keyOf(movie);
    if(!key||typeof desired!=='boolean')
      return {ok:false,error:'Неверный фильм'};
+   pendingMutations++;
+   mutationRevision++;
+   try{
    const login=await self.KinoStatsAccount.detect();
    if(login.status!=='logged-in')
      return {ok:false,error:'Авторизуйтесь на Кинопоиске'};
@@ -341,7 +347,90 @@
      }
    }
    return {ok:true,profileId:login.id,planned:desired};
+   } finally {
+     pendingMutations--;
+     mutationRevision++;
+   }
  }
+
+
+ // Fast, read-only check of the newest planned-list page every minute.
+ // A full multi-page re-scan is deliberately NOT restarted every minute.
+ let minuteWork=null;
+ async function minuteSync(identity){
+   if(minuteWork)return minuteWork;
+   minuteWork=(async()=>{
+     const id=String(identity?.id||'');
+     if(identity?.status!=='logged-in'||!validId(id))
+       return {ok:false,skipped:'auth'};
+     const job=await getJob();
+     if(!job||job.profileId!==id){
+       await ensure(id);
+       return {ok:true,skipped:'started-import'};
+     }
+     if(job.state!=='completed')return {
+       ok:true,skipped:'full-import-'+job.state
+     };
+     if(current||pendingMutations||Number(job.nextAt||0)<=Date.now()+60000)
+       return {ok:true,skipped:'busy-or-full-due'};
+     const revision=mutationRevision;
+     // Do not open temporary browser tabs on a one-minute schedule.
+     const result=await loadPage(id,1,false);
+     if(!Array.isArray(result?.items)||
+       (!result.recognized&&!result.verifiedEmpty))
+       throw Error('Список Кинопоиска не распознан');
+     const latest=await getJob();
+     if(latest?.profileId!==id||latest.state!=='completed'||
+        pendingMutations||mutationRevision!==revision)
+       return {ok:true,skipped:'job-or-user-action-changed'};
+     const now=Date.now();
+     const scope=(await chrome.storage.local.get(STORE))[STORE];
+     const profiles={...obj(scope)};
+     const before=obj(profiles[id]);
+     const next={...before};
+     let newCount=0;
+     for(const item of result.items){
+       const key=keyOf(item);
+       if(!key)continue;
+       if(!next[key]){
+         next[key]={...item,source:'kinopoisk',addedAt:now};
+         newCount++;
+       }else {
+         // Metadata may improve, but preserve the original added timestamp.
+         next[key]={...next[key],...item,source:'kinopoisk',
+           addedAt:next[key].addedAt||now};
+       }
+     }
+     // Replacing the entire list is only safe for an explicitly
+     // verified single-page list. Otherwise removals need full re-scan.
+     const singlePage=job.done===1 &&
+       (result.verifiedEmpty || result.items.length<MIN_PAGE_SIZE ||
+         Number(result.lastPage)===1);
+     const desired=singlePage ? Object.fromEntries(result.items
+       .map(item=>[keyOf(item),next[keyOf(item)]])
+       .filter(([key,value])=>key&&value)) : next;
+     const changes=Object.keys(desired).length-
+       Object.keys(before).length;
+     const verified=await self.KinoStatsAccount.detect();
+     if(verified.status!=='logged-in'||verified.id!==id)
+       return {ok:false,skipped:'account-changed'};
+     const still=await getJob();
+     if(still?.profileId!==id||still.state!=='completed'||
+        pendingMutations||revision!==mutationRevision)
+       return {ok:true,skipped:'concurrent-change'};
+     const updates={[JOB]:{...still,lastMinuteSyncAt:now,
+       lastMinuteSyncChanges:changes}};
+     if(JSON.stringify(before)!==JSON.stringify(desired)){
+       profiles[id]=desired;updates[STORE]=profiles;
+     }
+     await chrome.storage.local.set(updates);
+     return {ok:true,checkedAt:now,changed:changes,
+       partial:!singlePage};
+   })().catch(error=>({ok:false,error:String(error?.message||error)}))
+      .finally(()=>{minuteWork=null});
+   return minuteWork;
+ }
+ self.KinoWatchlistMinuteSync={run:minuteSync};
 
  // v1.571: a completed film leaves "Буду смотреть" only after the
  // authenticated Kinopoisk state confirms its removal. The old watchlist
