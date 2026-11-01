@@ -41,3 +41,15 @@ test('duplicate movie reactions collapse by Kinopoisk ID',()=>{
  ]));
  assert.equal(parsed.items.length,1);
 });
+
+
+test('verified empty reaction list is distinguished from parse failure',()=>{
+ const state={apolloState:{ROOT_QUERY:{movieReactions:{__ref:'List'}},
+   List:{items:[]}}};
+ const html='<script>window.Ya.__ssr_initial_data = '+JSON.stringify(state)+';</script>';
+ const empty=parser.parsePage(html);
+ assert.equal(empty.recognized,0);
+ assert.equal(empty.verifiedEmpty,true);
+ assert.equal(empty.items.length,0);
+ assert.equal(parser.parsePage('<html></html>').verifiedEmpty,false);
+});
