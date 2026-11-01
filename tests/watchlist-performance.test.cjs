@@ -35,7 +35,11 @@ function setup(count=120,{withUI=false}={}){
    addEventListener(){},
    createElement(){created++;return new El()}
  };
- const window={addEventListener(){},dispatchEvent(){}};
+ const handlers={};
+ const window={
+   addEventListener(name,fn){handlers[name]=fn;},
+   dispatchEvent(event){handlers[event.type]?.();}
+ };
  const localStorage={
    getItem:key=>data.get(key)||null,
    setItem(key,value){data.set(key,String(value))},
@@ -53,6 +57,7 @@ function setup(count=120,{withUI=false}={}){
    IntersectionObserver,Event:class{constructor(type){this.type=type}},
    URL,console,JSON:json},{filename:'watchlist.js'});
  return {api:window.KinoWatchlist,nodes,data,
+   notify(){handlers['kino-watchlist-updated']?.();},
    setRaw(value){data.set('kinoHelperWatchlistV1',value)},
    get parses(){return parses},get created(){return created},
    get replacements(){return replacements}};
@@ -87,4 +92,30 @@ test('poster hydration replaces only one image, not all watchlist rows',()=>{
  assert.equal(h.nodes.watchlistItems.children[21],beforeRows[21]);
  assert.equal(h.created,created+1,'only one new img expected');
  assert.equal(h.replacements,replacements+1,'only one poster holder replaced');
+});
+
+
+test('repeated focus/status refresh retains all DOM rows if items did not change',()=>{
+ const h=setup(120,{withUI:true});
+ const rows=[...h.nodes.watchlistItems.children];
+ const created=h.created,replacements=h.replacements;
+ h.notify();
+ assert.equal(h.created,created,'unchanged list cannot allocate new DOM nodes');
+ assert.equal(h.replacements,replacements,'unchanged list cannot be reattached');
+ assert.equal(h.nodes.watchlistItems.children[35],rows[35]);
+});
+test('metadata update replaces only the changed row and preserves other rows',()=>{
+ const h=setup(50,{withUI:true});
+ const old=[...h.nodes.watchlistItems.children];
+ const raw=JSON.parse(h.data.get('kinoHelperWatchlistV1'));
+ raw[14].title='Другое название';
+ h.setRaw(JSON.stringify(raw));
+ const before=h.created;
+ h.notify();
+ const updated=h.nodes.watchlistItems.children;
+ assert.equal(updated.length,old.length);
+ assert.notEqual(updated[35],old[35]);
+ assert.equal(updated[0],old[0]);
+ assert.equal(updated[36],old[36]);
+ assert.ok(h.created-before<=18,'only one row should be rebuilt');
 });
