@@ -206,9 +206,12 @@
       {big:true,center:genres[0]?.valueLabel || '—',
         sub:genres[0]?.name || 'Нет данных'});
     makeLegend(els('statsGenresLegend'),genres);
+    const n=genres.length;
+    const word=n%100>=11&&n%100<=14 ? 'жанров'
+      : n%10===1 ? 'жанр' : [2,3,4].includes(n%10) ? 'жанра' : 'жанров';
     els('statsGenresNote').textContent = model.taggedTitles
       ? 'Жанры ' + model.taggedTitles + ' произведений · ' +
-        genres.length + ' жанров. Проценты — доля от всех жанровых отметок.'
+        n + ' ' + word + '. Проценты — доля от всех жанровых отметок.'
       : 'Жанры появятся после загрузки фильмов.';
 
     const ratings = model.buckets.map(x=>({
