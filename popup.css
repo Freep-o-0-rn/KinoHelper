@@ -1894,3 +1894,55 @@ button.btn-convert:active:not(:disabled) {
   font-weight: 650;
   font-variant-numeric: tabular-nums;
 }
+
+
+/* Compact local backup controls shared by popup and Side Panel. */
+.backup-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 11px;
+}
+
+.backup-action {
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  transition: background-color .18s ease, border-color .18s ease;
+}
+
+.backup-action:hover:not(:disabled) {
+  transform: none;
+  border-color: var(--secondary);
+  background: var(--bg-elevated);
+}
+
+.backup-action.primary {
+  border-color: var(--secondary);
+  background: var(--secondary);
+  color: var(--on-secondary);
+}
+
+.backup-action.primary:hover:not(:disabled) {
+  background: var(--secondary-hover);
+}
+
+.backup-action:disabled {
+  opacity: .6;
+  cursor: default;
+}
+
+.backup-status {
+  margin: 0 0 10px;
+  color: var(--success);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.backup-status:empty { display: none; }
+.backup-status.error { color: var(--error); }
