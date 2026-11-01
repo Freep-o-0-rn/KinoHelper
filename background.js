@@ -431,10 +431,13 @@ async function loadSearchPoster(payload) {
   const existing = imageInFlight.get(address.href);
   if(existing)return existing;
   const task=(async()=>{
+  const requestedTimeout=Number(payload?.timeoutMs);
+  const timeoutMs=Number.isFinite(requestedTimeout)&&requestedTimeout>0
+    ?Math.max(1800,Math.min(6500,requestedTimeout)):6500;
   const result = await fetch(address.href, {
     credentials: 'omit',
     cache: 'force-cache',
-    signal: AbortSignal.timeout(6500)
+    signal: AbortSignal.timeout(timeoutMs)
   });
   if (!result.ok) throw new Error('Постер: HTTP ' + result.status);
   const mime = (result.headers.get('content-type') || '').split(';')[0].trim();
@@ -627,6 +630,7 @@ const searchMetadataCache = new Map();
 const metadataInFlight = new Map();
 const SEARCH_META_TTL_MS = 30 * 60 * 1000;
 const SEARCH_META_MAX_CACHE = 100;
+let searchMetadataOfflineUntil=0;
 
 async function getSearchMovieMetadata(payload) {
   const media = normalizeMediaPayload(payload);
@@ -639,6 +643,10 @@ async function getSearchMovieMetadata(payload) {
   if(existing)return existing;
   const task=(async()=>{
   const data = await runRatingRequest(async () => {
+    // Check inside the serialized queue too: after a network outage the
+    // other queued discovery cards should not each wait for a timeout.
+    if(Date.now()<searchMetadataOfflineUntil)
+      throw Error('Метаданные временно недоступны, повторим позже');
     const fetchMetadata = async query => {
       const response = await fetch(
         ratingGraphqlUrl("MoviePreviewCard"),
@@ -648,7 +656,7 @@ async function getSearchMovieMetadata(payload) {
             { movieId: media.id, actorsLimit: 0, withUserData: false },
             query
           ),
-          signal: AbortSignal.timeout(12000)
+          signal: AbortSignal.timeout(6500)
         }
       );
       if (!response.ok) throw new Error("Кинопоиск вернул HTTP " + response.status);
@@ -664,7 +672,15 @@ async function getSearchMovieMetadata(payload) {
     try {
       movie = await fetchMetadata(MOVIE_SEARCH_METADATA_QUERY);
     } catch (error) {
-      console.warn("[KinoHelper] Дополнительные поля постера недоступны:", error.message);
+      // An unknown GraphQL gallery field may be fixed by the basic query.
+      // A network timeout/HTTP outage will not; avoid the same slow call twice.
+      const message=String(error?.message||error);
+      const isNetwork=/fetch|network|timeout|timed out|abort|ERR_|HTTP (?:403|429|5\\d\\d)/i.test(message);
+      if(isNetwork){
+        searchMetadataOfflineUntil=Date.now()+45*1000;
+        throw error;
+      }
+      console.warn("[KinoHelper] Дополнительные поля постера недоступны:", message);
       movie = await fetchMetadata(MOVIE_PREVIEW_CARD_QUERY);
     }
     if (!movie) throw new Error("Не удалось получить карточку фильма");
