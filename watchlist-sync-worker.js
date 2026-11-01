@@ -147,9 +147,11 @@
            for(const el of buttons){
              if(el.disabled||el.getAttribute('aria-disabled')==='true')continue;
              const t=norm(el.getAttribute('aria-label')||el.innerText||el.textContent);
-             const add=t==='буду смотреть'||t==='в буду смотреть';
-             const remove=/^(?:убрать|удалить|не буду смотреть|в списке)/.test(t)
-               && /смотр|списк/.test(t);
+             const add=t==='буду смотреть'||t==='в буду смотреть'||
+               /^добавить в .?буду смотреть/.test(t);
+             const remove=(t==='буду смотреть'||t==='в буду смотреть')||
+               (/^(?:убрать|удалить|не буду смотреть|в списке)/.test(t)
+               && /смотр|списк/.test(t));
              if(want?add:remove){el.click();return true;}
            }
            return false;
