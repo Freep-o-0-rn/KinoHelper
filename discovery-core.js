@@ -32,7 +32,11 @@
       year:Number.isInteger(yr)&&yr>=1888&&yr<=2200?yr:null,
       rating:Number.isFinite(r)&&r>0&&r<=10?r:null,
       genres:genres(x.genres),description:clean(x.description).slice(0,280),
-      posterUrl:poster(x.posterUrl||x.poster)
+      posterUrl:poster(x.posterUrl||x.poster),
+      // A production year is not proof of a release. Only use a date
+      // that the source explicitly associates with the film's premiere.
+      releaseDate:/^\d{4}-\d{2}-\d{2}$/.test(String(x.releaseDate||''))
+        ?x.releaseDate:''
     };
   }
   function viewed(history,watched){
@@ -64,6 +68,8 @@
   function select({recommended=[],newReleases=[],history=[],watched={},
     ratings={},genreRecords={},count=10,year=new Date().getFullYear()}={}){
     const seen=viewed(history,watched);
+    for(const [id,x] of Object.entries(safe(ratings)))
+      if(Number(x?.rating)>=1)seen.add(id);
     const interest=interests(genreRecords,ratings,watched);
     const dedupe=new Set();
     const normalize=(input,kind)=>input.map(x=>movie(x,kind)).filter(m=>{
@@ -72,11 +78,19 @@
       dedupe.add(k);return true;
     });
     const rec=normalize(recommended,'for-you');
-    const news=normalize(newReleases,'new').filter(m=>m.year&&m.year>=year-1&&m.year<=year);
+    const now=new Date(),today=now.toISOString().slice(0,10);
+    const minDate=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()-5,
+      now.getUTCDate())).toISOString().slice(0,10);
+    const news=normalize(newReleases,'new')
+      .filter(m=>m.releaseDate&&m.releaseDate>=minDate&&m.releaseDate<=today)
+      .sort((a,b)=>b.releaseDate.localeCompare(a.releaseDate));
+    // A popular film is NOT a personal recommendation without evidence
+    // of matching genres and positive preferences from verified local data.
     const scored=rec.map((m,i)=>{
       const affinity=m.genres.reduce((n,g)=>n+(interest.get(g)||0),0);
-      return {m,score:affinity*3+(m.rating||0)*.3-i*.03};
-    }).sort((a,b)=>b.score-a.score).map(x=>x.m);
+      return {m,score:affinity*3+(m.rating||0)*.12-i*.02,affinity};
+    }).filter(x=>x.affinity>=0.35)
+      .sort((a,b)=>b.score-a.score).map(x=>x.m);
     // Mix sources but never invent recommendations or double-list the same movie.
     const chosen=[],max=Math.min(10,Math.max(1,Number(count)||10));
     while(chosen.length<max&&(scored.length||news.length)){
