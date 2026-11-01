@@ -41,7 +41,7 @@
        failures:0,message:'Загрузка списка'});
    } else if(job.state==='paused'&&job.message==='Авторизация не подтверждена'){
      job=await putJob({...job,state:'loading',failures:0,nextAt:Date.now()});
-   } else if(job.state==='completed'&&
+   } else if(['completed','partial'].includes(job.state)&&
        Date.now()-Number(job.updatedAt||0)>5*60*1000){
      job=await putJob({...job,page:1,done:0,total:null,
        staged:{},state:'loading',failures:0,count:0,nextAt:Date.now()});
@@ -124,7 +124,7 @@
          message:'Авторизация не подтверждена'});
        await schedule(job.nextAt);return job;
      }
-     if(job.state==='completed'){
+     if(job.state==='completed'||job.state==='partial'){
        job=await putJob({profileId:job.profileId,page:1,done:0,
          staged:{},total:null,state:'loading',count:0,failures:0,
          nextAt:Date.now(),message:'Проверяем изменения'});
@@ -177,16 +177,19 @@
          if(verified.status!=='logged-in'||verified.id!==job.profileId)
            throw Error('Аккаунт изменился во время загрузки');
        }
-       profiles[job.profileId]=complete?finalScope:intermediate;
+       profiles[job.profileId]=complete&&!repeated?finalScope:intermediate;
        await chrome.storage.local.set({[STORE]:profiles});
        job=await putJob({...job,page:job.page+1,done:job.page,
          total:explicitTotal,staged:complete?{}:staged,
          fingerprint, count:Object.keys(staged).length,
-         state:complete?'completed':'loading',failures:0,
+         state:repeated?'partial':complete?'completed':'loading',failures:0,
          nextAt:Date.now()+(complete?DAY:STEP),
-         message:complete?'Загружено: '+Object.keys(staged).length:
-           'Загружено '+Object.keys(staged).length+
-           ' · страница '+job.page+(explicitTotal?'/'+explicitTotal:'')});
+         message:repeated
+           ? 'Сайт повторил страницу; загружено '+Object.keys(staged).length+
+             '. Проверьте список на Кинопоиске.'
+           :complete?'Загружено: '+Object.keys(staged).length:
+             'Загружено '+Object.keys(staged).length+
+             ' · страница '+job.page+(explicitTotal?'/'+explicitTotal:'')});
        await schedule(job.nextAt);
        return job;
      }catch(err){
@@ -202,9 +205,14 @@
    return current;
  }
  async function refresh(id){
-   const allowed=await ensure(id);if(!allowed.ok)return allowed;
-   await putJob({profileId:String(id),page:1,done:0,total:null,
+   id=String(id||'');
+   const auth=await self.KinoStatsAccount.detect();
+   if(!validId(id)||auth.status!=='logged-in'||auth.id!==id)
+     return {ok:false,error:'Профиль Кинопоиска не подтверждён'};
+   if(current)await current;
+   const job=await putJob({profileId:id,page:1,done:0,total:null,
      staged:{},state:'loading',count:0,failures:0,nextAt:Date.now()});
+   await schedule(job.nextAt);
    return {ok:true,job:await scan()};
  }
  async function mutate({movie,desired,profileId}){
