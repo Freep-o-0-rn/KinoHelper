@@ -373,7 +373,9 @@
      }else{
        const attempts=(Number(entry.attempts)||0)+1;
        scope[key]={...entry,attempts,updatedAt:Date.now(),
-         state:attempts>=3?'failed':'retry',
+         // A failed website click keeps a tab open for manual completion:
+         // do not create two more unwanted tabs on automatic retries.
+         state:result?.manual||attempts>=3?'failed':'retry',
          nextAt:Date.now()+Math.min(3600000,300000*attempts),
          error:String(result?.error||'Не удалось изменить список на Кинопоиске')
            .slice(0,160)};
