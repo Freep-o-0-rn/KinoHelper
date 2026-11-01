@@ -392,7 +392,8 @@
         status.textContent = '✓ Вход выполнен · профиль №' + response.id;
         // Compatibility with existing saved per-profile ratings and imports.
         // Do not copy unscope'd votes or any data from an unrelated account.
-        await chrome.storage.local.set({kinoStatsProfileId:response.id});
+        if(previousProfileId!==response.id)
+          await chrome.storage.local.set({kinoStatsProfileId:response.id});
         await reload();
         // The background worker owns all page requests and resumes using
         // chrome.alarms even after this window has been closed.
