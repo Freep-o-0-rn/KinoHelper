@@ -71,20 +71,27 @@
     for(const [id,x] of Object.entries(safe(ratings)))
       if(Number(x?.rating)>=1)seen.add(id);
     const interest=interests(genreRecords,ratings,watched);
-    const dedupe=new Set();
-    const normalize=(input,kind)=>input.map(x=>movie(x,kind)).filter(m=>{
-      const k=keyOf(m);
-      if(!m||seen.has(k)||dedupe.has(k))return false;
-      dedupe.add(k);return true;
-    });
-    const newsCandidates=normalize(newReleases,'new');
-    const rec=normalize(recommended,'for-you');
+    const normalize=(input,kind)=>(
+      Array.isArray(input)?input:[]).map(x=>movie(x,kind))
+      .filter(m=>m&&!seen.has(keyOf(m)));
     const now=new Date(),today=now.toISOString().slice(0,10);
     const minDate=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()-5,
       now.getUTCDate())).toISOString().slice(0,10);
-    const news=newsCandidates
+    const newKeys=new Set();
+    const news=normalize(newReleases,'new')
       .filter(m=>m.releaseDate&&m.releaseDate>=minDate&&m.releaseDate<=today)
-      .sort((a,b)=>b.releaseDate.localeCompare(a.releaseDate));
+      .sort((a,b)=>b.releaseDate.localeCompare(a.releaseDate))
+      .filter(m=>{
+        const k=keyOf(m);
+        if(newKeys.has(k))return false;
+        newKeys.add(k);return true;
+      });
+    const recKeys=new Set();
+    const rec=normalize(recommended,'for-you').filter(m=>{
+      const k=keyOf(m);
+      if(newKeys.has(k)||recKeys.has(k))return false;
+      recKeys.add(k);return true;
+    });
     // A popular film is NOT a personal recommendation without evidence
     // of matching genres and positive preferences from verified local data.
     const scored=rec.map((m,i)=>{
