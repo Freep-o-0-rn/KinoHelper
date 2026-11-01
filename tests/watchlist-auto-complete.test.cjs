@@ -43,8 +43,9 @@ function mock({failure=false}={}){
  new Function('chrome','self','fetch','URL','AbortSignal',
    'console','getMovieRating','setTimeout',worker)(
    chrome,self,async()=>({}),URL,{timeout(){return undefined;}},
-   console,async()=>failure?{authorized:true,planned:null}
-     :{authorized:true,planned:remotePlanned},fn=>fn());
+   console,async movie=>failure?{authorized:true,planned:null}
+     :{authorized:true,planned:String(movie?.id)==='100' && remotePlanned},
+     fn=>fn());
  return {data,self,chrome,events,messages,
    async settle(){for(let i=0;i<150;i++)await Promise.resolve();},
    setAccount(id){account=id;},
@@ -85,4 +86,15 @@ test('unrelated title or missing profile entry causes no site writes',async()=>{
  assert.equal(first.queued,false);
  assert.equal(second.ok,false);
  assert.equal(m.clicks,0);
+});
+
+
+test('an unimported planned film can still be removed after confirmed viewing',async()=>{
+ const m=mock();
+ delete m.data.kinoWatchlistProfilesV1['7143359']['film:100'];
+ const queued=await m.self.KinoWatchlistAutoComplete.onFilmCompleted('film:100');
+ assert.equal(queued.queued,true);
+ await m.settle();
+ assert.equal(m.remotePlanned,false);
+ assert.equal(m.clicks,1);
 });
