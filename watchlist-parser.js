@@ -49,38 +49,58 @@
    const state=data?.apolloState||data?.props?.pageProps?.apolloState;
    const entries=new Map();let recognized=0,verifiedEmpty=false;
    if(isObj(state)){
-     // Avoid interpreting recommendation cards as owned planned-to-watch entries.
+     // The new profile can expose UserMovieReactions, bare Movie entities,
+     // or connection edges. Only scan the list rooted in this dedicated
+     // planned-to-watch page, not unrelated recommendations.
      const lists=[],visited=new Set();
-     function walk(obj,depth){
-       obj=deref(state,obj);
-       if(!obj||typeof obj!=='object'||visited.has(obj)||depth>6)return;
-       visited.add(obj);
-       if(Array.isArray(obj)){
-         if(obj.some(v=>deref(state,v)?.__typename==='UserMovieReactions')){
-           lists.push(obj);return;
-         }
-         if(depth<4)for(const v of obj.slice(0,80))walk(v,depth+1);
+     const resolve=x=>deref(state,x);
+     function asList(container) {
+       const value=resolve(container);
+       if(Array.isArray(value))return value;
+       if(!isObj(value))return null;
+       for(const field of ['items','nodes','edges','movies','results']) {
+         const children=resolve(value[field]);
+         if(Array.isArray(children))return children;
+       }
+       return null;
+     }
+     function walk(src,depth,fromListing=false){
+       const item=resolve(src);
+       if(!item||typeof item!=='object'||visited.has(item)||depth>10)return;
+       visited.add(item);
+       if(Array.isArray(item)){
+         if(fromListing){ lists.push(item);return; }
+         for(const value of item.slice(0,100))walk(value,depth+1,false);
          return;
        }
-       for(const [key,v] of Object.entries(obj)){
-         if(!v||typeof v!=='object')continue;
-         if(key.startsWith('Movie:'))continue;
-         if((key.includes('movieReactions')||key.toLowerCase().includes('planned'))&&
-           Array.isArray(deref(state,v)?.items)){
-           const items=deref(state,v).items;
-           if(items.length===0)verifiedEmpty=true;
-           lists.push(items);
-         }
-         else if(depth<4)walk(v,depth+1);
+       for(const [key,value] of Object.entries(item)){
+         if(!value||typeof value!=='object')continue;
+         const listKey=/movieReactions|planned|willWatch|watchlist|movieList|movies\(/i.test(key);
+         const list=asList(value);
+         if(listKey&&list){
+           lists.push(list);
+           if(!list.length)verifiedEmpty=true;
+         } else if(depth<7)walk(value,depth+1,false);
        }
      }
-     for(const [key,val] of Object.entries(state))
-       if(key.startsWith('ROOT_'))walk(val,0);
+     for(const [key,value] of Object.entries(state)) {
+       if(key.startsWith('ROOT_'))walk(value,0);
+     }
+     function movieFor(raw) {
+       const entry=resolve(raw);
+       if(!isObj(entry))return null;
+       if(entry.__typename==='UserMovieReactions')
+         return resolve(entry.movie);
+       const edge=resolve(entry.node||entry.item);
+       if(edge&&edge!==entry)return movieFor(edge);
+       const container=resolve(entry.movie);
+       if(container?.id&&TYPES.has(container.__typename))return container;
+       if(TYPES.has(entry.__typename)&&entry.id)return entry;
+       return null;
+     }
      for(const list of lists)for(const raw of list){
-       const reaction=deref(state,raw);
-       if(reaction?.__typename!=='UserMovieReactions')continue;
-       const movie=deref(state,reaction.movie);
-       const item=normalize(movie,state);if(!item)continue;
+       const movie=movieFor(raw),item=normalize(movie,state);
+       if(!item)continue;
        recognized++;
        entries.set(item.type+':'+item.id,item);
      }
@@ -89,17 +109,22 @@
    if(typeof DOMParser!=='undefined')doc=new DOMParser().parseFromString(html,'text/html');
    if(!recognized && doc){
      // HTML fallback is restricted to cards within the user movie listing.
-     for(const card of doc.querySelectorAll('[class*="styles_item"],[data-test-id*="reaction"]')){
+     for(const card of doc.querySelectorAll(
+       '[class*="styles_item"],[class*="styles_movie"],[data-test-id*="reaction"]')){
        const link=card.querySelector('a[href*="/film/"],a[href*="/series/"]');
        const match=String(link?.getAttribute('href')||'').match(
          /\/(film|series)\/([1-9]\d{0,12})(?:\/|[?#]|$)/);
        if(!match)continue;
-       const title=clean(link?.textContent||card.querySelector('img')?.alt||'',200)||
+       const title=clean(card.querySelector('[class*="styles_title"] span')?.textContent||
+         card.querySelector('[class*="styles_title"]')?.textContent||
+         link?.textContent||card.querySelector('img')?.alt||'',200)||
          (match[1]==='film'?'Фильм №':'Сериал №')+match[2];
        const image=card.querySelector('img');
        const url=clean(image?.getAttribute('src')||'',700);
+       const meta=card.querySelector('[class*="styles_subtitle"]')?.textContent||'';
+       const year=Number(meta.match(/\b(?:19|20)\d{2}\b/)?.[0]);
        entries.set(match[1]+':'+match[2],{type:match[1],id:match[2],title,
-         year:null,genres:[],
+         year:year>=1888&&year<=2200?year:null,genres:[],
          posterUrl:/^https:\/\/(?:avatars\.mds\.yandex\.net|st\.kp\.yandex\.net)\//.test(url)?url:''});
        recognized++;
      }
