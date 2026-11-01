@@ -439,6 +439,11 @@ function setConvertButtonMode(mode, returnUrl = '') {
     button.dataset.mode = mode;
     button.dataset.returnUrl = returnUrl || '';
 
+    const wrap = document.getElementById('convertTooltipWrap');
+    if (wrap) {
+        wrap.classList.toggle('is-disabled', mode === 'unavailable');
+        wrap.tabIndex = mode === 'unavailable' ? 0 : -1;
+    }
     if (mode === 'return') {
         button.innerHTML = '<span class="icon">←</span> На Кинопоиск';
         button.disabled = false;
@@ -663,6 +668,11 @@ function showMessage(text, type = 'info') {
     messageBox.textContent = text;
     messageBox.className = type;
     contextCard.className = `context-card ${type}`;
+    // The cinematic discovery carousel replaces only the old passive
+    // no-movie notice. Active film, errors, and progress remain visible.
+    contextCard.hidden = type === 'info' &&
+      (text === 'Откройте страницу фильма на Кинопоиске' ||
+       text === "Выберите фильтры и нажмите 'Случайный'");
 }
 
 function openSettings() {
