@@ -89,3 +89,13 @@ test('profile watched marks round-trip without mixing Kinopoisk accounts',()=>{
   assert.equal(Object.keys(result['456']).length,1);
   assert.equal(result['123']['film:99'].watched,true);
 });
+
+
+test('watchlist accounts remain isolated when backup is merged',()=>{
+ const a={'111':{'film:1':{id:'1',type:'film',updatedAt:1}}};
+ const b={'222':{'film:2':{id:'2',type:'film',updatedAt:2}}};
+ const merged=backup.mergeStorageValue('kinoWatchlistProfilesV1',a,b);
+ assert.equal(Object.keys(merged).length,2);
+ assert.ok(merged['111']['film:1']);
+ assert.ok(merged['222']['film:2']);
+});
