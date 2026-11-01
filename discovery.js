@@ -344,12 +344,27 @@
       seen.add(item.id);return true;
     });
   }
+  function alternate(films,series){
+    const a=Array.isArray(films)?films:[],b=Array.isArray(series)?series:[];
+    const result=[];
+    for(let i=0;i<Math.max(a.length,b.length);i++){
+      if(i<a.length)result.push(a[i]);
+      if(i<b.length)result.push(b[i]);
+    }
+    return result;
+  }
   function compose(sources,fallback){
     const has=key=>Array.isArray(sources?.[key]);
-    const freshPopular=dedupe([...(sources?.filmsPopular||[]),
-      ...(sources?.seriesPopular||[])]);
-    const freshNew=dedupe([...(sources?.filmsNew||[]),
-      ...(sources?.seriesNew||[])]);
+    const freshPopular=dedupe(alternate(
+      sources?.filmsPopular,sources?.seriesPopular));
+    const currentYear=new Date().getFullYear();
+    // Add current-year titles seen in popular lists: a filtered yearly page
+    // may be unavailable, but the premiere still has to be verified later.
+    const recent=items=>(items||[]).filter(x=>
+      x.year>=currentYear-1&&x.year<=currentYear);
+    const freshNew=dedupe(alternate(
+      [...(sources?.filmsNew||[]),...recent(sources?.filmsPopular)],
+      [...(sources?.seriesNew||[]),...recent(sources?.seriesPopular)]));
     // If the main ranking is unavailable but year-filtered lists work,
     // keep those source-ranked titles as *popular*, never fabricate news.
     const popular=freshPopular.length?freshPopular:
