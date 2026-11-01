@@ -109,3 +109,29 @@ test('statistics lists every genre and percentage, including uncommon categories
   assert.ok(rows.slice(1).every(row=>row.children[2].textContent==='2,8%'));
   assert.match(ui.nodes.statsGenresNote.textContent,/19 жанров/);
 });
+
+
+test('tiny genres can be inspected from full-size legend rows, including keyboard',async()=>{
+  const ui=setup(),films={},genres={};
+  for(let i=0;i<24;i++){
+    const id=String(500+i);
+    films['film:'+id]={type:'film',id,position:300,duration:300,completed:true};
+    genres['film:'+id]={genres:['комедия','жанр '+(i+1)]};
+  }
+  ui.state.kinoPlaybackProgressV1=films;
+  ui.state.kinoStatsGenresV1=genres;
+  ui.open();await ui.settle();
+  const legend=ui.nodes.statsGenresLegend.children;
+  const tiny=legend.find(row=>row.children[1].textContent==='жанр 24');
+  assert.ok(tiny,'minor genres remain listed separately');
+  assert.ok(tiny.events.mouseenter,'each genre has a full-row hover target');
+  assert.ok(tiny.events.focus,'each genre can be focused via keyboard');
+  assert.ok(tiny.events.keydown,'each genre has keyboard activation');
+  const donut=ui.nodes.statsGenresChart.children[0];
+  const center=donut.children[1].children;
+  tiny.events.mouseenter();
+  assert.equal(center[1].textContent,'жанр 24');
+  assert.match(center[0].textContent,/%/);
+  tiny.events.mouseleave();
+  assert.equal(center[1].textContent,'комедия');
+});
