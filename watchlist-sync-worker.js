@@ -60,8 +60,8 @@
    const tab=await chrome.tabs.create({url:targetUrl,active:false});
    try {
      let last='Страница ещё загружается';
-     for(let attempt=0;attempt<18;attempt++){
-       await new Promise(done=>setTimeout(done,750));
+     for(let attempt=0;attempt<36;attempt++){
+       if(attempt)await new Promise(done=>setTimeout(done,350));
        const live=await chrome.tabs.get(tab.id).catch(()=>null);
        if(!live)throw Error('Вкладка списка закрыта');
        const actual=new URL(live.url||targetUrl);
@@ -300,8 +300,11 @@
        // Chrome never switches the user away from KinoHelper.
        tab=await chrome.tabs.create({url:filmUrl,active:false});
        let clicked=false;
-       for(let attempt=0;attempt<22;attempt++){
-         await new Promise(done=>setTimeout(done,650));
+       for(let attempt=0;attempt<48;attempt++){
+         // Check immediately: waiting 650ms before the first ready-state
+         // check made even a fully loaded page feel unresponsive.
+         if(attempt)await new Promise(done=>setTimeout(
+           done,Math.min(450,100+attempt*20)));
          const live=await chrome.tabs.get(tab.id).catch(()=>null);
          if(!live)throw Error('Временная вкладка закрылась');
          let actual;
@@ -321,8 +324,11 @@
 
        // One click only. Poll the source-of-truth GraphQL state instead of
        // trusting a changed CSS class, label or an optimistic local flag.
-       for(let check=0;check<12;check++){
-         await new Promise(done=>setTimeout(done,700));
+       for(let check=0;check<10;check++){
+         // The GraphQL read is already a network round-trip; don't add a
+         // fixed 700ms delay before every read, especially the first.
+         if(check)await new Promise(done=>setTimeout(
+           done,Math.min(650,100+check*90)));
          const latest=await getMovieRating(movie).catch(()=>null);
          if(latest?.authorized===true && latest.planned===desired){
            confirmed=true;break;
