@@ -508,13 +508,17 @@ test('85% actual coverage unlocks explicit finish button, not automatic completi
   assert.equal(ui.actions.at(-1).key,'film:447301');
 });
 
-test('94% timeline after seeking shows no completion action',async()=>{
+test('near-end timeline offers manual attestation, not automatic completion',async()=>{
   const ui=await setup({
     history:filmHistory,
     data:{'film:447301':{...movie,position:565}},
     coverageData:{'film:447301':{duration:600,ranges:[[550,565]]}}
   });
-  assert.equal(ui.rows[0].querySelector('.history-confirm-complete'),null);
+  const button=ui.rows[0].querySelector('.history-confirm-complete');
+  assert.ok(button);
+  assert.match(button.title,/позиция не доказывает/);
+  assert.equal(ui.elements.resumeLast.hidden,false);
+  assert.match(ui.rows[0].querySelector('.history-coverage-label').textContent,/2%/);
 });
 
 test('episode completion button identifies the exact season and episode',async()=>{
