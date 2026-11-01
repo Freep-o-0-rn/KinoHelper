@@ -142,14 +142,23 @@
       }
       for (const name of names) genreCounts.set(name, (genreCounts.get(name) || 0) + 1);
     }
-    const palette = ['#f36a35','#8a6aea','#28a8a0','#edb348','#da6ba2'];
+    // Keep every known genre. The former top-four + "Другие" collapsed
+    // most of the distribution, hiding what the viewer actually watches.
+    // A distinct palette covers all usual Kinopoisk genres (and more);
+    // an HSL fallback keeps unusually large lists deterministic.
+    const genreColors = [
+      '#f36a35','#8a6aea','#28a8a0','#edb348','#da6ba2',
+      '#397fdb','#8dac3f','#c87950','#2da9c5','#a96fca',
+      '#6b86ce','#c95878','#55a282','#b28a3e','#7e76c3',
+      '#d481b2','#4e979a','#b46542','#a3a33d','#a76591',
+      '#417f9d','#cc9357','#8b6bab','#4f9b66','#bf6b7c'
+    ];
     const genreRows = [...genreCounts.entries()]
       .sort((a,b) => b[1]-a[1] || a[0].localeCompare(b[0], 'ru'))
-      .map(([name,count],i) => ({name,count,color:palette[i % palette.length]}));
-    if (genreRows.length > 5) {
-      const others = genreRows.slice(4).reduce((n,g)=>n+g.count,0);
-      genreRows.splice(4,Infinity,{name:'Другие',count:others,color:'#a0a7b4'});
-    }
+      .map(([name,count],i) => ({
+        name,count,
+        color:genreColors[i] || `hsl(${(i * 137.508) % 360} 64% 48%)`
+      }));
     return {
       finishedFilms, unfinishedFilms,
       startedSeries: seriesMap.size, finishedEpisodes,
