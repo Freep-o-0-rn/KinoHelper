@@ -43,6 +43,35 @@
       <section class="screen main-screen" id="mainScreen" aria-label="Главный экран">
         <div class="screen-scroll">
           <main class="main-content">
+            <section class="discovery-carousel" id="kinoDiscovery"
+                     aria-label="Рекомендации и новинки" aria-roledescription="карусель" hidden>
+              <img class="discovery-backdrop" id="discoveryBackdrop" alt="" hidden>
+              <a class="discovery-open" id="discoveryOpen" target="_blank" rel="noopener noreferrer">
+                <div class="discovery-poster-frame">
+                  <img class="discovery-poster" id="discoveryPoster" alt="" hidden>
+                  <span id="discoveryPosterEmpty" class="discovery-poster-empty" aria-hidden="true">🎬</span>
+                </div>
+                <div class="discovery-content">
+                  <div class="discovery-topline">
+                    <span class="discovery-kind" id="discoveryKind">Что посмотреть</span>
+                    <span class="discovery-counter" id="discoveryCounter">1 / 10</span>
+                  </div>
+                  <strong class="discovery-title" id="discoveryTitle">Подбираем фильмы…</strong>
+                  <div class="discovery-meta">
+                    <span id="discoveryYear" hidden></span>
+                    <span id="discoveryGenres" hidden></span>
+                  </div>
+                  <div class="discovery-rating" id="discoveryRating" hidden></div>
+                  <p class="discovery-description" id="discoveryDescription" hidden></p>
+                </div>
+              </a>
+              <button class="discovery-arrow discovery-prev" id="discoveryPrevious"
+                      type="button" aria-label="Предыдущий фильм">‹</button>
+              <button class="discovery-arrow discovery-next" id="discoveryNext"
+                      type="button" aria-label="Следующий фильм">›</button>
+              <div class="discovery-dots" id="discoveryDots" aria-label="Выбор слайда"></div>
+            </section>
+
             <section class="context-card info" id="contextCard" aria-label="Текущий фильм или состояние">
               <div id="message" class="info" aria-live="polite">Выберите фильтры и нажмите «Случайный»</div>
               <div class="current-episode-info" id="currentEpisodeInfo" role="status" aria-live="polite" hidden></div>
@@ -130,7 +159,10 @@
 
             <div class="main-buttons">
               <button class="btn-secondary" id="randomFilm" type="button"><span class="icon">🎲</span> Случайный</button>
-              <button class="btn-convert" id="convert" type="button"><span class="icon">▶</span> Смотреть</button>
+              <div class="convert-tooltip-wrap" id="convertTooltipWrap">
+                <button class="btn-convert" id="convert" type="button"><span class="icon">▶</span> Смотреть</button>
+                <span class="convert-tooltip" role="tooltip">Откройте страницу фильма на Кинопоиске</span>
+              </div>
               <button class="btn-accent" id="openOnKinopoisk" type="button" style="display: none;"><span class="icon">🎭</span> На Кинопоиск</button>
             </div>
 
@@ -322,6 +354,7 @@
     </div>
   </div>
 
+  <script src="discovery-core.js"></script>
   <script src="movie-details.js"></script>
   <script src="watchlist.js"></script>
   <script src="resume-ui.js"></script>
@@ -335,6 +368,7 @@
   <script src="filters-ui.js"></script>
   <script src="display-mode.js"></script>
   <script src="data-backup.js"></script>
+  <script src="discovery.js"></script>
   <script src="sidepanel-ambient.js"></script>
 </body>
 </html>
