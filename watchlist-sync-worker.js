@@ -119,9 +119,10 @@
    }
  }
 
- async function scan(){
-   if(current)return current;
-   current=(async()=>{
+ // Only the watchlist importer uses a bounded two-page burst. The first
+ // two pages retain the original conservative cadence to detect server-side
+ // pagination/rate-limit issues before any acceleration.
+ async function scanOne(){
      // A user-driven remote bookmark operation takes precedence over an
      // ongoing importer. A delayed page must not restore a deleted title.
      if(minuteWork)await minuteWork;
@@ -243,6 +244,23 @@
          nextAt:Date.now()+delay,message});
        await schedule(job.nextAt);return job;
      }
+ }
+ async function scan(){
+   if(current)return current;
+   current=(async()=>{
+     const before=await getJob();
+     let result=await scanOne();
+     if(before?.state==='loading' && Number(before.done)>=2 &&
+        result?.state==='loading' && !pendingMutations){
+       // No parallel requests. If authentication changes or user presses a
+       // bookmark button, the next page is abandoned.
+       await new Promise(done=>setTimeout(done,1500));
+       const now=await getJob();
+       if(now?.state==='loading' && now.profileId===result.profileId &&
+          now.page===result.page && !pendingMutations)
+         result=await scanOne();
+     }
+     return result;
    })().finally(()=>{current=null});
    return current;
  }
