@@ -72,11 +72,20 @@
     const rated = Object.values(valid(ratings) ? ratings : {})
       .map(item => Number(item?.rating))
       .filter(x => Number.isInteger(x) && x >= 1 && x <= 10);
-    // Each personal vote is its own category, from 1 through 10.
-    // The color ramp goes from red (low) to green/teal (high).
+    // Ten deliberately contrasting categorical accents. Neighboring grades
+    // alternate warm / cool hues instead of merging into a soft gradient.
+    // Grade 1 remains red, grade 10 green; color never replaces the grade label.
     const ratingColors = [
-      '#d65b72', '#df6e70', '#df8162', '#e69a57', '#e9b450',
-      '#d5bb57', '#acbb63', '#7ab575', '#45ad83', '#23a18c'
+      '#D83A52', // 1 — red
+      '#4B5ED7', // 2 — royal indigo
+      '#E88622', // 3 — orange
+      '#9952C8', // 4 — violet
+      '#D2A62F', // 5 — gold
+      '#069FB5', // 6 — cyan
+      '#C84391', // 7 — magenta
+      '#6C9E3D', // 8 — green
+      '#3176D6', // 9 — blue
+      '#078F70'  // 10 — emerald
     ];
     const ratingCounts = Array(10).fill(0);
     for (const rating of rated) ratingCounts[rating - 1]++;
