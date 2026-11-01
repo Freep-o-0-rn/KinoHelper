@@ -152,3 +152,14 @@ test('poster candidates use backup url and do not accept arbitrary external host
   'https://avatars.mds.yandex.net/get-kinopoisk-image/x/y/orig');
  assert.equal(core.poster('javascript:alert(1)'),'');
 });
+
+test('only suitably large portrait images qualify as carousel posters',()=>{
+ assert.equal(core.isPosterShape(280,420),true);
+ assert.equal(core.isPosterShape(300,450),true);
+ assert.equal(core.isPosterShape(150,200),true);
+ assert.equal(core.isPosterShape(640,360),false,'landscape video thumbnail');
+ assert.equal(core.isPosterShape(400,400),false,'square screenshot');
+ assert.equal(core.isPosterShape(32,48),false,'tiny badge');
+ assert.equal(core.isPosterShape(100,350),false,'invalid extreme portrait');
+ assert.equal(core.isPosterShape(0,0),false);
+});
