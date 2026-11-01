@@ -5,6 +5,12 @@
     const STORAGE_KEY = 'kinoHelperWatchlistV1';
     const COLLAPSED_KEY = 'kinoHelperWatchlistCollapsed';
     const MAX_ITEMS = 1000;
+    const PROFILE_STORE = 'kinoWatchlistProfilesV1';
+    let activeProfileId = '';
+    let profileItems = [];
+    let authCheckId = 0;
+    let lastAuthCheck = 0;
+    const savingRemote = new Set();
     const KINOPOISK_ORIGIN = 'https://www.kinopoisk.ru';
     const WATCH_ORIGIN = 'https://www.kinokino.vip';
     const posterCache = new Map();
@@ -65,6 +71,10 @@
     }
 
     function getAll() {
+        if (activeProfileId) {
+            return profileItems.map(normalize).filter(Boolean)
+                .sort((a,b)=>b.addedAt-a.addedAt);
+        }
         let raw;
         try {
             raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
@@ -89,6 +99,13 @@
     }
 
     function save(items) {
+        if (activeProfileId) {
+            // Metadata updates may improve the visible list. Only verified
+            // site writes or the background profile importer own persistence.
+            profileItems = items;
+            window.dispatchEvent(new Event('kino-watchlist-updated'));
+            return true;
+        }
         try {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
         } catch (error) {
@@ -104,9 +121,37 @@
         return true;
     }
 
+    async function toggleRemote(movie) {
+        const next=normalize(movie);
+        if(!next||!activeProfileId)return false;
+        const key=next.type+':'+next.id;
+        if(savingRemote.has(key))return false;
+        const desired=!contains(next);
+        const profile=activeProfileId;
+        savingRemote.add(key);
+        showStatus('Проверяем «Буду смотреть» на Кинопоиске…');
+        try {
+            const response=await chrome.runtime.sendMessage({
+                action:'kinoWatchlistSet',payload:{movie:next,desired}
+            });
+            if(!response?.ok) {
+                showStatus(response?.error||'Кинопоиск не подтвердил изменение');
+                return false;
+            }
+            if(profile!==activeProfileId)return false;
+            await loadProfileItems(profile);
+            showStatus(desired?'Добавлено на Кинопоиске':'Удалено на Кинопоиске');
+            return true;
+        }catch(error){
+            showStatus('Не удалось сохранить: '+String(error?.message||error));
+            return false;
+        }finally{savingRemote.delete(key);}
+    }
+
     function toggle(movie) {
         const next = normalize(movie);
         if (!next) return false;
+        if (activeProfileId) { void toggleRemote(next); return true; }
         const old = getAll();
         const key = keyOf(next);
         const existing = old.find(item => keyOf(item) === key);
@@ -216,6 +261,43 @@
         } catch (error) {
             console.warn('[KinoHelper] Не удалось открыть сохранённый фильм:', error);
             showStatus('Не удалось открыть фильм');
+        }
+    }
+
+    async function loadProfileItems(profileId) {
+        const store=(await chrome.storage.local.get(PROFILE_STORE))[PROFILE_STORE];
+        if(profileId!==activeProfileId)return;
+        const data=store&&typeof store==='object'&&!Array.isArray(store)
+            ?store[profileId]:null;
+        profileItems=data&&typeof data==='object'&&!Array.isArray(data)
+            ?Object.values(data).map(normalize).filter(Boolean):[];
+        refresh();
+    }
+
+    async function refreshProfile(force=false) {
+        if(!window.KinoStatsAccount?.detect || !chrome.storage?.local)return;
+        if(!force && Date.now()-lastAuthCheck<45000)return;
+        lastAuthCheck=Date.now();
+        const sequence=++authCheckId;
+        let result;
+        try {result=await window.KinoStatsAccount.detect();}
+        catch {result=null;}
+        if(sequence!==authCheckId)return;
+        const newId=result?.status==='logged-in'?String(result.id):'';
+        if(newId!==activeProfileId) {
+            activeProfileId=newId;
+            profileItems=[];
+            refresh();
+        }
+        if(newId){
+            try {
+                await loadProfileItems(newId);
+                await chrome.runtime.sendMessage({
+                    action:'kinoWatchlistEnsure',profileId:newId
+                });
+            }catch(error){
+                showStatus('Автозагрузка недоступна: '+String(error?.message||error));
+            }
         }
     }
 
@@ -469,10 +551,13 @@
         currentButton.addEventListener('click', () => {
             if (current) toggle(current);
         });
-        window.addEventListener('kino-watchlist-updated', () => {
-            showStatus('');
-            refresh();
-        });
+        window.addEventListener('kino-watchlist-updated', refresh);
+        if(chrome.storage?.onChanged)chrome.storage.onChanged.addListener(
+            (changes,area)=>{
+                if(area==='local' && changes[PROFILE_STORE] && activeProfileId)
+                    void loadProfileItems(activeProfileId);
+            });
+        void refreshProfile(true);
         // Вторая открытая панель/окно использует то же хранилище расширения.
         window.addEventListener('storage', event => {
             if (event.key === STORAGE_KEY) refresh();
@@ -480,12 +565,16 @@
                 setCollapsed(event.newValue === 'true');
             }
         });
-        window.addEventListener('focus', refresh);
+        window.addEventListener('focus', () => {
+            refresh();
+            void refreshProfile();
+        });
         refresh();
     }
 
     window.KinoWatchlist = { getAll, contains, toggle, setCurrent,
-        createSearchButton, syncSearchButton, updateMetadata, adoptPoster };
+        createSearchButton, syncSearchButton, updateMetadata, adoptPoster,
+        refreshProfile };
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
