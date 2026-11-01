@@ -2412,8 +2412,12 @@ async function confirmCoveredPlayback(mediaKey, sender) {
         range[1]<=entry.duration&&range[1]>range[0]):[]
     );
     const seconds=playbackCoverageSeconds(ranges);
-    if(seconds<entry.duration*0.85)
-      return {ok:false,error:'Для подтверждения нужно посмотреть не менее 85% фильма или серии'};
+    // A legacy checkpoint from a pre-coverage build cannot prove viewing.
+    // The viewer may explicitly attest that the story has ended when the
+    // saved timeline position is at least 85%. Never apply this automatically.
+    const legacyManual=entry.position>=entry.duration*0.85;
+    if(seconds<entry.duration*0.85 && !legacyManual)
+      return {ok:false,error:'Для подтверждения требуется 85% просмотра или сохранённого таймкода'};
     records[key]={...entry,completed:true,
       completedBy:'user',updatedAt:Date.now()};
     await chrome.storage.local.set({[progressKey]:records});
