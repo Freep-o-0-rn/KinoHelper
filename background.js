@@ -102,6 +102,38 @@ const TITLE_SUGGEST_QUERY = `
   }
 `;
 
+const MOVIE_SET_PLANNED_QUERY = `
+  mutation MovieSetPlannedToWatch($movieId: Long!) {
+    movie {
+      plannedToWatch {
+        set(input: {movieId: $movieId}) {
+          status
+          error { message __typename }
+          __typename
+        }
+        __typename
+      }
+      __typename
+    }
+  }
+`;
+
+const MOVIE_REMOVE_PLANNED_QUERY = `
+  mutation MovieRemovePlannedToWatch($movieId: Long!) {
+    movie {
+      plannedToWatch {
+        remove(input: {movieId: $movieId}) {
+          status
+          error { message __typename }
+          __typename
+        }
+        __typename
+      }
+      __typename
+    }
+  }
+`;
+
 const MOVIE_SET_VOTE_QUERY = `
   mutation MovieSetVote($movieId: Long!, $rate: Int!) {
     movie {
@@ -232,7 +264,7 @@ async function installRatingOriginRule() {
         ]
       },
       condition: {
-        regexFilter: "^https://graphql\\.kinopoisk\\.ru/graphql/\\?operationName=(?:MoviePreviewCard|MovieSetVote|SuggestSearch)$",
+        regexFilter: "^https://graphql\\.kinopoisk\\.ru/graphql/\\?operationName=(?:MoviePreviewCard|MovieSetVote|MovieSetPlannedToWatch|MovieRemovePlannedToWatch|SuggestSearch)$",
         requestMethods: ["post"],
         resourceTypes: ["xmlhttprequest"],
         tabIds: [chrome.tabs.TAB_ID_NONE]
@@ -783,6 +815,41 @@ async function setMovieRating(payload) {
       authRequired,
       error: details || "Кинопоиск не подтвердил сохранение оценки"
     };
+  });
+}
+
+// Writes the same GraphQL mutation used by Kinopoisk's own bookmark
+// control, with the same session headers and queue as movie ratings.
+// This never creates a tab or changes local watchlist data on failure.
+async function setMoviePlanned(payload, desired) {
+  const media = normalizeMediaPayload(payload);
+  if (typeof desired !== 'boolean')
+    throw new Error('Не указано действие для «Буду смотреть»');
+  const operationName = desired
+    ? 'MovieSetPlannedToWatch' : 'MovieRemovePlannedToWatch';
+  const query = desired ? MOVIE_SET_PLANNED_QUERY : MOVIE_REMOVE_PLANNED_QUERY;
+  return runRatingRequest(async () => {
+    const response = await fetch(
+      ratingGraphqlUrl(operationName),
+      ratingRequestOptions(operationName,{ movieId: media.id },query)
+    );
+    if(response.status === 401 || response.status === 403)
+      return {ok:false,authRequired:true,
+        error:'Войдите в аккаунт Кинопоиска'};
+    if(!response.ok)
+      return {ok:false,error:'Кинопоиск: HTTP '+response.status};
+    const result = await response.json();
+    const responseField = result?.data?.movie?.plannedToWatch;
+    const operation = desired ? responseField?.set : responseField?.remove;
+    const problems = [
+      operation?.error?.message,
+      ...(Array.isArray(result?.errors)
+        ? result.errors.map(error => error?.message):[])
+    ].filter(Boolean).join('; ');
+    if(operation?.status === 'SUCCESS' && !problems)
+      return {ok:true,planned:desired};
+    return {ok:false,authRequired:/auth|login|unauthor|forbidden|авториз/i
+      .test(problems),error:problems||'Кинопоиск не подтвердил изменение'};
   });
 }
 
