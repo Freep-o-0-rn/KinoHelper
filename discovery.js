@@ -710,6 +710,21 @@
     await showFrom(fresh);
     await enrichAndSave(fresh);
   }
+  // Cached remote URLs can expire between popup openings. If Chrome
+  // cannot render one, clear only that picture and retry safe sources.
+  poster.addEventListener('error',()=>{
+    const item=items[index],id=core.keyOf(item);
+    if(!id||!imageCache.has(id)||imageCache.get(id)!==poster.src)return;
+    imageCache.delete(id);
+    delete persistedPosters[id];
+    poster.hidden=true;
+    backdrop.hidden=true;
+    empty.hidden=false;
+    failedPosters.delete(id);
+    if(chrome.storage.session)
+      void chrome.storage.session.set({[POSTER_CACHE]:persistedPosters}).catch(()=>{});
+    preparePoster(item);
+  });
   $('discoveryPrevious').addEventListener('click',()=>go(index-1));
   $('discoveryNext').addEventListener('click',()=>go(index+1));
   box.addEventListener('mouseenter',()=>{hovered=true;});
