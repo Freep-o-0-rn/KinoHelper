@@ -290,6 +290,12 @@
 
             <section class="settings-section">
               <div class="settings-section-title">ДАННЫЕ</div>
+              <div class="backup-actions">
+                <button class="backup-action" id="backupImport" type="button">↑ Импорт</button>
+                <button class="backup-action primary" id="backupExport" type="button">↓ Экспорт</button>
+              </div>
+              <input id="backupFile" type="file" accept=".json,application/json" hidden>
+              <div class="backup-status" id="backupStatus" role="status" aria-live="polite"></div>
               <button class="danger-button" id="clearHistoryBtn" type="button">Очистить историю</button>
 
               <div class="clear-confirm" id="clearHistoryConfirm">
@@ -320,5 +326,6 @@
   <script src="filters.js"></script>
   <script src="filters-ui.js"></script>
   <script src="display-mode.js"></script>
+  <script src="data-backup.js"></script>
 </body>
 </html>
