@@ -32,27 +32,22 @@ function mock({failure=false}={}){
        status:'complete'};},
      async remove(){}
    },
-   scripting:{async executeScript({func}){
-     const button={
-       disabled:false,classList:{contains:()=>false},
-       closest(){return this;},getAttribute(){return null;},
-       click(){clicks++;remotePlanned=!remotePlanned;}
-     };
-     const document={querySelectorAll(selector){
-       return selector==='button[data-test-id="ContentActions_bookmarkButton"]'
-         ?[button]:[];
-     }};
-     return [{result:new Function('document',
-       'return ('+func.toString()+')()')(document)}];
-   }}
+   scripting:{async executeScript(){throw Error('No new tab should open');}}
  };
  const self={KinoStatsAccount:{async detect(){
    return {status:'logged-in',id:account};
  }}};
  new Function('chrome','self','fetch','URL','AbortSignal',
-   'console','getMovieRating','setTimeout',worker)(
+   'console','setMoviePlanned','getMovieRating','setTimeout',worker)(
    chrome,self,async()=>({}),URL,{timeout(){return undefined;}},
-   console,async movie=>failure?{authorized:true,planned:null}
+   console,
+   async (movie,desired)=>{
+     clicks++;
+     if(failure)return {ok:false,error:'Не удалось изменить список'};
+     remotePlanned=desired;
+     return {ok:true,planned:desired};
+   },
+   async movie=>failure?{authorized:true,planned:null}
      :{authorized:true,planned:String(movie?.id)==='100' && remotePlanned},
      fn=>fn());
  return {data,self,chrome,events,messages,
