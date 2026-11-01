@@ -241,6 +241,7 @@ test('carousel tries another image size after first CDN failure and stores poste
  assert.equal(pictureCalls[1].payload.url,base+'/300x450');
  assert.equal(x.nodes.discoveryPoster.hidden,false);
  assert.equal(x.nodes.discoveryPoster.src,'data:image/png;base64,SU1BR0U=');
+ assert.equal(x.nodes.discoveryPosterEmpty.hidden,true);
  assert.equal(x.sessionData.kinoDiscoveryPostersV2['film:100'].dataUrl,
   'data:image/png;base64,SU1BR0U=');
  const second=setup({data,sessionData:x.sessionData,imageResponder});await second.settle();
@@ -393,6 +394,7 @@ test('landscape pictures from the background poster worker are not cached',async
     ?{ok:true,dataUrl:'data:image/png;base64,SU1BR0U='}:{ok:false}});
  await x.settle();
  assert.equal(x.nodes.discoveryPoster.hidden,true);
+ assert.equal(x.nodes.discoveryPosterEmpty.hidden,false);
  assert.equal(x.sessionData.kinoDiscoveryPostersV2?.['film:127'],undefined);
  assert.equal(x.messages.some(m=>m.action==='loadSearchPoster'),true);
 });
@@ -407,4 +409,11 @@ test('old cached thumbnails are ignored after upgrading to poster validation V2'
  await x.settle();
  assert.equal(x.nodes.discoveryPoster.hidden,true);
  assert.equal(x.sessionData.kinoDiscoveryPostersV2?.['film:128'],undefined);
+});
+
+test('the clapper placeholder is hidden in CSS once a real poster is available',()=>{
+ const css=fs.readFileSync(path.join(__dirname,'..','popup.css'),'utf8');
+ assert.match(css,/\.discovery-poster-empty\[hidden\]/);
+ assert.match(css,/\.discovery-poster-empty\{[^}]*display:grid/);
+ assert.match(css,/\.discovery-poster-empty\[hidden\][^}]*\{\s*display:none!important/);
 });
