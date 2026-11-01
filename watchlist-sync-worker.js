@@ -215,7 +215,7 @@
    await schedule(job.nextAt);
    return {ok:true,job:await scan()};
  }
- async function mutate({movie,desired,profileId}){
+ async function mutate({movie,desired,profileId,auto=false}){
    const key=keyOf(movie);
    if(!key||typeof desired!=='boolean')return {ok:false,error:'Неверный фильм'};
    const login=await self.KinoStatsAccount.detect();
@@ -276,6 +276,17 @@
      else delete profile[key];
      all[login.id]=profile;
      await chrome.storage.local.set({[STORE]:all});
+     // Manual user actions take priority over a previously queued
+     // automatic removal (e.g. adding a title again for a rewatch).
+     if(!auto){
+       const raw=(await chrome.storage.local.get(AUTO_KEY))[AUTO_KEY];
+       const queued={...obj(raw)},scope={...obj(queued[login.id])};
+       if(scope[key]){
+         delete scope[key];
+         queued[login.id]=scope;
+         await chrome.storage.local.set({[AUTO_KEY]:queued});
+       }
+     }
      if(tab)await chrome.tabs.remove(tab.id).catch(()=>{});
      // Server list remains authoritative and is read on the next scheduled scan.
      return {ok:true,profileId:login.id,planned:desired};
@@ -338,8 +349,11 @@
      const [key,entry]=candidate;
      let result;
      try{
+       // Prevent an earlier profile page fetch from reinserting the removed
+       // item after the site has already confirmed its deletion.
+       if(current)await current;
        result=await mutate({
-         movie:entry.movie,desired:false,profileId:auth.id
+         movie:entry.movie,desired:false,profileId:auth.id,auto:true
        });
      }catch(error){result={ok:false,error:String(error?.message||error)};}
      const after=(await chrome.storage.local.get(AUTO_KEY))[AUTO_KEY];
