@@ -1997,3 +1997,137 @@ button.btn-convert:active:not(:disabled) {
 .watchlist-sync:disabled { opacity: .5; cursor: wait; }
 .watchlist-status[data-kind="info"] { color: var(--text-muted); }
 .watchlist-status[data-kind="success"] { color: var(--success); }
+
+
+/* v1.580: readable, compact cinematic cards in both popup and side panel. */
+.discovery-carousel[hidden],.discovery-poster[hidden],
+.discovery-backdrop[hidden],.discovery-rating[hidden],
+.discovery-description[hidden],.discovery-meta [hidden] { display:none!important; }
+.discovery-carousel {
+  position:relative;isolation:isolate;flex:0 0 auto;width:100%;
+  min-height:174px;overflow:hidden;border-radius:13px;
+  color:#fff;background:linear-gradient(120deg,#253348,#1b1d2a 60%,#543728);
+  box-shadow:0 3px 14px rgba(10,10,20,.16);
+  border:1px solid rgba(255,183,115,.34);
+}
+.discovery-backdrop{
+  position:absolute;inset:-12px;width:calc(100% + 24px);height:calc(100% + 24px);
+  object-fit:cover;filter:blur(18px) brightness(.54);opacity:.58;
+  pointer-events:none;z-index:-2;
+}
+.discovery-carousel::before{
+  content:"";position:absolute;inset:0;pointer-events:none;z-index:-1;
+  background:linear-gradient(105deg,rgba(21,19,32,.9),rgba(24,20,35,.68) 62%,rgba(18,17,29,.82));
+}
+.discovery-open{
+  min-height:164px;display:flex;align-items:stretch;gap:11px;
+  padding:14px 27px 29px 13px;color:#fff;text-decoration:none;
+}
+.discovery-open:focus-visible{outline:2px solid #ffd36b;outline-offset:-3px}
+.discovery-poster-frame{
+  position:relative;flex:0 0 81px;width:81px;height:122px;
+  border:1px solid rgba(255,204,144,.56);border-radius:8px;
+  box-shadow:0 3px 14px rgba(0,0,0,.38);
+  overflow:hidden;align-self:center;
+  background:linear-gradient(155deg,#5e485c,#1b243b);
+}
+.discovery-poster{width:100%;height:100%;display:block;object-fit:cover}
+.discovery-poster-empty{
+  position:absolute;inset:0;display:grid;place-items:center;
+  font-size:28px;opacity:.6;
+}
+.discovery-content{
+  flex:1;min-width:0;display:flex;flex-direction:column;
+  align-items:flex-start;gap:4px;overflow:hidden;
+}
+.discovery-topline{
+  display:flex;align-items:center;gap:4px;width:100%;min-height:20px;
+}
+.discovery-kind{
+  display:inline-block;max-width:100%;padding:3px 7px;border-radius:999px;
+  background:rgba(112,85,155,.74);font-size:10px;font-weight:700;
+  overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
+}
+.discovery-kind.is-new{background:rgba(185,83,29,.88)}
+.discovery-counter{
+  position:absolute;top:9px;right:9px;
+  border-radius:999px;padding:3px 6px;font-size:10px;font-weight:700;
+  background:rgba(13,16,25,.7);color:#fff;
+}
+.discovery-title{
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;
+  overflow:hidden;max-width:100%;line-height:1.17;font-size:15px;font-weight:800;
+}
+.discovery-meta{
+  display:flex;align-items:center;flex-wrap:wrap;gap:4px;
+  color:#efe7e9;font-size:10px;
+}
+.discovery-meta #discoveryGenres.with-dot::before{
+  content:"·";margin-right:5px;color:#ffcf92;
+}
+.discovery-rating{
+  padding:2px 6px;border-radius:6px;background:rgba(246,174,47,.95);
+  color:#181623;font-size:11px;font-weight:750;
+}
+.discovery-description{
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;
+  overflow:hidden;margin:0;color:#e6e4ea;font-size:10px;line-height:1.4;
+  text-wrap:pretty;
+}
+.discovery-arrow{
+  position:absolute;top:47%;transform:translateY(-50%);
+  z-index:2;width:26px;height:30px;display:grid;place-items:center;
+  padding:0;border-radius:50%;background:rgba(14,14,22,.65);
+  color:#fff;font-size:23px;font-weight:400;line-height:1;
+  transition:background .16s ease;
+}
+.discovery-arrow:hover{background:rgba(46,42,60,.9)}
+.discovery-prev{left:3px}
+.discovery-next{right:3px}
+.discovery-dots{
+  position:absolute;bottom:8px;left:50%;transform:translateX(-50%);
+  display:flex;justify-content:center;align-items:center;gap:5px;
+  z-index:3;
+}
+.discovery-dot{
+  display:block;width:5px;height:5px;border-radius:999px;padding:0;
+  background:rgba(255,255,255,.43);transition:background .2s ease,transform .2s ease;
+}
+.discovery-dot.selected{background:#ffae44;transform:scale(1.25)}
+.discovery-dot:focus-visible,.discovery-arrow:focus-visible{
+  outline:2px solid #ffd36b;outline-offset:2px;
+}
+/* The disabled button itself cannot receive hover. Its wrapper can. */
+.convert-tooltip-wrap{position:relative;width:100%}
+.convert-tooltip-wrap .btn-convert{width:100%}
+.convert-tooltip{
+  position:absolute;left:50%;bottom:calc(100% + 7px);
+  transform:translateX(-50%) translateY(3px);
+  z-index:5;pointer-events:none;visibility:hidden;opacity:0;
+  max-width:90%;width:max-content;white-space:normal;
+  padding:7px 10px;border-radius:8px;background:#322c47;color:#fff;
+  font-size:11px;text-align:center;line-height:1.35;
+  box-shadow:0 3px 12px rgba(0,0,0,.25);
+  transition:opacity .15s ease,transform .15s ease,visibility .15s;
+}
+.convert-tooltip::after{
+  content:"";position:absolute;top:100%;left:50%;transform:translateX(-50%);
+  border:6px solid transparent;border-top-color:#322c47;
+}
+.convert-tooltip-wrap.is-disabled:hover .convert-tooltip,
+.convert-tooltip-wrap.is-disabled:focus-visible .convert-tooltip{
+  visibility:visible;opacity:1;transform:translateX(-50%) translateY(0);
+}
+.context-card[hidden]{display:none!important}
+@media (min-width:420px){
+  .discovery-carousel{min-height:194px}
+  .discovery-open{min-height:185px;padding:16px 35px 29px 18px;gap:18px}
+  .discovery-poster-frame{width:111px;flex-basis:111px;height:157px}
+  .discovery-title{font-size:18px}
+  .discovery-kind{font-size:11px}
+  .discovery-meta,.discovery-description{font-size:12px}
+  .discovery-arrow{width:32px;height:32px}
+}
+@media (prefers-reduced-motion:reduce){
+  .discovery-dot,.discovery-arrow,.convert-tooltip{transition:none}
+}
