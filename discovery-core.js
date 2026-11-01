@@ -21,6 +21,13 @@
         ?url.href:'';
     }catch{return '';}
   }
+  // Only accept true portrait poster images, never landscape screenshots,
+  // widescreen trailers or tiny badges extracted from the catalog.
+  function isPosterShape(width,height){
+    const w=Number(width),h=Number(height);
+    return Number.isFinite(w)&&Number.isFinite(h)&&
+      w>=65&&h>=100&&h/w>=1.20&&h/w<=2.25;
+  }
   // Official Kinopoisk poster URLs may be returned without a size suffix.
   // Try light thumbnails first, then the original and legacy static sources.
   function posterSources(item={}){
@@ -174,5 +181,5 @@
     for(const m of popular)append(m);
     return out;
   }
-  return {movie,poster,posterSources,genres,premiereDate,keyOf,interests,viewed,select};
+  return {movie,poster,isPosterShape,posterSources,genres,premiereDate,keyOf,interests,viewed,select};
 });
