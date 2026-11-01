@@ -1946,3 +1946,25 @@ button.btn-convert:active:not(:disabled) {
 
 .backup-status:empty { display: none; }
 .backup-status.error { color: var(--error); }
+
+
+/* v1.569 — explicit finish after verified 85% unique viewing coverage. */
+.history-confirm-complete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  margin-top: 5px;
+  padding: 4px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--secondary);
+  background: var(--bg-secondary);
+  color: var(--secondary);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.history-confirm-complete:hover:not(:disabled) {
+  background: var(--bg-elevated);
+}
+.history-confirm-complete:disabled { opacity: .65; cursor: wait; }
