@@ -322,7 +322,7 @@ test('official GraphQL rating appears even when poster loads independently',asyn
  assert.equal(x.nodes.discoveryRating.textContent,'★ КП 8,7');
  assert.equal(x.nodes.discoveryPoster.hidden,false);
  assert.equal(x.data.kinoDiscoveryFactsV1['film:880'].rating,8.7);
- const second=setup({data,sessionData:x.sessionData});
+ const second=setup({data:x.data,sessionData:x.sessionData});
  await second.settle();
  assert.equal(second.nodes.discoveryRating.textContent,'★ КП 8,7');
 });
