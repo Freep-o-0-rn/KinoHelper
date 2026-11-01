@@ -302,6 +302,6 @@ test('film page JSON-LD image becomes verified cached poster metadata',async()=>
   schema:2,savedAt:Date.now(),enrichedAt:Date.now(),
   popular:[{type:'film',id:'777',title:'Фильм',year:2025,genres:['драма']}],new:[]
  }};
- const x=setup({data,filmPoster:poster});await x.settle();
+ const x=setup({data,filmPoster:poster,catalogData:{}});await x.settle();
  assert.equal(x.data.kinoDiscoveryFactsV1['film:777'].posterUrl,poster);
 });
