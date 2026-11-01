@@ -170,6 +170,10 @@
           message:'Загружаем страницу '+job.nextPage+
             (job.totalPages?' из '+job.totalPages:'')});
         const parsed=await fetchProfilePage(job);
+        // The profile may have changed after the cached preflight check.
+        const fresh=await self.KinoStatsAccount.detect(undefined,{force:true});
+        if(fresh.status!=='logged-in'||fresh.id!==job.profileId)
+          throw Error('Аккаунт изменился во время импорта');
         if(!Array.isArray(parsed?.votes) || !Array.isArray(parsed?.watched) ||
             (!parsed.votes.length && !parsed.watched.length && !parsed.recognized)) {
           throw Error('Страница не содержит распознанных записей профиля');
