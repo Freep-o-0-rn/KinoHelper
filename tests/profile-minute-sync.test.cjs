@@ -190,3 +190,32 @@ test('sync failure backs off while keeping other domain operational',async()=>{
   assert.equal(errors,1,'blocked endpoint is not polled every minute');
   assert.equal(successes,2,'working endpoint continues to synchronize');
 });
+
+
+test('watched-only reaction removes a vote withdrawn on Kinopoisk',async()=>{
+ const state=storage({
+   kinoStatsImportJobV2:{
+     profileId:'7143359',state:'completed',nextPage:21,
+     pagesDone:20,totalPages:20,scanId:'original',
+     nextAt:Date.now()+day
+   },
+   kinoStatsRatingsV1:{'7143359':{
+     'film:10':{rating:6,source:'kinopoisk-profile',updatedAt:1}
+   }},
+   kinoStatsWatchedV1:{'7143359':{}}
+ });
+ const {chrome}=chromeMock(state,()=>({
+   votes:[],watched:[{type:'film',id:'10',genres:['драма']}],
+   recognized:1,source:'ssr',lastPage:20
+ }));
+ const self={KinoStatsAccount:{async detect(){return identity;}}};
+ new Function('chrome','self','fetch','URL','AbortSignal','console',
+   read('stats-import-worker.js'))(
+   chrome,self,async url=>({ok:true,status:200,url,
+     text:async()=>'<html>watch only</html>'}),URL,AbortSignal,console);
+ const result=await self.KinoStatsMinuteSync.run(identity);
+ assert.equal(result.ok,true);
+ assert.equal(state.data.kinoStatsRatingsV1['7143359']['film:10'],undefined);
+ assert.equal(state.data.kinoStatsImportJobV2.importedVotes,0);
+ assert.equal(state.data.kinoStatsWatchedV1['7143359']['film:10'].watched,true);
+});
