@@ -99,18 +99,6 @@
     if(!parsed.length)throw Error('Кинопоиск не вернул распознанных фильмов');
     return parsed;
   }
-  const MONTHS=['января','февраля','марта','апреля','мая','июня',
-    'июля','августа','сентября','октября','ноября','декабря'];
-  function premiereDate(value){
-    const text=copy(value).toLocaleLowerCase('ru');
-    const m=text.match(/(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+(20\d{2})/u);
-    if(!m)return '';
-    const d=Number(m[1]),month=MONTHS.indexOf(m[2]),y=Number(m[3]);
-    const candidate=new Date(Date.UTC(y,month,d));
-    if(candidate.getUTCFullYear()!==y||candidate.getUTCMonth()!==month||
-       candidate.getUTCDate()!==d)return '';
-    return candidate.toISOString().slice(0,10);
-  }
   function premiereFromFilm(doc){
     // Do not equate production year with the film's release date. Require
     // an actual Kinopoisk detail row headed "Премьера в России/мире".
@@ -121,7 +109,7 @@
       const row=el.closest('tr, [class*="row"], [class*="Row"]')||
         el.parentElement;
       if(!row)continue;
-      const date=premiereDate(copy(row.textContent).slice(0,210));
+      const date=core.premiereDate(copy(row.textContent).slice(0,210));
       if(date)return date;
     }
     return '';
@@ -394,6 +382,7 @@
   });
   setInterval(()=>{
     if(items.length<2||hovered||document.hidden||
+       !box.getClientRects().length||
        document.body.classList.contains('settings-open')||
        document.body.classList.contains('stats-open')||
        window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches)return;
