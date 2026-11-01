@@ -675,7 +675,7 @@ async function getSearchMovieMetadata(payload) {
       // An unknown GraphQL gallery field may be fixed by the basic query.
       // A network timeout/HTTP outage will not; avoid the same slow call twice.
       const message=String(error?.message||error);
-      const isNetwork=/fetch|network|timeout|timed out|abort|ERR_|HTTP (?:403|429|5\\d\\d)/i.test(message);
+      const isNetwork=/fetch|network|timeout|timed out|abort|ERR_|HTTP (?:403|429|5\d\d)/i.test(message);
       if(isNetwork){
         searchMetadataOfflineUntil=Date.now()+45*1000;
         throw error;
