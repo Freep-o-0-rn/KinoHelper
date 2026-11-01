@@ -204,7 +204,7 @@
     const genres = genreRows(model);
     createSvgChart(els('statsGenresChart'), genres,'Любимые жанры',
       {big:true,center:genres[0]?.valueLabel || '—',
-        sub:genres[0]?.name || 'Нет данных'});
+        sub:genres[0]?.name || 'Нет данных',separateSegments:true});
     makeLegend(els('statsGenresLegend'),genres);
     const n=genres.length;
     const word=n%100>=11&&n%100<=14 ? 'жанров'
