@@ -12,11 +12,45 @@
     ?m.type+':'+m.id:'';
   function poster(raw){
     try{
-      const url=new URL(String(raw||''));
+      let value=String(raw||'').trim().replace(/&amp;/gi,'&')
+        .replace(/\\u002[fF]/g,'/').replace(/\\\//g,'/');
+      if(value.startsWith('//'))value='https:'+value;
+      const url=new URL(value);
       return url.protocol==='https:'&&
         ['avatars.mds.yandex.net','st.kp.yandex.net'].includes(url.hostname)
         ?url.href:'';
     }catch{return '';}
+  }
+  // Official Kinopoisk poster URLs may be returned without a size suffix.
+  // Try light thumbnails first, then the original and legacy static sources.
+  function posterSources(item={}){
+    const candidates=[],seen=new Set();
+    const add=raw=>{
+      const url=poster(raw);
+      if(!url||seen.has(url))return;
+      seen.add(url);candidates.push(url);
+    };
+    const expand=raw=>{
+      const source=poster(raw);
+      if(!source)return;
+      const url=new URL(source),pathname=url.pathname.replace(/\/+$/,'');
+      const avatar=url.hostname==='avatars.mds.yandex.net'&&
+        /^\/get-kinopoisk-image\/[^/]+\/[^/]+/.test(pathname);
+      if(avatar){
+        const base=pathname.replace(/\/(?:orig|\d+x\d+)$/i,'');
+        for(const suffix of ['280x420','300x450','orig'])
+          add(url.origin+base+'/'+suffix);
+      }
+      add(source);
+    };
+    expand(item.posterUrl||item.poster);
+    expand(item.posterFallback);
+    const id=String(item.id||'');
+    if(/^[1-9]\d{0,12}$/.test(id)){
+      add('https://st.kp.yandex.net/images/film_iphone/iphone360_'+id+'.jpg');
+      add('https://st.kp.yandex.net/images/film_big/'+id+'.jpg');
+    }
+    return candidates;
   }
   function genres(input){
     return [...new Set((Array.isArray(input)?input:[]).map(x=>clean(x).toLocaleLowerCase('ru'))
@@ -46,6 +80,7 @@
       rating:Number.isFinite(r)&&r>0&&r<=10?r:null,
       genres:genres(x.genres),description:clean(x.description).slice(0,280),
       posterUrl:poster(x.posterUrl||x.poster),
+      posterFallback:poster(x.posterFallback),
       // A production year is not proof of a release. Only use a date
       // that the source explicitly associates with the film's premiere.
       releaseDate:/^\d{4}-\d{2}-\d{2}$/.test(String(x.releaseDate||''))
@@ -139,5 +174,5 @@
     for(const m of popular)append(m);
     return out;
   }
-  return {movie,poster,genres,premiereDate,keyOf,interests,viewed,select};
+  return {movie,poster,posterSources,genres,premiereDate,keyOf,interests,viewed,select};
 });
