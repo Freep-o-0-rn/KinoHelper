@@ -58,9 +58,9 @@ function mock() {
   scope.chrome.runtime={onMessage:{addListener(){}}};
   vm.createContext(scope);
   vm.runInContext(worker+'\nthis.saveSeries=saveSeriesEpisodeProgress;',scope);
-  return { save:(s,e,position,event='playing')=>scope.saveSeries(
+  return { save:(s,e,position,event='playing',played=40)=>scope.saveSeries(
     {season:s,episode:e,currentTime:position,duration:1800,
-      playedSeconds:40,event},sender),local,session,select,
+      playedSeconds:played,event},sender),local,session,select,
     sender, revoke:()=>{permitted=false;}, scope };
 }
 
@@ -209,4 +209,26 @@ test('without explicit selected season and episode, video time is not recorded',
     for(const cb of handlers.timeupdate||[])cb();
   }
   assert.equal(sent.length,0);
+});
+
+
+test('individual episodes finish at 90% without requiring video ended',async()=>{
+  const m=mock();
+  await m.save(1,3,1619,'playing',90);
+  assert.equal(m.local.kinoSeriesEpisodeProgressV1['series:404900:1:3'].completed,false);
+  await m.save(1,3,1620,'playing',90);
+  assert.equal(m.local.kinoSeriesEpisodeProgressV1['series:404900:1:3'].completed,true);
+  m.select(1,4);
+  await m.save(1,4,100,'playing',90);
+  assert.equal(m.local.kinoSeriesEpisodeProgressV1['series:404900:1:4'].completed,false);
+});
+
+test('jumping to end of an episode without verified playback remains incomplete',async()=>{
+  const m=mock();
+  await m.save(1,3,1730,'seeked',120);
+  assert.equal(m.local.kinoSeriesEpisodeProgressV1['series:404900:1:3'].completed,false);
+  await m.save(1,3,1730,'playing',20);
+  assert.equal(m.local.kinoSeriesEpisodeProgressV1['series:404900:1:3'].completed,false);
+  await m.save(1,3,1730,'pause',70);
+  assert.equal(m.local.kinoSeriesEpisodeProgressV1['series:404900:1:3'].completed,true);
 });
