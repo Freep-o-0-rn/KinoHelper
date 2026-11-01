@@ -3,7 +3,7 @@
 (() => {
   'use strict';
   chrome.runtime.onMessage.addListener((message, sender, respond) => {
-    if (message?.action !== 'kinoStatsParseProfilePage') return;
+    if (!['kinoStatsParseProfilePage','kinoWatchlistParsePage'].includes(message?.action)) return;
     if (sender.id !== chrome.runtime.id ||
         sender.url !== chrome.runtime.getURL('background.js')) {
       // Service workers can be represented with sender.url undefined;
