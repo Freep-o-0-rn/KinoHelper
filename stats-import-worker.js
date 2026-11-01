@@ -137,6 +137,8 @@
   async function onePage() {
     if(work)return work;
     work=(async()=>{
+      // A minute poll already reading page 1 must finish before full import writes.
+      if(minuteWork)await minuteWork;
       let job=await readJob();
       if (!job?.profileId || !PROFILE.test(job.profileId)) return null;
       // A completed import automatically refreshes tomorrow, with no user action.
