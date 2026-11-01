@@ -10,7 +10,8 @@ const recent=()=>{const d=new Date();d.setUTCMonth(d.getUTCMonth()-2);return d.t
 function setup(options={}){
  const nodes={},timer=[];
  let now=Date.now(),fetches=0;
- const urls=[];
+ const urls=[],messages=[];
+ const sessionData=options.sessionData||{};
  const handlers={};
  class Element {
   constructor(id=''){this.id=id;this.textContent='';this.hidden=false;
@@ -60,7 +61,14 @@ function setup(options={}){
  if(options.noCache)delete data.kinoDiscoveryCatalogV1;
  const chrome={storage:{local:{async get(keys){
    return Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,data[k]]));
- },async set(values){Object.assign(data,values);}}},runtime:{async sendMessage(){return {ok:false}}}};
+ },async set(values){Object.assign(data,values);}},
+ session:{async get(keys){
+  return Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,sessionData[k]]));
+ },async set(values){Object.assign(sessionData,values);}}},
+ runtime:{async sendMessage(request){
+   messages.push(request);
+   return options.imageResponder?options.imageResponder(request):{ok:false};
+ }}};
  const localStorage={getItem:()=> '[]'};
  const fetch=async url=>{
   fetches++;urls.push(String(url));
@@ -80,7 +88,7 @@ function setup(options={}){
   parseFromString(markup){
    if(options.catalogData?.[markup]){
     const anchors=options.catalogData[markup].map(movie=>{
-     const img={getAttribute:()=>null};
+     const img={getAttribute:key=>movie.imageAttrs?.[key]||null};
      const card={textContent:movie.title+' '+movie.year+' Россия • '+movie.genre,
       querySelector(selector){
        if(selector.startsWith('h3'))return {textContent:movie.title};
@@ -121,7 +129,7 @@ function setup(options={}){
   Date:clock,URL,DOMParser:FakeDOMParser,AbortSignal,setInterval:fn=>timer.push(fn),
   fetch,console:{warn(){}}
  });
- return {nodes,timer,data,urls,advance(ms){now+=ms},get fetches(){return fetches},
+ return {nodes,timer,data,sessionData,messages,urls,advance(ms){now+=ms},get fetches(){return fetches},
   settle:async()=>{for(let i=0;i<100;i++)await Promise.resolve()}};
 }
 test('cached official catalog is ranked by rated genre without random movies',async()=>{
@@ -192,4 +200,61 @@ test('actual film/series catalog parses and survives reopening without re-fetch'
  assert.equal(second.nodes.discoveryCounter.textContent,'1 / 4');
  second.nodes.discoveryNext.events.click();
  assert.equal(second.nodes.discoveryKind.textContent,'✦ Новинки');
+});
+
+test('carousel tries another image size after first CDN failure and stores poster in session',async()=>{
+ const base='https://avatars.mds.yandex.net/get-kinopoisk-image/777/realimage';
+ const data={kinoDiscoveryCatalogV1:{
+  schema:2,savedAt:Date.now(),enrichedAt:Date.now(),
+  popular:[{type:'film',id:'100',title:'Персональный триллер',year:2024,
+   posterUrl:base+'/orig',genres:['триллер'],rating:7.7}],new:[]
+ }};
+ const imageResponder=async request=>{
+  if(request.action==='loadSearchPoster')
+    return request.payload.url.endsWith('/300x450')
+      ?{ok:true,dataUrl:'data:image/png;base64,SU1BR0U='}
+      :{ok:false,error:'HTTP 404'};
+  return {ok:false,error:'unavailable'};
+ };
+ const x=setup({data,imageResponder});await x.settle();
+ const pictureCalls=x.messages.filter(m=>m.action==='loadSearchPoster');
+ assert.equal(pictureCalls[0].payload.url,base+'/280x420');
+ assert.equal(pictureCalls[1].payload.url,base+'/300x450');
+ assert.equal(x.nodes.discoveryPoster.hidden,false);
+ assert.equal(x.nodes.discoveryPoster.src,'data:image/png;base64,SU1BR0U=');
+ assert.equal(x.sessionData.kinoDiscoveryPostersV1['film:100'].dataUrl,
+  'data:image/png;base64,SU1BR0U=');
+ const second=setup({data,sessionData:x.sessionData,imageResponder});await second.settle();
+ assert.equal(second.nodes.discoveryPoster.src,'data:image/png;base64,SU1BR0U=');
+ assert.equal(second.messages.filter(m=>m.action==='loadSearchPoster').length,0);
+});
+test('catalog placeholder data-src does not hide working src poster URL',async()=>{
+ const poster='https://avatars.mds.yandex.net/get-kinopoisk-image/x/y/orig';
+ const catalogData={
+  filmsPopular:[{href:'/film/601/',title:'Детектив 601',year:2025,
+    genre:'триллер',imageAttrs:{'data-src':'data:image/gif;base64,abc',
+     src:poster}}],
+  seriesPopular:[],filmsNew:[],seriesNew:[]
+ };
+ const x=setup({noCache:true,catalogData});await x.settle();
+ assert.equal(x.data.kinoDiscoveryCatalogV1.popular[0].posterUrl,poster);
+});
+test('missing poster URL triggers established search metadata API instead of staying blank',async()=>{
+ const base='https://avatars.mds.yandex.net/get-kinopoisk-image/777/metadata';
+ const data={kinoDiscoveryCatalogV1:{schema:2,savedAt:Date.now(),
+  enrichedAt:Date.now(),popular:[{type:'film',id:'100',
+   title:'Детектив 100',year:2024,genres:[]}],new:[]}};
+ const responder=async request=>{
+  if(request.action==='getSearchMovieMetadata')
+   return {ok:true,metadata:{poster:base+'/orig'}};
+  if(request.action==='loadSearchPoster')
+   return request.payload.url===base+'/280x420'
+    ?{ok:true,dataUrl:'data:image/jpeg;base64,SU1BR0U='}
+    :{ok:false,error:'not found'};
+  return {ok:false};
+ };
+ const x=setup({data,imageResponder:responder});await x.settle();
+ assert.equal(x.messages.some(m=>m.action==='getSearchMovieMetadata'),true);
+ assert.equal(x.nodes.discoveryPoster.hidden,false);
+ assert.equal(x.nodes.discoveryPoster.src,'data:image/jpeg;base64,SU1BR0U=');
 });
