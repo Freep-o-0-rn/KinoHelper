@@ -32,6 +32,7 @@ function setup(){
     kinoStatsRatingsV1:{[accountId]:{'film:1':{rating:10}}}
   };
   let ensures=0;
+  const authOptions=[];
   const chrome={
     storage:{local:{
       async get(keys){return Object.fromEntries((Array.isArray(keys)?keys:[keys])
@@ -52,16 +53,18 @@ function setup(){
   };
   const window={
     KinoStatsCore:core,
-    KinoStatsAccount:{async detect(){return {
-      status:'logged-in',id:accountId
-    };}},
+    KinoStatsAccount:{async detect(_fetcher,options){
+      authOptions.push(options||{});
+      return {status:'logged-in',id:accountId};
+    }},
     addEventListener(){}
   };
   new Function('window','document','chrome',script)(window,document,chrome);
   const settle=async()=>{
     for(let i=0;i<70;i++)await new Promise(resolve=>setImmediate(resolve));
   };
-  return {nodes,state,listeners,settle,open(){nodes.statsButton.events.click();},
+  return {nodes,state,listeners,authOptions,settle,
+    open(){nodes.statsButton.events.click();},
     get ensures(){return ensures;}};
 }
 test('statistics automatically starts worker and shows progress',async()=>{
@@ -148,4 +151,21 @@ test('import cursor-only updates refresh progress without recreating charts',asy
   assert.equal(ui.nodes.statsImportProgress.value,4);
   assert.equal(ui.nodes.statsRatingsChart.children[0],chart,
     'a progress counter update must not recreate the rating donut');
+});
+
+
+test('opening statistics twice avoids forced login checks; refresh button forces one',async()=>{
+ const ui=setup();
+ ui.open();await ui.settle();
+ assert.equal(ui.authOptions.length,1);
+ assert.equal(ui.authOptions[0].force,false);
+ ui.nodes.statsBack.events.click();
+ ui.open();await ui.settle();
+ assert.equal(ui.authOptions.length,1,
+   'reopen within freshness window should not check again');
+ ui.nodes.statsAccountRefresh.events.click();
+ await ui.settle();
+ assert.equal(ui.authOptions.length,2);
+ assert.equal(ui.authOptions[1].force,true,
+   'manual refresh must bypass the shared auth cache');
 });
