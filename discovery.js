@@ -49,14 +49,20 @@
       const url=core.poster(raw);
       if(url&&!result.includes(url))result.push(url);
     };
-    // Some Kinopoisk templates use a placeholder in data-src and the
-    // actual poster in src, data-original, data-lazy-src or srcset.
-    for(const name of ['data-original','data-lazy-src','src',
-      'data-src','data-srcset','srcset']){
-      const value=el.getAttribute(name)||'';
-      if(name.endsWith('srcset')){
-        for(const part of value.split(','))add(part.trim().split(/\s+/)[0]);
-      }else add(value);
+    // Kinopoisk sometimes stores poster in <picture><source srcset>,
+    // sibling elements or a background-image rather than the first img.
+    const nodes=[el,...(el.querySelectorAll?.('img, picture source, [style]')||[])];
+    for(const node of nodes.slice(0,16)){
+      for(const name of ['data-original','data-lazy-src','src',
+        'data-src','data-srcset','srcset']){
+        const value=node.getAttribute?.(name)||'';
+        if(name.endsWith('srcset')){
+          for(const part of value.split(','))add(part.trim().split(/\s+/)[0]);
+        }else add(value);
+      }
+      const background=node.getAttribute?.('style')||'';
+      const match=background.match(/url\(\s*["']?(https?:\/\/[^"')\s]+)["']?\s*\)/i);
+      if(match)add(match[1]);
     }
     return result;
   }
@@ -91,7 +97,10 @@
       // The list often has one genre after the country separator.
       const genreMatch=text.match(/[\p{L} ,]{2,35}\s*[•·]\s*([\p{L}-]{3,24})/u);
       const genres=genreMatch?core.genres([genreMatch[1]]):[];
-      const imageUrls=posterAttributes(img);
+      const imageUrls=[...new Set([
+        ...posterAttributes(img),
+        ...posterAttributes(card)
+      ])];
       const possible=core.movie({type:mediaType,id,title:filmTitle,year,
         rating:parsedRating,genres,posterUrl:imageUrls[0]||'',
         posterFallback:imageUrls[1]||''},'for-you');
@@ -146,7 +155,8 @@
       const html=await response.text();
       if(html.length>6e6)throw Error('Карточка слишком большая');
       const doc=new DOMParser().parseFromString(html,'text/html');
-      const record={title:'',genres:[],description:'',releaseDate:premiereFromFilm(doc)};
+      const record={title:'',genres:[],description:'',
+        posterUrl:'',posterFallback:'',releaseDate:premiereFromFilm(doc)};
       for(const script of doc.querySelectorAll('script[type="application/ld+json"]')){
         try{
           const json=JSON.parse(script.textContent);
@@ -158,6 +168,9 @@
             record.genres=core.genres(typeof node.genre==='string'?
               node.genre.split(','):node.genre);
             record.description=copy(node.description).slice(0,230);
+            const imgs=[node.image,node.thumbnailUrl].flat().map(x=>
+              typeof x==='string'?x:(x?.url||x?.contentUrl||''));
+            record.posterUrl=imgs.map(core.poster).find(Boolean)||'';
             break;
           }
         }catch{}
@@ -174,6 +187,17 @@
               copy(row.textContent).replace(/^Жанр\s*/,'').split(','));
           }
           if(record.genres.length)break;
+        }
+      }
+      if(!record.posterUrl){
+        for(const selector of [
+          'meta[property="og:image"]','meta[name="twitter:image"]',
+          'meta[property="twitter:image"]'
+        ]){
+          const raw=doc.querySelector(selector)?.getAttribute?.('content')||
+            doc.querySelector(selector)?.content;
+          const url=core.poster(raw);
+          if(url){record.posterUrl=url;break;}
         }
       }
       if(!record.description){
@@ -217,7 +241,9 @@
             title:fact.title||movie.title,
             genres:fact.genres.length?fact.genres:movie.genres,
             description:fact.description||movie.description||'',
-            releaseDate:fact.releaseDate||movie.releaseDate||''};
+            releaseDate:fact.releaseDate||movie.releaseDate||'',
+            posterUrl:fact.posterUrl||movie.posterUrl||'',
+            posterFallback:fact.posterFallback||movie.posterFallback||''};
         }catch{/* No verified detail => no "new" classification. */}
       }
     };
@@ -404,6 +430,9 @@
     try{
       const record=await filmFacts(item);
       if(core.keyOf(items[index])===core.keyOf(item)){
+        if(record.posterUrl&&!imageCache.has(core.keyOf(item))&&
+          !inFlight.has(core.keyOf(item)))preparePoster({...item,
+            posterUrl:record.posterUrl,posterFallback:record.posterFallback});
         // Never rebuild the catalog here: update only visible film details.
         genre.textContent=(record.genres.length?record.genres:item.genres)
           .slice(0,3).join(', ');
