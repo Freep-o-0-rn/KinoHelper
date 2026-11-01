@@ -68,8 +68,11 @@
     }
 
     function keyOf(movie) {
-        const item = normalize(movie);
-        return item ? item.type + ':' + item.id : null;
+        // Identity checks run for every search result, poster and list row.
+        // Do not sanitize titles, genre arrays and poster URLs to get a key.
+        if(!movie || !['film','series'].includes(movie.type))return null;
+        const id=String(movie.id??'');
+        return /^[1-9]\d{0,12}$/.test(id)?movie.type+':'+id:null;
     }
 
     // Keep sorted/normalized entries and membership together. Previously each
