@@ -90,11 +90,15 @@ async function setup({ data = {}, seriesData = {}, coverageData = {}, history = 
         }
       },
       storage: {
-        local: { get: async key => key === 'kinoSeriesEpisodeProgressV1'
-          ? { kinoSeriesEpisodeProgressV1: seriesData }
-          : key === 'kinoPlaybackCoverageV1'
-            ? {kinoPlaybackCoverageV1:coverageData}
-            : { kinoPlaybackProgressV1: data } },
+        local: { get: async keys => {
+          const values={
+            kinoPlaybackProgressV1:data,
+            kinoSeriesEpisodeProgressV1:seriesData,
+            kinoPlaybackCoverageV1:coverageData
+          };
+          return Object.fromEntries((Array.isArray(keys)?keys:[keys])
+            .map(key=>[key,values[key]]));
+        } },
         session: {
           get: async key => ({ [key]: sharedSession[key] }),
           set: async values => {
