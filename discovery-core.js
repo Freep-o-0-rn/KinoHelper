@@ -22,6 +22,18 @@
     return [...new Set((Array.isArray(input)?input:[]).map(x=>clean(x).toLocaleLowerCase('ru'))
       .filter(x=>x.length>=3&&x.length<=32&&/^[\p{L}][\p{L} -]*$/u.test(x)))].slice(0,8);
   }
+  function premiereDate(value){
+    const months=['января','февраля','марта','апреля','мая','июня',
+      'июля','августа','сентября','октября','ноября','декабря'];
+    const pattern=/(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+(20\d{2})/u;
+    const m=clean(value).toLocaleLowerCase('ru').match(pattern);
+    if(!m)return '';
+    const day=Number(m[1]),month=months.indexOf(m[2]),y=Number(m[3]);
+    const d=new Date(Date.UTC(y,month,day));
+    if(d.getUTCDate()!==day||d.getUTCMonth()!==month||
+      d.getUTCFullYear()!==y)return '';
+    return d.toISOString().slice(0,10);
+  }
   function movie(x,kind){
     if(!x||x.type!=='film'||!FILM_ID.test(String(x.id)))return null;
     const title=clean(x.title).slice(0,120);
@@ -108,5 +120,5 @@
     }
     return chosen;
   }
-  return {movie,poster,genres,keyOf,interests,viewed,select};
+  return {movie,poster,genres,premiereDate,keyOf,interests,viewed,select};
 });
