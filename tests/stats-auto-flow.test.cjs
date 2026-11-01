@@ -135,3 +135,17 @@ test('tiny genres can be inspected from full-size legend rows, including keyboar
   tiny.events.mouseleave();
   assert.equal(center[1].textContent,'комедия');
 });
+
+
+test('import cursor-only updates refresh progress without recreating charts',async()=>{
+  const ui=setup();ui.open();await ui.settle();
+  const chart=ui.nodes.statsRatingsChart.children[0];
+  const job={...ui.state.kinoStatsImportJobV2,
+    pagesDone:4,nextPage:5,importedVotes:50};
+  for(const callback of ui.listeners)
+    callback({kinoStatsImportJobV2:{newValue:job}},'local');
+  await ui.settle();
+  assert.equal(ui.nodes.statsImportProgress.value,4);
+  assert.equal(ui.nodes.statsRatingsChart.children[0],chart,
+    'a progress counter update must not recreate the rating donut');
+});
