@@ -252,7 +252,8 @@
    try {
      if(current)await current;
      if(minuteWork)await minuteWork;
-     const login=await self.KinoStatsAccount.detect();
+     // Never authorize writes solely from an expired/cached profile.
+     const login=await self.KinoStatsAccount.detect(undefined,{force:true});
      if(login.status!=='logged-in'||String(profileId||'')!==login.id)
        return {ok:false,error:'Аккаунт Кинопоиска не подтверждён или изменился'};
 
@@ -282,7 +283,7 @@
        error:'Кинопоиск принял запрос, но не удалось подтвердить состояние. '+
          'Обновите список через ↻.'};
 
-     const auth=await self.KinoStatsAccount.detect();
+     const auth=await self.KinoStatsAccount.detect(undefined,{force:true});
      if(auth.status!=='logged-in'||auth.id!==login.id)
        return {ok:false,error:'Аккаунт сменился. Локальные данные не изменены'};
      const old=(await chrome.storage.local.get(STORE))[STORE];
