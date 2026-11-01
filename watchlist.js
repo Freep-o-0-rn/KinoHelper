@@ -282,7 +282,7 @@
             if(!job||job.profileId!==activeProfileId)return;
             const count=Number(job.count)||0;
             const state=job.state;
-            const kind=['retry','paused'].includes(state)?'error'
+            const kind=['retry','paused','partial'].includes(state)?'error'
                 :state==='completed'?'success':'info';
             const message=state==='completed'
                 ? '✓ Кинопоиск: '+count+' в списке «Буду смотреть»'
