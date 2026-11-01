@@ -79,7 +79,8 @@
       now.getUTCDate())).toISOString().slice(0,10);
     const newKeys=new Set();
     const news=normalize(newReleases,'new')
-      .filter(m=>m.releaseDate&&m.releaseDate>=minDate&&m.releaseDate<=today)
+      .filter(m=>m.year&&m.year>=year-1&&m.year<=year &&
+        m.releaseDate&&m.releaseDate>=minDate&&m.releaseDate<=today)
       .sort((a,b)=>b.releaseDate.localeCompare(a.releaseDate))
       .filter(m=>{
         const k=keyOf(m);
