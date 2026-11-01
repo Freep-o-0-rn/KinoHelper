@@ -36,12 +36,14 @@ function setup(){
   KinoStatsAccount:{async detect(){return {status:'logged-in',id:'7143359'}}},
   matchMedia:()=>({matches:false})};
  const data={kinoDiscoveryCatalogV1:{
-  savedAt:now,
+  schema:2,enrichedAt:now,savedAt:now,
   popular:[
    {type:'film',id:'100',title:'Персональный триллер',year:2024,
     genres:['триллер'],rating:7.9},
-   {type:'film',id:'101',title:'Случайная комедия',year:2024,
-    genres:['комедия'],rating:9.3}
+   {type:'film',id:'101',title:'Популярная комедия',year:2024,
+    genres:['комедия'],rating:9.3},
+   {type:'series',id:'102',title:'Популярный сериал',year:2025,
+    genres:['драма'],rating:8.2}
   ],
   new:[
    {type:'film',id:'200',title:'Подтверждённая премьера',year:new Date().getFullYear(),
@@ -53,7 +55,7 @@ function setup(){
  kinoStatsWatchedV1:{'7143359':{}}};
  const chrome={storage:{local:{async get(keys){
    return Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,data[k]]));
- }}},runtime:{async sendMessage(){return {ok:false}}}};
+ },async set(values){Object.assign(data,values);}}},runtime:{async sendMessage(){return {ok:false}}}};
  const localStorage={getItem:()=> '[]'};
  const fetch=async()=>{fetches++;throw Error('fetch unavailable')};
  vm.runInNewContext(script,{window,document:doc,chrome,localStorage,
@@ -68,26 +70,37 @@ test('cached official catalog is ranked by rated genre without random movies',as
  assert.equal(x.nodes.kinoDiscovery.hidden,false);
  assert.equal(x.nodes.discoveryTitle.textContent,'Персональный триллер');
  assert.equal(x.nodes.discoveryKind.textContent,'✦ Для вас');
- assert.equal(x.nodes.discoveryCounter.textContent,'1 / 2');
- assert.equal(x.fetches>=0,true);
+ assert.equal(x.nodes.discoveryCounter.textContent,'1 / 4');
+ assert.equal(x.fetches,0);
 });
 test('user can browse manually, and verified new movie has a distinct label',async()=>{
  const x=setup();await x.settle();
  x.nodes.discoveryNext.events.click();
  assert.equal(x.nodes.discoveryTitle.textContent,'Подтверждённая премьера');
  assert.equal(x.nodes.discoveryKind.textContent,'✦ Новинки');
- assert.equal(x.nodes.discoveryCounter.textContent,'2 / 2');
+ assert.equal(x.nodes.discoveryCounter.textContent,'2 / 4');
  x.nodes.discoveryPrevious.events.click();
  assert.equal(x.nodes.discoveryTitle.textContent,'Персональный триллер');
 });
 test('autoplay advances at five seconds and pauses on hover',async()=>{
  const x=setup();await x.settle();
  x.advance(6000);x.timer[0]();
- assert.equal(x.nodes.discoveryCounter.textContent,'2 / 2');
+ assert.equal(x.nodes.discoveryCounter.textContent,'2 / 4');
  x.nodes.kinoDiscovery.events.mouseenter();
  x.advance(6000);x.timer[0]();
- assert.equal(x.nodes.discoveryCounter.textContent,'2 / 2');
+ assert.equal(x.nodes.discoveryCounter.textContent,'2 / 4');
  x.nodes.kinoDiscovery.events.mouseleave();
  x.advance(6000);x.timer[0]();
- assert.equal(x.nodes.discoveryCounter.textContent,'1 / 2');
+ assert.equal(x.nodes.discoveryCounter.textContent,'1 / 4');
+});
+
+test('uncategorized source-ranked movie and series stay in popular, never for-you',async()=>{
+ const x=setup();await x.settle();
+ x.nodes.discoveryNext.events.click();
+ x.nodes.discoveryNext.events.click();
+ assert.equal(x.nodes.discoveryTitle.textContent,'Популярная комедия');
+ assert.equal(x.nodes.discoveryKind.textContent,'✦ Популярное');
+ x.nodes.discoveryNext.events.click();
+ assert.equal(x.nodes.discoveryTitle.textContent,'Популярный сериал');
+ assert.equal(x.nodes.discoveryOpen.href,'https://www.kinopoisk.ru/series/102/');
 });
