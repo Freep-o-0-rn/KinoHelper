@@ -2179,7 +2179,9 @@ function rememberPlaybackCoverage(mediaKey, item, payload) {
       }
       await chrome.storage.local.set({[PLAYBACK_COVERAGE_KEY]:all});
     }
-    return {seconds,completed:seconds >= item.duration*0.9};
+    // 85% coverage only unlocks a confirmation. It never auto-completes
+    // a film that may still have its ending ahead.
+    return {seconds,eligible:seconds >= item.duration*0.85};
   };
   const result = playbackCoverageQueue.then(task,task);
   playbackCoverageQueue = result.catch(error => console.warn(
@@ -2188,10 +2190,12 @@ function rememberPlaybackCoverage(mediaKey, item, payload) {
 }
 
 function playbackCompletionStatus(item, previous, coverage) {
-  // Previously completed films remain completed when their old checkpoint is
-  // updated; restarting from the opening can create a new incomplete replay.
-  return Boolean(coverage?.completed ||
-    (previous?.completed && item.position >= item.duration * 0.1));
+  // No automatic completion at 85%: the story can still be in progress.
+  // An actual player ended event is accepted only after 85% verified unique
+  // coverage. The viewer can separately confirm after 85% (UI action).
+  const verifiedEnd = item.event === 'ended' && Boolean(coverage?.eligible);
+  return verifiedEnd || Boolean(previous?.completed &&
+    item.position >= item.duration * 0.1);
 }
 const SERIES_PROGRESS_KEY = 'kinoSeriesEpisodeProgressV1';
 const SERIES_PROGRESS_LIMIT = 300;
@@ -2373,6 +2377,65 @@ function statsRememberCompletion(key, completed) {
   return result;
 }
 
+
+
+
+// A deliberate action in History can finish a title once at least 85%
+// distinct playable content has been observed. Never trust the UI's percent.
+async function confirmCoveredPlayback(mediaKey, sender) {
+  if(sender?.id !== chrome.runtime.id || sender?.tab ||
+      !String(sender?.url||'').startsWith(chrome.runtime.getURL('')))
+    return {ok:false,error:'Недоверенный запрос'};
+  const key=String(mediaKey||'');
+  const isFilm=/^film:[1-9]\d{0,12}$/.test(key);
+  const isEpisode=/^series:[1-9]\d{0,12}:\d{1,3}:\d{1,3}$/.test(key);
+  if(!isFilm && !isEpisode)return {ok:false,error:'Неверная запись'};
+  const progressKey=isFilm?RESUME_STORAGE_KEY:SERIES_PROGRESS_KEY;
+  const work=async()=>{
+    const [raw,coverageRaw]=await Promise.all([
+      chrome.storage.local.get(progressKey),
+      chrome.storage.local.get(PLAYBACK_COVERAGE_KEY)
+    ]);
+    const records=raw[progressKey]&&typeof raw[progressKey]==='object'
+      ?{...raw[progressKey]}:{};
+    const entry=records[key];
+    const coverage=coverageRaw[PLAYBACK_COVERAGE_KEY]?.[key];
+    if(!entry || !Number.isFinite(entry.duration) ||
+       !coverage || Math.abs(entry.duration-coverage.duration)>
+          Math.max(10,entry.duration*0.015))
+      return {ok:false,error:'Нет подтверждённого прогресса просмотра'};
+    const ranges=unionPlaybackRanges(
+      Array.isArray(coverage.ranges)?coverage.ranges.filter(range=>
+        Array.isArray(range)&&range.length===2&&
+        range.every(Number.isFinite)&&range[0]>=0&&
+        range[1]<=entry.duration&&range[1]>range[0]):[]
+    );
+    const seconds=playbackCoverageSeconds(ranges);
+    if(seconds<entry.duration*0.85)
+      return {ok:false,error:'Для подтверждения нужно посмотреть не менее 85% фильма или серии'};
+    records[key]={...entry,completed:true,
+      completedBy:'user',updatedAt:Date.now()};
+    await chrome.storage.local.set({[progressKey]:records});
+    await statsRememberCompletion(key,true);
+    return {ok:true,key,coverage:Math.round(seconds/entry.duration*100)};
+  };
+  // Use the same serial write queues as the player to prevent an older
+  // checkpoint from overwriting the user's explicit confirmation.
+  if(isFilm){
+    const result=resumeWriteQueue.then(work,work);
+    resumeWriteQueue=result.catch(()=>{});
+    return result;
+  }
+  const result=seriesProgressQueue.then(work,work);
+  seriesProgressQueue=result.catch(()=>{});
+  return result;
+}
+chrome.runtime.onMessage.addListener((message,sender,respond)=>{
+  if(message?.action!=='kinoConfirmCoveredPlayback')return false;
+  confirmCoveredPlayback(message.key,sender)
+    .then(respond).catch(error=>respond({ok:false,error:error.message}));
+  return true;
+});
 
 // Alarm-driven profile sync, isolated from the movie playback logic.
 importScripts('stats-account.js','stats-import-worker.js','watchlist-sync-worker.js');
