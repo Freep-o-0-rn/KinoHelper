@@ -20,7 +20,8 @@ function fixture(page) {
 
 function mock(options={}){
  const data={},events={};
- let account='7143359',planned=false,clicks=0;
+ let account='7143359',planned=false,clicks=0,created=0,closed=0;
+ const tabArgs=[];
  const chrome={
    storage:{local:{
      async get(keys){return Object.fromEntries((Array.isArray(keys)?keys:[keys])
@@ -36,14 +37,25 @@ function mock(options={}){
      async sendMessage({html,page}){return {ok:true,result:parser.parsePage(html,page)};}
    },
    tabs:{
-     async create(){return {id:10};},
+     async create(options){created++;tabArgs.push(options);return {id:10};},
      async get(){return {url:'https://www.kinopoisk.ru/film/100/',
        status:'complete'};},
-     async remove(){}
+     async remove(){closed++;}
    },
-   scripting:{async executeScript({args}){
-     if(args){planned=args[0];clicks++;}
-     return [{result:true}];
+   scripting:{async executeScript({func}){
+     const button={
+       disabled:false,classList:{contains:()=>false},
+       closest(){return this;},getAttribute(){return null;},
+       click(){clicks++;if(!options.rejectChange)planned=!planned;}
+     };
+     const document={querySelectorAll(selector){
+       return !options.missingButton &&
+         selector==='button[data-test-id="ContentActions_bookmarkButton"]'
+           ?[button]:[];
+     }};
+     const result=new Function('document',
+       'return ('+func.toString()+')()')(document);
+     return [{result}];
    }}
  };
  const self={KinoStatsAccount:{async detect(){
@@ -77,7 +89,8 @@ function mock(options={}){
    for(let i=0;i<80;i++)await Promise.resolve();
  }
  return {data,message,tick,setAccount(id){account=id;},
-   get clicks(){return clicks;},get planned(){return planned;}};
+   get clicks(){return clicks;},get planned(){return planned;},
+   get created(){return created;},get closed(){return closed;},tabArgs};
 }
 test('complete profile scan imports film and series independently',async()=>{
  const m=mock();
@@ -128,4 +141,43 @@ test('watchlist imports a 20-item page before finalizing remaining pages without
  await m.tick();
  assert.equal(Object.keys(m.data.kinoWatchlistProfilesV1['7143359']).length,23);
  assert.equal(m.data.kinoWatchlistImportJobV1.state,'completed');
+});
+
+
+test('native bookmark action opens only an inactive temporary tab and closes it',async()=>{
+ const m=mock();
+ const response=await m.message('kinoWatchlistSet',{
+   payload:{movie:{type:'film',id:'100',title:'Тест'},
+     desired:true,profileId:'7143359'}
+ });
+ assert.equal(response.ok,true);
+ assert.equal(m.created,1);
+ assert.equal(m.closed,1);
+ assert.equal(m.tabArgs[0].active,false);
+ assert.equal(m.planned,true);
+});
+
+test('missing Kinopoisk bookmark button never modifies local state or leaves tabs',async()=>{
+ const m=mock({missingButton:true});
+ const response=await m.message('kinoWatchlistSet',{
+   payload:{movie:{type:'film',id:'100'},desired:true,profileId:'7143359'}
+ });
+ assert.equal(response.ok,false);
+ assert.match(response.error,/штатную кнопку/);
+ assert.equal(m.created,1);
+ assert.equal(m.closed,1);
+ assert.equal(m.planned,false);
+ assert.equal(m.data.kinoWatchlistProfilesV1,undefined);
+});
+
+test('site that refuses to save is reported as failure without optimistic list changes',async()=>{
+ const m=mock({rejectChange:true});
+ const response=await m.message('kinoWatchlistSet',{
+   payload:{movie:{type:'film',id:'100'},desired:true,profileId:'7143359'}
+ });
+ assert.equal(response.ok,false);
+ assert.match(response.error,/не подтвердил/);
+ assert.equal(m.created,1);
+ assert.equal(m.closed,1);
+ assert.equal(m.data.kinoWatchlistProfilesV1,undefined);
 });
