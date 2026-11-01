@@ -6,7 +6,7 @@
   const box=document.getElementById('kinoDiscovery');
   if(!core||!box)return;
   const CACHE='kinoDiscoveryCatalogV1',FACT_CACHE='kinoDiscoveryFactsV1',
-    POSTER_CACHE='kinoDiscoveryPostersV1';
+    POSTER_CACHE='kinoDiscoveryPostersV2';
   const TTL=24*60*60*1000,STALE_TTL=14*24*60*60*1000;
   const RETRY_TTL=20*60*1000,FACT_TTL=7*24*60*60*1000,INTERVAL=5000;
   const $=id=>document.getElementById(id);
@@ -375,9 +375,10 @@
     // must remain bounded and stay outside the export/backup.
     const data=typeof url==='string'&&url.startsWith('data:');
     if(chrome.storage.session&&(!data||url.length<=600000)){
+      // Only shape-verified covers can enter the new V2 poster cache.
       persistedPosters[id]=data
-        ?{dataUrl:url,cachedAt:Date.now()}
-        :{posterUrl:core.poster(url),cachedAt:Date.now()};
+        ?{dataUrl:url,cachedAt:Date.now(),verifiedPortrait:true}
+        :{posterUrl:core.poster(url),cachedAt:Date.now(),verifiedPortrait:true};
       persistedPosters=Object.fromEntries(
         Object.entries(persistedPosters)
           .sort((a,b)=>b[1].cachedAt-a[1].cachedAt).slice(0,10));
@@ -406,7 +407,9 @@
         if(error)reject(error);else resolve(src);
       };
       const timeout=setTimeout(()=>finish(Error('Image timeout')),2700);
-      img.onload=()=>finish(img.naturalWidth>=1?null:Error('Empty image'));
+      img.onload=()=>finish(core.isPosterShape(img.naturalWidth,img.naturalHeight)
+        ?null:Error('Not a portrait poster ('+img.naturalWidth+
+          'x'+img.naturalHeight+')'));
       img.onerror=()=>finish(Error('Image blocked or not found'));
       img.src=src;
     });
@@ -436,6 +439,15 @@
           });
           if(response?.ok&&typeof response.dataUrl==='string'&&
              /^data:image\/(?:png|jpe?g|webp);base64,/i.test(response.dataUrl)){
+            // MIME and HTTP success do not prove the result is a poster.
+            // Decode the returned image before using/caching it.
+            if(typeof Image==='function'){
+              try{await browserImage(response.dataUrl);}
+              catch(error){
+                errors.push(stage+': '+String(error?.message||error));
+                continue;
+              }
+            }
             await rememberPoster(id,response.dataUrl);
             console.debug('[KinoHelper] Постер загружен через worker',id,stage);
             return true;
@@ -635,7 +647,8 @@
         if(saved&&typeof saved==='object'&&!Array.isArray(saved)){
           for(const [id,item] of Object.entries(saved)){
             if(!new RegExp('^(?:film|series):[1-9][0-9]{0,12}$').test(id)||
-              !item||Date.now()-Number(item.cachedAt||0)>STALE_TTL)continue;
+              !item||item.verifiedPortrait!==true||
+              Date.now()-Number(item.cachedAt||0)>STALE_TTL)continue;
             const url=typeof item.posterUrl==='string'
               ?core.poster(item.posterUrl)
               :typeof item.dataUrl==='string'&&item.dataUrl.length<=600000&&
