@@ -143,7 +143,7 @@
   }
   async function filmFacts(item){
     const id=core.keyOf(item);
-    if(detailsCache.has(id))return detailsCache.get(id);
+    if(detailsCache.get(id)?.factsChecked)return detailsCache.get(id);
     if((failedFacts.get(id)||0)>Date.now())throw Error('Повтор запроса позже');
     if(factsPending.has(id))return factsPending.get(id);
     const task=(async()=>{
@@ -216,7 +216,7 @@
           record.description=desc.slice(0,230);
       }
       const previous=detailsCache.get(id)||{};
-      const merged={...previous,...record,
+      const merged={...previous,...record,factsChecked:true,
         rating:record.rating||previous.rating||null,
         posterUrl:record.posterUrl||previous.posterUrl||'',
         posterFallback:record.posterFallback||previous.posterFallback||''};
@@ -652,7 +652,12 @@
       const at=Number(record?.cachedAt||0);
       if(at>0&&Date.now()-at<FACT_TTL&&record&&typeof record==='object'&&
         /^(?:film|series):[1-9]\d{0,12}$/.test(key)){
-        detailsCache.set(key,record);
+        detailsCache.set(key,{
+          ...record,
+          factsChecked:record.factsChecked===true||
+            Boolean(record.releaseDate||record.description||
+              (Array.isArray(record.genres)&&record.genres.length))
+        });
       }else delete persistedFacts[key];
     }
     const age=Date.now()-Number(cached?.savedAt||0);
