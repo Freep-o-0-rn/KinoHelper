@@ -2104,7 +2104,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
 // when the iframe's own confirmed selector AND the parent series ID agree.
 // No automatic series seeking/selecting in this stage.
 
-// v1.569: only unique *observed* sections count towards 90% completion.
+// v1.569: only unique *observed* sections count towards 85% eligibility.
 // Position alone (including a video "ended" after a seek) never counts.
 const PLAYBACK_COVERAGE_KEY = 'kinoPlaybackCoverageV1';
 const PLAYBACK_COVERAGE_MAX_RANGES = 512;
