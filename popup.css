@@ -2001,7 +2001,7 @@ button.btn-convert:active:not(:disabled) {
 
 /* v1.580: readable, compact cinematic cards in both popup and side panel. */
 .discovery-carousel[hidden],.discovery-poster[hidden],
-.discovery-backdrop[hidden],.discovery-rating[hidden],
+.discovery-poster-empty[hidden],.discovery-backdrop[hidden],.discovery-rating[hidden],
 .discovery-description[hidden],.discovery-meta [hidden] { display:none!important; }
 .discovery-carousel {
   position:relative;isolation:isolate;flex:0 0 auto;width:100%;
