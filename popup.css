@@ -2031,7 +2031,10 @@ button.btn-convert:active:not(:disabled) {
   overflow:hidden;align-self:center;
   background:linear-gradient(155deg,#5e485c,#1b243b);
 }
-.discovery-poster{width:100%;height:100%;display:block;object-fit:cover}
+.discovery-poster{
+  width:100%;height:100%;display:block;object-fit:contain;
+  object-position:center center;background:#161622;
+}
 .discovery-poster-empty{
   position:absolute;inset:0;display:grid;place-items:center;
   font-size:28px;opacity:.6;
