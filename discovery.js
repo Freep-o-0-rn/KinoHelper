@@ -486,7 +486,8 @@
     if(metadataPending.has(id))return metadataPending.get(id);
     const work=(async()=>{
       const response=await chrome.runtime.sendMessage({
-        action:'getSearchMovieMetadata',payload:{id:item.id,type:item.type}
+        action:'getSearchMovieMetadata',
+        payload:{id:item.id,type:item.type,discovery:true}
       });
       if(!response?.ok||!response.metadata)
         throw Error(response?.error||'Метаданные Кинопоиска недоступны');
