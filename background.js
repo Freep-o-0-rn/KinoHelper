@@ -1706,12 +1706,10 @@ async function saveResumeProgress(payload, sender) {
       !Array.isArray(store[RESUME_STORAGE_KEY])
       ? { ...store[RESUME_STORAGE_KEY] } : {};
     const older = entries[key];
-    const completedAtEnd = item.event === 'ended' &&
-      item.played >= 30 && item.position >= item.duration - 5;
-    // After the ended event, pause/pagehide must not resurrect the same film.
-    // A verified restart near the beginning allows an intentional rewatch.
-    const completed = completedAtEnd ||
-      Boolean(older?.completed && item.position >= item.duration * 0.1);
+    // The video may have long closing credits. Recognize a verified
+    // >=90% playback checkpoint, without requiring the player to emit "ended".
+    // A seeked event alone never completes a title.
+    const completed = playbackCompletionStatus(item, older);
 
     // If playback restarted from the beginning after completion, a new
     // verified session creates a fresh unfinished entry.
@@ -2107,6 +2105,24 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
 // 1.553: Episode checkpoints are isolated from film progress. We write only
 // when the iframe's own confirmed selector AND the parent series ID agree.
 // No automatic series seeking/selecting in this stage.
+
+// One completion rule for films and individually verified series episodes.
+// 90% is an end-credits heuristic, not a claim that every second was watched.
+// Require 60–120 seconds of actual play in this player session to reduce
+// false positives from a quick seek to the end. Keep the explicit "ended"
+// path for players that produce it. Never count an isolated seeked event.
+function playbackCompletionStatus(item, previous) {
+  const fullyEnded = item.event === 'ended' && item.played >= 30 &&
+    item.position >= item.duration - 5;
+  const minPlayed = Math.min(120, Math.max(60, item.duration * 0.02));
+  const nearCredits = item.event !== 'seeked' &&
+    item.position >= item.duration * 0.9 && item.played >= minPlayed;
+  // Completed checkpoints survive later pauses. An intentional rewatch
+  // starting within the first 10% opens a new incomplete checkpoint.
+  const alreadyCompleted = Boolean(previous?.completed &&
+    item.position >= item.duration * 0.1);
+  return fullyEnded || nearCredits || alreadyCompleted;
+}
 const SERIES_PROGRESS_KEY = 'kinoSeriesEpisodeProgressV1';
 const SERIES_PROGRESS_LIMIT = 300;
 let seriesProgressQueue = Promise.resolve();
@@ -2169,10 +2185,7 @@ async function saveSeriesEpisodeProgress(payload, sender) {
     const entries = data && typeof data === 'object' && !Array.isArray(data)
       ? { ...data } : {};
     const older = entries[key];
-    const ended = item.event === 'ended' && item.played >= 30 &&
-      item.position >= item.duration - 5;
-    const completed = ended || Boolean(older?.completed &&
-      item.position >= item.duration * 0.1);
+    const completed = playbackCompletionStatus(item, older);
     const cleanTitle = String(current.title || '').replace(/\s+/g, ' ').trim().slice(0, 150);
     entries[key] = {
       type: 'series', id: series.id,
