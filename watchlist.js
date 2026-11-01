@@ -123,35 +123,62 @@
         return true;
     }
 
-    async function toggleRemote(movie) {
+    // All profile-backed changes use the same server-confirmed operation.
+    // Never interpret the X as a toggle: its intent is always removal.
+    async function setRemote(movie,desired,expectedProfile=activeProfileId) {
         const next=normalize(movie);
-        if(!next||!activeProfileId)return false;
+        if(!next || typeof desired!=='boolean' ||
+            !expectedProfile || expectedProfile!==activeProfileId)return false;
         const key=next.type+':'+next.id;
         if(savingRemote.has(key))return false;
-        const desired=!contains(next);
-        const profile=activeProfileId;
         savingRemote.add(key);
         refresh();
-        showStatus('Синхронизируем «Буду смотреть» с Кинопоиском…','info');
+        showStatus(desired
+            ? 'Добавляем в «Буду смотреть» на Кинопоиске…'
+            : 'Убираем из «Буду смотреть» на Кинопоиске…','info');
         try {
             const response=await chrome.runtime.sendMessage({
-                action:'kinoWatchlistSet',payload:{movie:next,desired,profileId:profile}
+                action:'kinoWatchlistSet',
+                payload:{movie:next,desired,profileId:expectedProfile}
             });
-            if(!response?.ok) {
-                showStatus(response?.error||'Кинопоиск не подтвердил изменение');
+            if(!response?.ok || response.planned!==desired) {
+                if(activeProfileId===expectedProfile)
+                    showStatus(response?.error||
+                        'Кинопоиск не подтвердил изменение. Список не изменён.','error');
                 return false;
             }
-            if(profile!==activeProfileId)return false;
-            await loadProfileItems(profile);
-            showStatus(desired?'Добавлено на Кинопоиске':'Удалено на Кинопоиске');
+            if(expectedProfile!==activeProfileId)return false;
+            await loadProfileItems(expectedProfile);
+            showStatus(desired?'Добавлено на Кинопоиске':
+                'Удалено из «Буду смотреть» на Кинопоиске','success');
             return true;
         }catch(error){
-            showStatus('Не удалось сохранить: '+String(error?.message||error));
+            if(expectedProfile===activeProfileId)
+                showStatus('Ошибка синхронизации: '+
+                    String(error?.message||error),'error');
             return false;
         }finally{
             savingRemote.delete(key);
             refresh();
         }
+    }
+
+    function toggleRemote(movie) {
+        const next=normalize(movie);
+        if(!next||!activeProfileId)return Promise.resolve(false);
+        return setRemote(next,!contains(next),activeProfileId);
+    }
+
+    function removeFromList(movie,expectedProfile=activeProfileId) {
+        const next=normalize(movie);
+        if(!next)return Promise.resolve(false);
+        if(expectedProfile) {
+            if(expectedProfile!==activeProfileId)return Promise.resolve(false);
+            return setRemote(next,false,expectedProfile);
+        }
+        // Preserve standalone/local list behavior when no Kinopoisk profile
+        // has been verified. This branch does not claim remote synchronization.
+        return Promise.resolve(contains(next) ? toggle(next) : true);
     }
 
     function toggle(movie) {
@@ -551,9 +578,14 @@
                     url: KINOPOISK_ORIGIN + '/' + item.type + '/' + item.id + '/'
                 }), 'Открыть Кинопоиск');
             kp.setAttribute('aria-label', 'Кинопоиск: ' + item.title);
-            const remove = makeButton('✕', 'watchlist-item-action',
-                () => toggle(item), 'Удалить из «Буду смотреть»');
+            const profileAtRender=activeProfileId;
+            const busy=savingRemote.has(keyOf(item));
+            const remove = makeButton(busy?'…':'✕', 'watchlist-item-action',
+                () => void removeFromList(item,profileAtRender),
+                'Убрать из «Буду смотреть» на Кинопоиске');
+            remove.disabled=busy;
             remove.setAttribute('aria-label', 'Удалить из списка: ' + item.title);
+            if (busy) remove.setAttribute('aria-busy','true');
             actions.append(watch, kp, remove);
             row.append(poster, info, actions);
             return row;
@@ -655,7 +687,7 @@
 
     window.KinoWatchlist = { getAll, contains, toggle, setCurrent,
         createSearchButton, syncSearchButton, updateMetadata, adoptPoster,
-        refreshProfile };
+        refreshProfile, removeFromList };
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
