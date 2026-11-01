@@ -179,6 +179,21 @@
        }
        profiles[job.profileId]=complete&&!repeated?finalScope:intermediate;
        await chrome.storage.local.set({[STORE]:profiles});
+       if(complete&&!repeated){
+         // A user may manually clear a failed automatic removal on
+         // Kinopoisk. A verified full scan then clears its stale warning.
+         const rawQueue=(await chrome.storage.local.get('kinoWatchlistAutoRemoveV1'))
+           .kinoWatchlistAutoRemoveV1;
+         const queued={...obj(rawQueue)},pending={...obj(queued[job.profileId])};
+         let changed=false;
+         for(const key of Object.keys(pending)){
+           if(!finalScope[key]){delete pending[key];changed=true;}
+         }
+         if(changed){
+           queued[job.profileId]=pending;
+           await chrome.storage.local.set({kinoWatchlistAutoRemoveV1:queued});
+         }
+       }
        job=await putJob({...job,page:job.page+1,done:job.page,
          total:explicitTotal,staged:complete?{}:staged,
          fingerprint, count:Object.keys(staged).length,
