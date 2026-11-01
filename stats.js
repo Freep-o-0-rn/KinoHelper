@@ -9,7 +9,8 @@
 
   const KEYS = ['kinoPlaybackProgressV1', 'kinoSeriesEpisodeProgressV1',
     'kinoStatsLibraryV1', 'kinoStatsWatchTimeV1', 'kinoStatsGenresV1', 'kinoStatsRatingsV1',
-    'kinoStatsProfileId', 'kinoStatsProfileImportV1', 'kinoStatsImportJobV2'];
+    'kinoStatsProfileId', 'kinoStatsProfileImportV1', 'kinoStatsImportJobV2',
+    'kinoStatsWatchedV1'];
   const palette = { film: '#f36a35', series: '#8a6aea', other: '#a9b0bb' };
   const els = id => document.getElementById(id);
   const versionNode = els('appVersion');
@@ -150,23 +151,28 @@
         valueLabel:count(model.unfinishedFilms),color:palette.other}
     ];
     const seriesEpisodes = [
-      {name:'Серий завершено', value:model.finishedEpisodes,
-        valueLabel:count(model.finishedEpisodes),color:palette.series},
-      {name:'Не завершено серий',value:Math.max(0,
-        model.startedEpisodes-model.finishedEpisodes),
-        valueLabel:count(model.startedEpisodes-model.finishedEpisodes),
+      {name:'Просмотрено (Кинопоиск)', value:model.completedSeries,
+        valueLabel:count(model.completedSeries),color:palette.series},
+      {name:'В просмотре',value:Math.max(0,
+        model.startedSeries-model.completedSeries),
+        valueLabel:count(model.startedSeries-model.completedSeries),
         color:palette.other}
     ];
     createSvgChart(els('statsFilmChart'), films, 'Статистика фильмов',
       {center:count(model.finishedFilms),sub:'из '+
         count(model.finishedFilms+model.unfinishedFilms)});
     makeLegend(els('statsFilmLegend'),films);
+    els('statsFilmLegend').title='Источник отметок: Кинопоиск — '+
+      model.kpFilmCount+', KinoHelper — '+model.localFilmCount+
+      '. Пересечений: '+model.filmOverlap+'.';
 
-    // A series is counted as "started" if a verified episode exists.
-    // We cannot assert full series completion without verified episode totals.
+    // Series watched status comes from Kinopoisk; KinoHelper contributes
+    // started series and tracked episodes, but cannot infer series completion.
     createSvgChart(els('statsSeriesChart'), seriesEpisodes,
       'Прогресс серий', {center:count(model.startedSeries),sub:'сериалов'});
     makeLegend(els('statsSeriesLegend'),seriesEpisodes);
+    els('statsSeriesLegend').title='Кинопоиск: '+model.kpSeriesCount+
+      ' просмотрено. KinoHelper: '+model.localSeriesCount+' начато.';
     els('statsEpisodesCount').textContent = count(model.finishedEpisodes);
 
     const times = [
@@ -219,6 +225,8 @@
       const profileId = authState === 'logged-in' ? verifiedAccountId : '';
       const scopes = safeObject(values.kinoStatsRatingsV1);
       const ratings = safeObject(scopes[profileId || '__local__']);
+      const watched=safeObject(
+        safeObject(values.kinoStatsWatchedV1)[profileId || '__local__']);
       importState = profileId
         ? safeObject(values.kinoStatsProfileImportV1)[profileId] || null : null;
       lastData = core.summarize({
@@ -227,7 +235,7 @@
         library:values.kinoStatsLibraryV1,
         watchTime:values.kinoStatsWatchTimeV1,
         genres:values.kinoStatsGenresV1,
-        ratings,profileId
+        ratings,watched,profileId
       });
       render(lastData);
       updateImportProgress(values.kinoStatsImportJobV2);
@@ -279,11 +287,13 @@
     if (known) indicator.value=Math.min(done,total);
     else indicator.removeAttribute('value'); // native indeterminate progress
     const knownVotes=Number(job.importedVotes)||0;
-    const phase=job.state==='completed'?'Все оценки загружены. Обновление — раз в сутки.'
+    const phase=job.state==='completed'?'Оценки и просмотры загружены. Обновление — раз в сутки.'
       : job.state==='paused'?'Кинопоиск ограничил доступ. Попробуем позже.'
       : job.state==='retry'?'Ошибка соединения. Повторим позже.'
-      : 'Загружаем оценки в фоне. Панель можно закрыть.';
-    label.textContent=phase+' Найдено оценок: '+knownVotes+'.';
+      : 'Загружаем оценки и просмотры в фоне. Панель можно закрыть.';
+    const knownWatched=Number(job.importedWatched)||0;
+    label.textContent=phase+' Оценок: '+knownVotes+
+      ', отметок «Просмотрено»: '+knownWatched+'.';
   }
 
   // Resolving /mykp/ never requires the user to enter a profile URL.
