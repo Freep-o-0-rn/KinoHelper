@@ -131,3 +131,24 @@ test('a series needs a verified recent premiere to be labelled new',()=>{
  assert.equal(r[0].type,'series');
  assert.equal(core.select({newReleases:[{...series,releaseDate:''}]}).length,0);
 });
+
+test('poster source candidates include resized Yandex images and verified legacy fallbacks',()=>{
+ const base='https://avatars.mds.yandex.net/get-kinopoisk-image/4774061/abc123';
+ const sources=core.posterSources({type:'series',id:'123',posterUrl:base});
+ assert.equal(sources[0],base+'/280x420');
+ assert.equal(sources[1],base+'/300x450');
+ assert.equal(sources[2],base+'/orig');
+ assert.equal(sources.includes('https://st.kp.yandex.net/images/film_big/123.jpg'),true);
+ assert.equal(sources.length,new Set(sources).size);
+});
+test('poster candidates use backup url and do not accept arbitrary external hosts',()=>{
+ const fallback='https://avatars.mds.yandex.net/get-kinopoisk-image/111/222/orig';
+ const sources=core.posterSources({
+  id:'123',posterUrl:'https://example.com/untrusted.jpg',posterFallback:fallback
+ });
+ assert.equal(sources[0],fallback.replace('/orig','/280x420'));
+ assert.equal(sources.some(u=>u.includes('example.com')),false);
+ assert.equal(core.poster('//avatars.mds.yandex.net/get-kinopoisk-image/x/y/orig'),
+  'https://avatars.mds.yandex.net/get-kinopoisk-image/x/y/orig');
+ assert.equal(core.poster('javascript:alert(1)'),'');
+});
