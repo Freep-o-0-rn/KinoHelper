@@ -86,3 +86,16 @@ test('carousel selection is capped at ten movies',()=>{
  const r=core.select({newReleases:list,count:100});
  assert.equal(r.length,10);
 });
+
+test('Russian premiere dates are parsed exactly and invalid dates are rejected',()=>{
+ assert.equal(core.premiereDate('Премьера в мире 5 февраля 2026, ...'),'2026-02-05');
+ assert.equal(core.premiereDate('Премьера в России 1 ноября 2026'),'2026-11-01');
+ assert.equal(core.premiereDate('Премьера в мире 31 февраля 2026'),'');
+ assert.equal(core.premiereDate('2026'), '');
+});
+test('a vintage film rerelease does not count as a new movie',()=>{
+ const result=core.select({newReleases:[film(101,['драма'],{
+   year:2010,releaseDate:date(-1)
+ })]});
+ assert.equal(result.length,0);
+});
