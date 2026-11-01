@@ -273,7 +273,7 @@ test('verified repeated intervals are counted once, even across sessions',async(
   for(let start=300;start<510;start+=5)await send(start,start+5);
   assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,false,
     '85% only grants eligibility, not automatic completion');
-  await send(510,515,'ended');
+  await send(595,600,'ended');
   assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,true,
     'confirmed video end with 85% unique coverage completes');
 });
