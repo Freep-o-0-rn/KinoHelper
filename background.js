@@ -2460,4 +2460,4 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
 });
 
 // Alarm-driven profile sync, isolated from the movie playback logic.
-importScripts('stats-account.js','stats-import-worker.js','watchlist-sync-worker.js');
+importScripts('stats-account.js','stats-import-worker.js','watchlist-sync-worker.js','profile-minute-sync-worker.js');
