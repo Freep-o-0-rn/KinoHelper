@@ -300,8 +300,8 @@ test('film page JSON-LD image becomes verified cached poster metadata',async()=>
  const poster='https://avatars.mds.yandex.net/get-kinopoisk-image/777/document/orig';
  const data={kinoDiscoveryCatalogV1:{
   schema:2,savedAt:Date.now(),enrichedAt:Date.now(),
-  popular:[{type:'film',id:'100',title:'Фильм',year:2025,genres:['драма']}],new:[]
+  popular:[{type:'film',id:'777',title:'Фильм',year:2025,genres:['драма']}],new:[]
  }};
  const x=setup({data,filmPoster:poster});await x.settle();
- assert.equal(x.data.kinoDiscoveryFactsV1['film:100'].posterUrl,poster);
+ assert.equal(x.data.kinoDiscoveryFactsV1['film:777'].posterUrl,poster);
 });
