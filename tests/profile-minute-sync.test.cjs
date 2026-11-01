@@ -9,13 +9,13 @@ const minute=60000;
 const day=24*60*minute;
 
 function storage(initial={}){
-  const data={...initial};
+  const data={...initial}, writes=[];
   const local={
     async get(keys){return Object.fromEntries((Array.isArray(keys)?keys:[keys])
       .map(k=>[k,data[k]]));},
-    async set(items){Object.assign(data,items);}
+    async set(items){writes.push(Object.keys(items));Object.assign(data,items);}
   };
-  return {data,local};
+  return {data,local,writes};
 }
 function chromeMock(state,parse){
   const events={alarms:[],created:[],startup:[],installed:[]};
@@ -223,4 +223,67 @@ test('watched-only reaction removes a vote withdrawn on Kinopoisk',async()=>{
  assert.equal(state.data.kinoStatsRatingsV1['7143359']['film:10'],undefined);
  assert.equal(state.data.kinoStatsImportJobV2.importedVotes,0);
  assert.equal(state.data.kinoStatsWatchedV1['7143359']['film:10'].watched,true);
+});
+
+
+test('watchlist minute checks avoid repeated storage writes on identical remote pages',async()=>{
+ const state=storage({
+   kinoWatchlistImportJobV1:{
+     profileId:'7143359',state:'completed',done:1,page:2,total:1,
+     nextAt:Date.now()+day,count:1
+   },
+   kinoWatchlistProfilesV1:{
+     '7143359':{
+       'film:10':{type:'film',id:'10',title:'Keep',
+         source:'kinopoisk',addedAt:1700000000000}
+     }
+   }
+ });
+ let fetched=0;
+ const {chrome}=chromeMock(state,()=>{
+   fetched++;
+   return {items:[{type:'film',id:'10',title:'Keep'}],
+     recognized:1,lastPage:1};
+ });
+ const self={KinoStatsAccount:{async detect(){return identity;}}};
+ new Function('chrome','self','fetch','URL','AbortSignal','console',
+   'setTimeout','getMovieRating',read('watchlist-sync-worker.js'))(
+   chrome,self,async url=>({ok:true,status:200,url,text:async()=>'<html>same</html>'}),
+   URL,AbortSignal,console,fn=>fn(),async()=>({authorized:true,planned:false}));
+ const first=await self.KinoWatchlistMinuteSync.run(identity);
+ assert.equal(first.ok,true);
+ const writesAfterFirst=state.writes.length;
+ const second=await self.KinoWatchlistMinuteSync.run(identity);
+ assert.equal(second.ok,true);
+ assert.equal(second.changed,0);
+ assert.equal(second.skipped,'unchanged-page');
+ assert.equal(state.writes.length,writesAfterFirst,
+   'unchanged first-page data must not rewrite list or cursor');
+ assert.equal(fetched,2,'the one-minute network check is preserved');
+});
+
+test('watchlist replacement with equal list length counts both removed and added IDs',async()=>{
+ const state=storage({
+   kinoWatchlistImportJobV1:{
+     profileId:'7143359',state:'completed',done:1,page:2,total:1,
+     nextAt:Date.now()+day,count:1
+   },
+   kinoWatchlistProfilesV1:{
+     '7143359':{'film:10':{type:'film',id:'10',title:'Removed'}}
+   }
+ });
+ const {chrome}=chromeMock(state,()=>({
+   items:[{type:'film',id:'20',title:'New'}],
+   recognized:1,lastPage:1
+ }));
+ const self={KinoStatsAccount:{async detect(){return identity;}}};
+ new Function('chrome','self','fetch','URL','AbortSignal','console',
+   'setTimeout','getMovieRating',read('watchlist-sync-worker.js'))(
+   chrome,self,async url=>({ok:true,status:200,url,text:async()=>'<html>replace</html>'}),
+   URL,AbortSignal,console,fn=>fn(),async()=>({authorized:true,planned:false}));
+ const result=await self.KinoWatchlistMinuteSync.run(identity);
+ assert.equal(result.ok,true);
+ assert.equal(result.changed,2);
+ assert.deepEqual(Object.keys(state.data.kinoWatchlistProfilesV1['7143359']),
+   ['film:20']);
 });
