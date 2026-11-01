@@ -76,35 +76,55 @@
     }
     return ids.size;
   }
-  function readSSRRecords(ssr){
+  // Only an explicit Watched reaction proves the profile's watched mark.
+  // A Vote never substitutes for Watched here (including rated TV shows).
+  function readSSRAll(ssr) {
     const state=ssr?.apolloState || ssr?.props?.pageProps?.apolloState;
     if(!state || typeof state!=='object')return [];
     const results=new Map();
-    for(const items of reactionLists(state)){
-      for(const raw of items){
+    for(const items of reactionLists(state)) {
+      for(const raw of items) {
         const item=ref(state,raw);
         if(item?.__typename!=='UserMovieReactions')continue;
         const movie=ref(state,item.movie);
         const id=String(movie?.id||'');
         const movieType=movie?.__typename;
         if(!userId(id)||!TYPES.has(movieType))continue;
-        // Do not confuse rating.kinopoisk with the *user's* Vote reaction.
-        let rating=null;
-        for(const [k,v] of Object.entries(item)){
-          if(!k.startsWith('reactions')||!Array.isArray(v))continue;
-          for(const rawVote of v){
-            const vote=ref(state,rawVote);
-            const value=Number(vote?.value);
-            if(vote?.__typename==='Vote' && Number.isInteger(value) &&
-                value>=1 && value<=10) rating=value;
+        let rating=null,watched=false;
+        for(const [key,reactions] of Object.entries(item)) {
+          if(!key.startsWith('reactions')||!Array.isArray(reactions))continue;
+          for(const rawReaction of reactions) {
+            const reaction=ref(state,rawReaction);
+            if(reaction?.__typename==='Watched')watched=true;
+            if(reaction?.__typename==='Vote') {
+              const value=Number(reaction.value);
+              if(Number.isInteger(value)&&value>=1&&value<=10)rating=value;
+            }
           }
         }
-        if(rating===null)continue;
         const type=movieType==='Film'?'film':'series';
-        results.set(type+':'+id,{type,id,rating});
+        const genres=Array.isArray(movie.genres)
+          ? [...new Set(movie.genres.map(g=>ref(state,g)?.name)
+              .filter(g=>typeof g==='string'&&g.trim().length>=3)
+              .map(g=>g.trim().toLocaleLowerCase('ru')))].slice(0,12)
+          : [];
+        const record={type,id,rating,watched,genres};
+        const identity=type+':'+id;
+        const old=results.get(identity);
+        if(old) {
+          record.rating=record.rating??old.rating;
+          record.watched=record.watched||old.watched;
+          if(!record.genres.length)record.genres=old.genres;
+        }
+        results.set(identity,record);
       }
     }
     return [...results.values()];
+  }
+  function readSSRRecords(ssr) {
+    return readSSRAll(ssr)
+      .filter(record=>record.rating!==null)
+      .map(({type,id,rating})=>({type,id,rating}));
   }
   function readHTMLCards(doc) {
     if(!doc?.querySelectorAll)return [];
@@ -145,21 +165,24 @@
     if(/captcha|smartcaptcha/i.test(html.slice(0,180000)) &&
         !html.includes('UserMovieReactions'))throw Error('Кинопоиск запросил проверку браузера');
     const ssr=profileSSR(html);
-    const ssrVotes=readSSRRecords(ssr);
+    const ssrAll=readSSRAll(ssr);
+    const ssrVotes=ssrAll.filter(row=>row.rating!==null)
+      .map(({type,id,rating})=>({type,id,rating}));
+    const watched=ssrAll.filter(row=>row.watched)
+      .map(({type,id,genres})=>({type,id,genres}));
     const recognized=recognizedSSRRows(ssr);
     let doc=null;
     if(typeof DOMParser!=='undefined')
       doc=new DOMParser().parseFromString(html,'text/html');
-    const votes=ssrVotes.length?ssrVotes:readHTMLCards(doc);
+    const votes=ssrAll.length?ssrVotes:readHTMLCards(doc);
     const {lastPage}=pagination(doc,html,page);
-    // Watched-only entries are legitimate, but they never contribute a
-    // numerical rating. The importer may safely advance past such a page.
     const domRecognized=doc?.querySelectorAll
       ? [...doc.querySelectorAll('[class*="styles_item"],[data-test-id*="reaction"]')]
         .filter(card=>card.querySelector('a[href*="/film/"],a[href*="/series/"]')).length
       : 0;
-    return {votes,lastPage,recognized:Math.max(recognized,domRecognized),
-      source:ssrVotes.length?'ssr':votes.length?'html':recognized?'watched-only':'empty'};
+    return {votes,watched,lastPage,recognized:Math.max(recognized,domRecognized),
+      source:ssrAll.length?'ssr':votes.length?'html':recognized?'watched-only':'empty'};
+
   }
-  return {userId,profileSSR,readSSRRecords,parsePage,readHTMLCards,pagination};
+  return {userId,profileSSR,readSSRAll,readSSRRecords,parsePage,readHTMLCards,pagination};
 });
