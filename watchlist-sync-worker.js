@@ -128,11 +128,13 @@
    if(login.status!=='logged-in')
      return {ok:false,error:'Авторизуйтесь на Кинопоиске'};
    const filmUrl='https://www.kinopoisk.ru/'+movie.type+'/'+movie.id+'/';
-   // Operate the actual website control; its private mutation is undocumented.
-   const tab=await chrome.tabs.create({url:filmUrl,active:false});
-   let confirmed=false;
+   const existing=await getMovieRating(movie).catch(()=>null);
+   if(existing?.authorized!==true||typeof existing?.planned!=='boolean')
+     return {ok:false,error:'Не удалось проверить «Буду смотреть» на Кинопоиске'};
+   let confirmed=existing.planned===desired;
+   const tab=confirmed?null:await chrome.tabs.create({url:filmUrl,active:false});
    try{
-     for(let attempt=0;attempt<24;attempt++){
+     for(let attempt=0;!confirmed&&attempt<24;attempt++){
        await new Promise(done=>setTimeout(done,600));
        const info=await chrome.tabs.get(tab.id).catch(()=>null);
        if(!info?.url?.startsWith(filmUrl))break;
@@ -154,25 +156,21 @@
          }
        }).catch(()=>[]);
        if(!click[0]?.result)continue;
-       // No optimistic success: only a changed button label counts as UI proof.
-       for(let check=0;check<10;check++){
-         await new Promise(done=>setTimeout(done,550));
-         const v=await chrome.scripting.executeScript({
-           target:{tabId:tab.id},func:()=>[...document.querySelectorAll(
-             'button,[role="button"]')].map(el=>
-             String(el.getAttribute('aria-label')||el.innerText||'')
-               .toLocaleLowerCase('ru').trim())
-         }).catch(()=>[]);
-         const labels=v[0]?.result||[];
-         const correct=desired
-           ?labels.some(t=>/в списке|убрать из|не буду смотреть/.test(t))
-           :labels.some(t=>t==='буду смотреть');
-         if(correct){confirmed=true;break;}
+       // Never trust a visual click alone; read the authenticated server state.
+       for(let check=0;check<8;check++){
+         await new Promise(done=>setTimeout(done,800));
+         const remote=await getMovieRating(movie).catch(()=>null);
+         if(remote?.authorized===true && remote.planned===desired){
+           confirmed=true;break;
+         }
        }
        break;
      }
      if(!confirmed)return {ok:false,manual:true,url:filmUrl,
-       error:'Изменение не подтверждено. Откройте вкладку Кинопоиска.'};
+       error:'Изменение не подтверждено. Нажмите кнопку на открытой вкладке Кинопоиска.'};
+     const currentAuth=await self.KinoStatsAccount.detect();
+     if(currentAuth.status!=='logged-in'||currentAuth.id!==login.id)
+       return {ok:false,error:'Профиль изменился. Данные не сохранены.'};
      const raw=(await chrome.storage.local.get(STORE))[STORE];
      const all={...obj(raw)}, profile={...obj(all[login.id])};
      if(desired)profile[key]={...movie,id:String(movie.id),
@@ -180,7 +178,7 @@
      else delete profile[key];
      all[login.id]=profile;
      await chrome.storage.local.set({[STORE]:all});
-     await chrome.tabs.remove(tab.id).catch(()=>{});
+     if(tab)await chrome.tabs.remove(tab.id).catch(()=>{});
      // Server list remains authoritative and is read on the next scheduled scan.
      return {ok:true,profileId:login.id,planned:desired};
    }catch(err){
