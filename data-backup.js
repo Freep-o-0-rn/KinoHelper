@@ -20,7 +20,7 @@
     'kinoSeriesEpisodeProgressV1', 'kinoStatsLibraryV1',
     'kinoStatsWatchTimeV1', 'kinoStatsGenresV1', 'kinoStatsRatingsV1',
     'kinoStatsProfileId', 'kinoStatsProfileImportV1', 'kinoStatsWatchedV1',
-    'kinoWatchlistProfilesV1'
+    'kinoWatchlistProfilesV1', 'kinoPlaybackCoverageV1'
   ];
   const OBJECT_KEYS = new Set(STORAGE_KEYS.filter(key =>
     key !== 'kinoHelperDisplayMode' && key !== 'kinoStatsProfileId'));
@@ -123,7 +123,31 @@
       });
   }
 
+  function mergeCoverage(existing, imported) {
+    const valid = (id,x) => (FILM.test(id)||EPISODE.test(id)) &&
+      object(x) && Number.isFinite(x.duration) &&
+      x.duration>=60 && x.duration<=28800 && Array.isArray(x.ranges);
+    const clean = entry => entry.ranges.filter(pair =>
+      Array.isArray(pair) && pair.length===2 &&
+      pair.every(Number.isFinite) && pair[0]>=0 &&
+      pair[1]>pair[0] && pair[1]<=entry.duration).map(pair=>[...pair]);
+    return mergeMap(existing,imported,valid,(a,b)=>{
+      if(Math.abs(a.duration-b.duration)>Math.max(10,b.duration*0.015))
+        return newest(a,b);
+      const all=[...clean(a),...clean(b)].sort((x,y)=>x[0]-y[0]);
+      const union=[];
+      for(const pair of all) {
+        const last=union[union.length-1];
+        if(last && pair[0]<=last[1]+0.05)last[1]=Math.max(last[1],pair[1]);
+        else union.push(pair);
+      }
+      return {duration:b.duration,ranges:union.slice(-512),
+        updatedAt:Math.max(timestamp(a.updatedAt),timestamp(b.updatedAt))};
+    });
+  }
+
   function mergeStorageValue(key, existing, imported) {
+    if (key === 'kinoPlaybackCoverageV1') return mergeCoverage(existing, imported);
     if (key === 'kinoStatsRatingsV1') return mergeRatings(existing, imported);
     if (key === 'kinoStatsWatchedV1') return mergeWatched(existing, imported);
     if (key === 'kinoWatchlistProfilesV1') {
