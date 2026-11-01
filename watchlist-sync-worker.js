@@ -121,12 +121,14 @@
      staged:{},state:'loading',count:0,failures:0,nextAt:Date.now()});
    return {ok:true,job:await scan()};
  }
- async function mutate({movie,desired}){
+ async function mutate({movie,desired,profileId}){
    const key=keyOf(movie);
    if(!key||typeof desired!=='boolean')return {ok:false,error:'Неверный фильм'};
    const login=await self.KinoStatsAccount.detect();
    if(login.status!=='logged-in')
      return {ok:false,error:'Авторизуйтесь на Кинопоиске'};
+   if(String(profileId||'')!==login.id)
+     return {ok:false,error:'Аккаунт Кинопоиска изменился. Обновите панель.'};
    const filmUrl='https://www.kinopoisk.ru/'+movie.type+'/'+movie.id+'/';
    const existing=await getMovieRating(movie).catch(()=>null);
    if(existing?.authorized!==true||typeof existing?.planned!=='boolean')
