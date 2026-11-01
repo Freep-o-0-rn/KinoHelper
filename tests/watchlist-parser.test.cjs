@@ -53,3 +53,37 @@ test('verified empty reaction list is distinguished from parse failure',()=>{
  assert.equal(empty.items.length,0);
  assert.equal(parser.parsePage('<html></html>').verifiedEmpty,false);
 });
+
+
+test('planned-list SSR may expose movie nodes instead of UserMovieReactions',()=>{
+ const apolloState={
+   ROOT_QUERY:{plannedToWatch:{__ref:'Connection:1'}},
+   'Connection:1':{edges:[{node:{__ref:'Film:123'}},
+     {node:{__ref:'TvSeries:456'}}]},
+   'Film:123':{__typename:'Film',id:123,
+     title:{russian:'Фильм'},productionYear:2021},
+   'TvSeries:456':{__typename:'TvSeries',id:456,
+     title:{russian:'Сериал'}}
+ };
+ const result=parser.parsePage('<script>window.Ya.__ssr_initial_data = '+
+   JSON.stringify({apolloState})+';</script>');
+ assert.deepEqual(result.items.map(x=>x.type+':'+x.id),
+   ['film:123','series:456']);
+ assert.equal(result.verifiedEmpty,false);
+});
+
+test('one unrelated empty list cannot overwrite a nonempty planned list',()=>{
+ const apolloState={
+   ROOT_QUERY:{
+     movieReactions:{__ref:'Empty'},
+     plannedToWatch:{__ref:'Planned'}
+   },
+   Empty:{items:[]},
+   Planned:{items:[{__ref:'Film:8'}]},
+   'Film:8':{__typename:'Film',id:8,title:{russian:'Фильм'}}
+ };
+ const result=parser.parsePage('<script>window.Ya.__ssr_initial_data = '+
+   JSON.stringify({apolloState})+';</script>');
+ assert.equal(result.items.length,1);
+ assert.equal(result.verifiedEmpty,false);
+});
