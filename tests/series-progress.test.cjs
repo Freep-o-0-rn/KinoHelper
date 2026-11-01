@@ -100,6 +100,9 @@ test('rejects unknown sender, permission revocation and malformed metadata',asyn
 
 test('marks completed episode without making next episode completed',async()=>{
   const m=mock();
+  m.local.kinoPlaybackCoverageV1={
+    'series:404900:1:3':{duration:1800,ranges:[[0,1540]],updatedAt:Date.now()}
+  };
   await m.save(1,3,1799,'ended');
   assert.equal(m.local.kinoSeriesEpisodeProgressV1['series:404900:1:3'].completed,true);
   m.select(1,4);
@@ -212,23 +215,24 @@ test('without explicit selected season and episode, video time is not recorded',
 });
 
 
-test('individual episodes finish at 90% without requiring video ended',async()=>{
+
+test('85% unique episode coverage is eligible but not completed until the end',async()=>{
   const m=mock();
-  await m.save(1,3,1619,'playing',90);
+  m.local.kinoPlaybackCoverageV1={
+    'series:404900:1:3':{duration:1800,ranges:[[0,1530]],updatedAt:Date.now()}
+  };
+  await m.save(1,3,1690,'playing',130);
   assert.equal(m.local.kinoSeriesEpisodeProgressV1['series:404900:1:3'].completed,false);
-  await m.save(1,3,1620,'playing',90);
+  await m.save(1,3,1799,'ended',130);
   assert.equal(m.local.kinoSeriesEpisodeProgressV1['series:404900:1:3'].completed,true);
   m.select(1,4);
-  await m.save(1,4,100,'playing',90);
+  await m.save(1,4,120,'playing',130);
   assert.equal(m.local.kinoSeriesEpisodeProgressV1['series:404900:1:4'].completed,false);
 });
 
-test('jumping to end of an episode without verified playback remains incomplete',async()=>{
+test('episode reaching credits after seek is not completed',async()=>{
   const m=mock();
-  await m.save(1,3,1730,'seeked',120);
+  await m.save(1,3,1740,'seeked',130);
+  await m.save(1,3,1799,'ended',130);
   assert.equal(m.local.kinoSeriesEpisodeProgressV1['series:404900:1:3'].completed,false);
-  await m.save(1,3,1730,'playing',20);
-  assert.equal(m.local.kinoSeriesEpisodeProgressV1['series:404900:1:3'].completed,false);
-  await m.save(1,3,1730,'pause',70);
-  assert.equal(m.local.kinoSeriesEpisodeProgressV1['series:404900:1:3'].completed,true);
 });
