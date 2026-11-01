@@ -54,7 +54,8 @@
     // Re-scan old profiles: historical rating-only cursors lack watched data.
     return {
       profileId:id, state:'loading', watchedVersion:1,
-      scanId:scanId(), watchedSsrPages:0,
+      scanId:scanId(), watchedSsrPages:0, votesSsrPages:0,
+      scanStartedAt:Date.now(),
       nextPage:1, pagesDone:0, totalPages:null,
       importedVotes:Number(old.votes)||0, importedWatched:0,
       failures:0,nextAt:Date.now()+1000,
@@ -145,7 +146,8 @@
       if(job.state==='completed') {
         job=await saveJob({...job,state:'loading',nextPage:1,
           pagesDone:0,totalPages:null,previousFingerprint:'',
-          scanId:scanId(),watchedSsrPages:0,
+          scanId:scanId(),watchedSsrPages:0,votesSsrPages:0,
+          scanStartedAt:Date.now(),
           failures:0,message:'Проверяем обновления оценок и просмотров'});
       }
       try {
@@ -195,7 +197,8 @@
              !Number.isInteger(item.rating) ||
              item.rating<1 || item.rating>10) continue;
           account[item.type+':'+item.id]={
-            rating:item.rating,source:'kinopoisk-profile',updatedAt:Date.now()
+            rating:item.rating,source:'kinopoisk-profile',
+            seenScanId:job.scanId,updatedAt:Date.now()
           };
           received++;
         }
@@ -225,19 +228,32 @@
           ? parsed.lastPage : null;
         const total=Math.max(job.totalPages||0,known||0)||null;
         const page=job.nextPage;
+        const completed=Boolean(total && page>=total);
+        const watchedSsrPages=(job.watchedSsrPages||0)+(parsed.source==='ssr'?1:0);
+        const votesSsrPages=(job.votesSsrPages||0)+(parsed.source==='ssr'?1:0);
+        // Only a *complete*, fully parsed SSR scan can prove that an old
+        // profile rating was removed. Protect entries changed after scan start.
+        if(completed && job.scanStartedAt &&
+           votesSsrPages===job.pagesDone+1){
+          for(const [key,entry] of Object.entries(account)){
+            if(entry?.seenScanId!==job.scanId &&
+               Number(entry?.updatedAt||0)<job.scanStartedAt)
+              delete account[key];
+          }
+        }
         const votes=Object.values(account)
           .filter(v=>Number.isInteger(v?.rating)&&v.rating>=1&&v.rating<=10).length;
         legacy[job.profileId]={
           ...previous,visitedPages:visited,pages:visited.length,
           nextPage:page+1,lastPage:total,votes,updatedAt:Date.now()
         };
-        const completed=Boolean(total && page>=total);
-        const watchedSsrPages=(job.watchedSsrPages||0)+(parsed.source==='ssr'?1:0);
         // Prune removed watched marks only after a complete SSR-backed scan.
         // If the page format falls back to HTML, preserve old marks instead.
         if(completed && watchedSsrPages===job.pagesDone+1) {
           for(const [key,entry] of Object.entries(watchedAccount)) {
-            if(entry?.seenScanId!==job.scanId)delete watchedAccount[key];
+            if(entry?.seenScanId!==job.scanId &&
+               Number(entry?.updatedAt||0)<Number(job.scanStartedAt||0))
+              delete watchedAccount[key];
           }
         }
         watchedProfiles[job.profileId]=watchedAccount;
@@ -247,7 +263,7 @@
           ...job,state:completed?'completed':'loading',
           nextPage:page+1,pagesDone:job.pagesDone+1,
           totalPages:total,importedVotes:votes,importedWatched:watchedCount,
-          watchedVersion:1,watchedSsrPages,
+          watchedVersion:1,watchedSsrPages,votesSsrPages,
           failures:0,nextAt,previousFingerprint:fingerprint,
           message:completed?
             'Оценки и просмотры синхронизированы. Обновление раз в сутки.'
@@ -307,11 +323,13 @@
       const watchedScoped={...safeObj(watched[id])};
       let changed=0;
       const now=Date.now();
+      const votedKeys=new Set();
       for(const vote of parsed.votes){
         if(!['film','series'].includes(vote?.type) ||
            !PROFILE.test(String(vote.id)) ||
            !Number.isInteger(vote.rating)||vote.rating<1||vote.rating>10)continue;
         const key=vote.type+':'+vote.id;
+        votedKeys.add(key);
         if(scoped[key]?.rating!==vote.rating){
           scoped[key]={rating:vote.rating,source:'kinopoisk-profile',
             updatedAt:now};
@@ -322,6 +340,11 @@
         if(!['film','series'].includes(item?.type)||
            !PROFILE.test(String(item.id)))continue;
         const key=item.type+':'+item.id;
+        // A rated title can later become watched-only if the user removes
+        // their vote directly on Kinopoisk.
+        if(parsed.source==='ssr'&&!votedKeys.has(key)&&scoped[key]){
+          delete scoped[key];changed++;
+        }
         if(!watchedScoped[key]?.watched) {
           watchedScoped[key]={watched:true,
             genres:Array.isArray(item.genres)?
@@ -331,7 +354,10 @@
         }
       }
       const nextJob={...freshJob,lastMinuteSyncAt:now,
-        lastMinuteSyncChanges:changed};
+        lastMinuteSyncChanges:changed,
+        importedVotes:Object.values(scoped).filter(v=>
+          Number.isInteger(v?.rating)&&v.rating>=1&&v.rating<=10).length,
+        importedWatched:Object.keys(watchedScoped).length};
       const updates={[JOB]:nextJob};
       if(changed){
         ratings[id]=scoped;watched[id]=watchedScoped;
