@@ -12,7 +12,7 @@
   const valid = value => value && typeof value === 'object' && !Array.isArray(value);
   const num = value => Number.isFinite(value) && value >= 0 ? value : 0;
   function summarize({ films = {}, episodes = {}, library = {}, watchTime = {}, genres = {},
-    ratings = {}, profileId = '' } = {}) {
+    ratings = {}, watched = {}, profileId = '' } = {}) {
     const filmMap = new Map(), seriesMap = new Map();
     let finishedFilms = 0, unfinishedFilms = 0, finishedEpisodes = 0;
     for (const [key, entry] of Object.entries(valid(films) ? films : {})) {
@@ -52,14 +52,36 @@
         if (record.completed) completedEpisodeKeys.add(key);
       }
     }
+    const localFinishedKeys=new Set([...filmMap.entries()]
+      .filter(([,entry])=>entry.completed).map(([key])=>key));
+    const localSeriesCount=seriesMap.size;
+    const kpWatchedFilms=new Set(),kpWatchedSeries=new Set();
+    for(const [key,entry] of Object.entries(valid(watched)?watched:{})) {
+      if(!entry || entry.watched!==true || identity(key)!==key)continue;
+      if(key.startsWith('film:')) {
+        kpWatchedFilms.add(key);
+        const earlier=filmMap.get(key);
+        filmMap.set(key, {...(earlier||{}),completed:true});
+      } else {
+        kpWatchedSeries.add(key);
+        seriesMap.set(key,true);
+      }
+    }
     // A provider may expose a verified series under /film/<id>. If both
     // identities exist for the same Kinopoisk ID, series evidence wins.
     for (const seriesKey of seriesMap.keys()) {
       filmMap.delete('film:' + seriesKey.slice(7));
     }
+    // Deduplicate by Kinopoisk ID across both sources; a vote alone
+    // never enters filmMap and cannot indicate a completed watch.
     finishedFilms = [...filmMap.values()].filter(e=>e.completed).length;
     unfinishedFilms = filmMap.size - finishedFilms;
     finishedEpisodes = completedEpisodeKeys.size;
+    const kpFilmCount=[...kpWatchedFilms].filter(key=>filmMap.has(key)).length;
+    const kpSeriesCount=kpWatchedSeries.size;
+    const localFilmCount=[...localFinishedKeys].filter(key=>filmMap.has(key)).length;
+    const filmOverlap=[...kpWatchedFilms]
+      .filter(key=>localFinishedKeys.has(key)&&filmMap.has(key)).length;
     let filmSeconds = 0, seriesSeconds = 0;
     for (const [key, entry] of Object.entries(valid(watchTime) ? watchTime : {})) {
       if (!identity(key)) continue;
@@ -96,7 +118,13 @@
     let taggedTitles = 0;
     const eligible = new Set([...filmMap.keys(), ...seriesMap.keys()]);
     const genreTitles = new Set();
-    for (const [key, entry] of Object.entries(valid(genres) ? genres : {})) {
+    // Use verified profile genres where available; local metadata takes
+    // precedence only when it has a usable genre list.
+    const genreSources={...(valid(watched)?watched:{})};
+    for(const [key,entry] of Object.entries(valid(genres)?genres:{})) {
+      if(Array.isArray(entry?.genres)&&entry.genres.length)genreSources[key]=entry;
+    }
+    for (const [key, entry] of Object.entries(genreSources)) {
       // Some providers present series on /film/<id>; reuse the same
       // Kinopoisk ID's genre metadata without counting a title twice.
       const alias = /^film:([1-9]\d{0,12})$/.exec(key);
@@ -126,8 +154,9 @@
       finishedFilms, unfinishedFilms,
       startedSeries: seriesMap.size, finishedEpisodes,
       startedEpisodes: seenEpisodes.size,
-      // Without verified full episode totals, "fully watched series" is unknown.
-      completedSeries: null,
+      // A provider-level Watched mark is distinct from local episode completion.
+      completedSeries: kpSeriesCount,
+      kpFilmCount, kpSeriesCount, localFilmCount, localSeriesCount, filmOverlap,
       filmSeconds, seriesSeconds,
       totalSeconds: filmSeconds + seriesSeconds,
       ratingsCount: rated.length,
