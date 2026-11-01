@@ -23,6 +23,7 @@
   let lastTick = 0;
   let movingSamples = 0;
   let watchedSeconds = 0;
+  let pendingRanges = [];
   // crypto.randomUUID exists on HTTPS players; deterministic test realms may
   // not expose crypto, so provide a temporary fallback scoped to this script.
   const newStatsTrackingId = () => globalThis.crypto?.randomUUID?.() ||
@@ -86,6 +87,7 @@
     lastTick = 0;
     movingSamples = 0;
     watchedSeconds = 0;
+    pendingRanges = [];
     statsTrackingId = newStatsTrackingId();
     lastSent = 0;
   }
@@ -151,6 +153,7 @@
     if (!latest || latest.key !== choice.key) return;
     // No URLs, iframe tokens, or video sources are included in messages.
     lastSent = Date.now();
+    pendingRanges = [];
     try {
       chrome.runtime.sendMessage({
         action: 'kinoSeriesEpisodeProgress',
@@ -159,6 +162,8 @@
           currentTime: Math.round(video.currentTime * 10)/10,
           duration: Math.round(video.duration * 10)/10,
           playedSeconds: Math.floor(watchedSeconds),
+          // Intervals are bound to the verified season and episode selection.
+          watchedRanges: pendingRanges.map(range => [...range]),
           statsTrackingId,
           event: eventType
         }
@@ -180,6 +185,16 @@
     if (moving) {
       movingSamples++;
       watchedSeconds += Math.min(dt/rate, 5);
+      const start = Math.max(0, lastTime);
+      const end = Math.min(video.duration, current);
+      if (end > start) {
+        const last = pendingRanges[pendingRanges.length - 1];
+        if (last && start >= last[0] && start <= last[1] + 0.35) {
+          last[1] = Math.max(last[1], end);
+        } else if (pendingRanges.length < 64) {
+          pendingRanges.push([start,end]);
+        }
+      }
     }
     lastTime = current;
     lastTick = now;
