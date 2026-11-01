@@ -47,7 +47,7 @@
       !html.includes('UserMovieReactions'))throw Error('Кинопоиск запросил проверку браузера');
    const data=ssr(html);
    const state=data?.apolloState||data?.props?.pageProps?.apolloState;
-   const entries=new Map();let recognized=0;
+   const entries=new Map();let recognized=0,verifiedEmpty=false;
    if(isObj(state)){
      // Avoid interpreting recommendation cards as owned planned-to-watch entries.
      const lists=[],visited=new Set();
@@ -65,8 +65,12 @@
        for(const [key,v] of Object.entries(obj)){
          if(!v||typeof v!=='object')continue;
          if(key.startsWith('Movie:'))continue;
-         if((key.includes('movieReactions')||key.includes('planned'))&&
-           Array.isArray(deref(state,v)?.items))lists.push(deref(state,v).items);
+         if((key.includes('movieReactions')||key.toLowerCase().includes('planned'))&&
+           Array.isArray(deref(state,v)?.items)){
+           const items=deref(state,v).items;
+           if(items.length===0)verifiedEmpty=true;
+           lists.push(items);
+         }
          else if(depth<4)walk(v,depth+1);
        }
      }
@@ -107,9 +111,9 @@
    }else for(const m of html.matchAll(/[?&]page=(\d+)/g)){
      const n=Number(m[1]);if(n>=1&&n<=20000)pages.push(n);
    }
-   return {items:[...entries.values()],recognized,
+   return {items:[...entries.values()],recognized,verifiedEmpty,
      lastPage:pages.length?Math.max(page,...pages):null,
-     source:recognized?'listing':'empty'};
+     source:recognized?'listing':verifiedEmpty?'verified-empty':'empty'};
  }
  return {parsePage};
 });
