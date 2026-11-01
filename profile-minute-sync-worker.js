@@ -30,7 +30,10 @@
       const saved=obj((await chrome.storage.local.get(STATUS))[STATUS]);
       if(saved.authRetryAt>now)return {ok:false,skipped:'authentication-backoff'};
       let identity;
-      try{identity=await self.KinoStatsAccount.detect();}
+      // One fresh account check per minute is shared by both importers.
+      // UI opens/reopens reuse this result from chrome.storage.session.
+      try{identity=await self.KinoStatsAccount.detect(
+        undefined,{force:true});}
       catch(error){
         const failure=nextFailure(saved.authFailures);
         await chrome.storage.local.set({[STATUS]:{
