@@ -122,3 +122,15 @@ test('remove API never toggles a missing title back into planned list',async()=>
     .every(c=>c.payload.desired===false));
   assert.equal(env.nodes.watchlistCount.textContent,'0');
 });
+
+
+test('unchanged background profile refresh keeps existing list rows',async()=>{
+ const env=setup();
+ await ready(env);
+ const row=env.nodes.watchlistItems.children[0];
+ await env.api.refreshProfile(true);
+ assert.equal(env.nodes.watchlistItems.children[0],row);
+ // A real removal is still applied immediately after server confirmation.
+ assert.equal(await env.api.removeFromList(env.movie),true);
+ assert.equal(env.nodes.watchlistItems.children.length,0);
+});
