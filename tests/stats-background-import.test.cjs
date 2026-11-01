@@ -10,9 +10,10 @@ function html(page,total=23) {
     ROOT_QUERY:{movieReactions:{__ref:'List'}},
     List:{items:[{__ref:'Entry'}]},
     Entry:{__typename:'UserMovieReactions',movie:{__ref:'Movie'},
-      reactions:[{__ref:'Vote'}]},
-    Movie:{id:100+page,__typename:'Film'},
-    Vote:{__typename:'Vote',value:(page%10)+1}
+      reactions:[{__ref:'Vote'},{__ref:'Watched'}]},
+    Movie:{id:100+page,__typename:'Film',genres:[{name:'драма'}]},
+    Vote:{__typename:'Vote',value:(page%10)+1},
+    Watched:{__typename:'Watched'}
   }};
   return '<html><a href="?page='+total+'">'+total+'</a><script>'+
     'window.Ya.__ssr_initial_data = '+JSON.stringify(state)+
@@ -96,6 +97,8 @@ test('all 23 pages import in background, retry after HTTP 503',async()=>{
   assert.equal(job.pagesDone,23);
   assert.equal(job.totalPages,23);
   assert.equal(Object.keys(env.data.kinoStatsRatingsV1['1234567']).length,23);
+  assert.equal(Object.keys(env.data.kinoStatsWatchedV1['1234567']).length,23);
+  assert.equal(job.importedWatched,23);
   assert.equal(env.data.kinoStatsWatchTimeV1,undefined);
   assert.equal(env.data.kinoStatsLibraryV1,undefined);
 });
@@ -126,4 +129,20 @@ test('reopening popup preserves queued job rather than rescheduling page one',as
   const before=env.data.kinoStatsImportJobV2.nextPage;
   assert.equal((await env.ensure()).ok,true);
   assert.equal(env.data.kinoStatsImportJobV2.nextPage,before);
+});
+
+
+test('upgrading a finished ratings-only job restarts its watched scan from page one',async()=>{
+  const env=simulate({data:{
+    kinoStatsImportJobV2:{
+      profileId:'1234567',state:'completed',nextPage:21,
+      pagesDone:20,totalPages:20,importedVotes:209,nextAt:Date.now()+86400000
+    }
+  }});
+  const response=await env.ensure();
+  assert.equal(response.ok,true);
+  assert.equal(env.data.kinoStatsImportJobV2.nextPage,1);
+  assert.equal(env.data.kinoStatsImportJobV2.watchedVersion,1);
+  await env.tick();
+  assert.equal(Object.keys(env.data.kinoStatsWatchedV1['1234567']).length,1);
 });
