@@ -317,7 +317,9 @@
         !Number.isInteger(n) || n < 1 || n > 10) return;
     // A confirmed movie vote alone does not identify the current user.
     // Verify the *own* profile before associating the rating with an account.
-    const detected = await window.KinoStatsAccount?.detect();
+    // A rating write must be attributed to a freshly verified account.
+    const detected = await window.KinoStatsAccount?.detect(
+      undefined,{force:true});
     // Do not write a vote to another profile if the user switched accounts
     // while an explicit batch sync was running.
     if (expectedAccountId && (detected?.status !== 'logged-in' ||
@@ -366,15 +368,23 @@
     if (!force && now - lastAccountCheck < 45000) return;
     lastAccountCheck = now;
     const seq = ++authReadSequence;
-    authState = 'checking';
-    verifiedAccountId = '';
+    const previousProfileId=verifiedAccountId;
+    // Retain already rendered statistics while a background cache lookup
+    // runs; opening this screen must not blank the verified profile.
+    const preserveCurrent=!force&&authState==='logged-in'&&
+      Boolean(previousProfileId);
     const status = els('statsAccountStatus');
     const refresh = els('statsAccountRefresh');
-    status.textContent = 'Проверяем авторизацию на Кинопоиске…';
+    if(!preserveCurrent){
+      authState='checking';
+      verifiedAccountId='';
+      status.textContent='Проверяем авторизацию на Кинопоиске…';
+      await reload();
+    }
     refresh.disabled = true;
-     await reload();
     try {
-      const response = await window.KinoStatsAccount.detect();
+      const response = await window.KinoStatsAccount.detect(
+        undefined,{force});
       if (seq !== authReadSequence) return;
       if (response.status === 'logged-in') {
         verifiedAccountId = response.id;
@@ -437,7 +447,7 @@
         settings.setAttribute('aria-label','Открыть настройки');
         settings.setAttribute('aria-pressed','false');
       }
-      void checkAccount(true);
+      void checkAccount(false);
     }
   }
 
