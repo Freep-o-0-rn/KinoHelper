@@ -236,3 +236,45 @@ test('resuming protects the previous checkpoint until the player confirms a seek
   assert.equal(next.ok, true);
   assert.equal(data.kinoPlaybackProgressV1['film:447301'].position, 172);
 });
+
+
+test('90% of a film completes during playback without waiting for end credits',async()=>{
+  const {api,data}=makeBackground();
+  const sender={id:'kino-test',tab:{id:7},
+    url:'https://theatre.stravers.live/player'};
+  const duration=6989;
+  const send=(position,played,event='playing')=>api.saveResumeProgress({
+    currentTime:position,duration,playedSeconds:played,event
+  },sender);
+  await send(Math.ceil(duration*0.9)-1,130);
+  assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,false);
+  await send(Math.ceil(duration*0.9),130);
+  assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,true);
+  assert.equal(data.kinoPlaybackProgressV1['film:447301'].position,
+    Math.ceil(duration*0.9));
+});
+
+test('seeking to credits alone does not count as completing a film',async()=>{
+  const {api,data}=makeBackground();
+  const sender={id:'kino-test',tab:{id:7},
+    url:'https://theatre.stravers.live/player'};
+  const send=(position,played,event='playing')=>api.saveResumeProgress({
+    currentTime:position,duration:6989,playedSeconds:played,event
+  },sender);
+  await send(6700,240,'seeked');
+  assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,false);
+  await send(6701,20,'playing');
+  assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,false);
+  await send(6703,121,'pause');
+  assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,true);
+});
+
+test('explicit video end still completes short films as before',async()=>{
+  const {api,data}=makeBackground();
+  const sender={id:'kino-test',tab:{id:7},
+    url:'https://theatre.stravers.live/player'};
+  await api.saveResumeProgress({
+    currentTime:599,duration:600,playedSeconds:30,event:'ended'
+  },sender);
+  assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,true);
+});
