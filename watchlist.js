@@ -426,7 +426,8 @@
         lastAuthCheck=Date.now();
         const sequence=++authCheckId;
         let result;
-        try {result=await window.KinoStatsAccount.detect();}
+        try {result=await window.KinoStatsAccount.detect(
+            undefined,{force});}
         catch {result=null;}
         if(sequence!==authCheckId)return;
         const newId=result?.status==='logged-in'?String(result.id):'';
@@ -740,7 +741,7 @@
                 if(changes[SYNC_JOB]||changes[AUTO_REMOVE])
                     void showSyncJob();
             });
-        void refreshProfile(true);
+        void refreshProfile(false);
         // Вторая открытая панель/окно использует то же хранилище расширения.
         window.addEventListener('storage', event => {
             if (event.key === STORAGE_KEY) refresh();
@@ -750,7 +751,7 @@
         });
         window.addEventListener('focus', () => {
             refresh();
-            void refreshProfile(true);
+            void refreshProfile(false);
         });
         refresh();
     }
