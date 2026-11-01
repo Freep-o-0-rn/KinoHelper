@@ -109,7 +109,8 @@
         const gapPx = separateSegments && visibleSegments > 1
           ? Math.min(1.9, portion * circumference * 0.24) : 0;
         makeCircle(row.color, portion, offset,
-          row.name + ': ' + row.valueLabel + ' (' + pct + '%)',true, gapPx);
+          row.tooltipLabel || (row.name + ': ' + row.valueLabel + ' (' + pct + '%)'),
+          true, gapPx);
         offset += portion;
       }
     }
@@ -118,6 +119,7 @@
   }
 
   function makeLegend(container, data, { showZeros = false } = {}) {
+    const previousScroll = container.scrollTop;
     container.replaceChildren();
     for (const row of data) {
       if (!row.value && !showZeros) continue;
@@ -128,20 +130,31 @@
       dot.style.background = row.color;
       const text = document.createElement('span');
       text.textContent = row.name;
-      text.title = row.name;
+      text.title = row.tooltipLabel || row.name;
       const value = document.createElement('b');
       value.textContent = row.valueLabel;
       line.append(dot,text,value);
       container.appendChild(line);
     }
+    // Avoid jumping back to the first genre during background sync updates.
+    if (Number.isFinite(previousScroll)) container.scrollTop = previousScroll;
   }
 
   function genreRows(model) {
     const total = model.genreRows.reduce((n,r)=>n+r.count,0);
-    return model.genreRows.map(row => ({
-      value: row.count, name: row.name, color: row.color,
-      valueLabel: total ? Math.round(row.count / total * 100) + '%' : '—'
-    }));
+    return model.genreRows.map(row => {
+      const percent = total ? row.count / total * 100 : 0;
+      // Keep uncommon genres visible instead of rounding their share to 0%.
+      const share = !total ? '—' : percent < 0.1 ? '<0,1%'
+        : percent >= 10 ? Math.round(percent) + '%'
+        : percent.toFixed(1).replace('.', ',') + '%';
+      return {
+        value:row.count, name:row.name, color:row.color,
+        valueLabel:share,
+        tooltipLabel:row.name + ': ' + row.count +
+          ' произведений (' + share + ')'
+      };
+    });
   }
   function render(model) {
     const films = [
@@ -194,7 +207,8 @@
         sub:genres[0]?.name || 'Нет данных'});
     makeLegend(els('statsGenresLegend'),genres);
     els('statsGenresNote').textContent = model.taggedTitles
-      ? 'Жанры ' + model.taggedTitles + ' произведений.'
+      ? 'Жанры ' + model.taggedTitles + ' произведений · ' +
+        genres.length + ' жанров. Проценты — доля от всех жанровых отметок.'
       : 'Жанры появятся после загрузки фильмов.';
 
     const ratings = model.buckets.map(x=>({
