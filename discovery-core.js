@@ -77,11 +77,12 @@
       if(!m||seen.has(k)||dedupe.has(k))return false;
       dedupe.add(k);return true;
     });
+    const newsCandidates=normalize(newReleases,'new');
     const rec=normalize(recommended,'for-you');
     const now=new Date(),today=now.toISOString().slice(0,10);
     const minDate=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()-5,
       now.getUTCDate())).toISOString().slice(0,10);
-    const news=normalize(newReleases,'new')
+    const news=newsCandidates
       .filter(m=>m.releaseDate&&m.releaseDate>=minDate&&m.releaseDate<=today)
       .sort((a,b)=>b.releaseDate.localeCompare(a.releaseDate));
     // A popular film is NOT a personal recommendation without evidence
