@@ -341,9 +341,22 @@
     const fetched=await Promise.allSettled([fetchCatalog('popular'),fetchCatalog('new')]);
     const rawPopular=fetched[0].status==='fulfilled'?fetched[0].value:(saved?.popular||[]);
     const rawNew=fetched[1].status==='fulfilled'?fetched[1].value:(saved?.new||[]);
+    // Check up-to-date popular films too, not just the editorial yearly
+    // list: a recent October premiere may not be among its first entries.
+    const currentYear=new Date().getFullYear();
+    const candidates=[],candidateIds=new Set();
+    for(const film of [
+      ...rawPopular.filter(x=>x.year>=currentYear-1).slice(0,12),
+      ...rawNew
+    ]){
+      if(candidateIds.has(film.id))continue;
+      candidateIds.add(film.id);candidates.push(film);
+    }
     const [popular,news]=await Promise.all([
       fetched[0].status==='fulfilled'?enrichCatalog(rawPopular,'popular'):rawPopular,
-      fetched[1].status==='fulfilled'?enrichCatalog(rawNew,'new'):rawNew
+      (fetched[0].status==='fulfilled'||fetched[1].status==='fulfilled')
+        ?enrichCatalog(candidates,'new')
+        :(saved?.new||[])
     ]);
     const fresh={popular,new:news};
     if(!fresh.popular.length&&!fresh.new.length){
