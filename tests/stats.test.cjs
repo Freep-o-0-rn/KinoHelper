@@ -24,7 +24,7 @@ test('movies and series episodes remain separate and unique', () => {
   assert.equal(data.startedSeries,1);
   assert.equal(data.startedEpisodes,2);
   assert.equal(data.finishedEpisodes,1);
-  assert.equal(data.completedSeries,null,'unknown total episodes must not imply series complete');
+  assert.equal(data.completedSeries,0,'episodes alone must not create a Kinopoisk watched mark');
 });
 
 test('historical catalog retains completion after checkpoint eviction or rewatch', () => {
