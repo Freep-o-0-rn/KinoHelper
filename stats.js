@@ -446,7 +446,13 @@
   els('statsAccountRefresh').addEventListener('click',()=>void checkAccount(true));
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !currentlyOpen) return;
-    if (KEYS.some(key => changes[key])) void reload();
+    // The import cursor changes more often than the actual statistics.
+    // Updating the progress label must not rebuild every donut and legend.
+    const dataChanged=KEYS.some(key=>
+      key!=='kinoStatsImportJobV2' && changes[key]);
+    if(dataChanged)void reload();
+    else if(changes.kinoStatsImportJobV2)
+      updateImportProgress(changes.kinoStatsImportJobV2.newValue);
   });
   window.addEventListener('focus',()=>{
     if (currentlyOpen) void checkAccount(false);
