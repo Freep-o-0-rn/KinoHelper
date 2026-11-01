@@ -89,6 +89,11 @@ test('progress is stored by Kinopoisk film ID, not tab ID or a secret player URL
   await send(95, 'hidden', 45);
   assert.equal(data.kinoPlaybackProgressV1['film:447301'].position, 95);
 
+  // Existing verified coverage from an earlier session allows the real
+  // video-ended event to finish without replaying the opening.
+  data.kinoPlaybackCoverageV1={
+    'film:447301':{duration:6722,ranges:[[0,5800]],updatedAt:Date.now()}
+  };
   await send(6722, 'ended', 90);
   assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed, true);
   await send(6720, 'pagehide', 90);
@@ -238,43 +243,51 @@ test('resuming protects the previous checkpoint until the player confirms a seek
 });
 
 
-test('90% of a film completes during playback without waiting for end credits',async()=>{
-  const {api,data}=makeBackground();
-  const sender={id:'kino-test',tab:{id:7},
-    url:'https://theatre.stravers.live/player'};
-  const duration=6989;
-  const send=(position,played,event='playing')=>api.saveResumeProgress({
-    currentTime:position,duration,playedSeconds:played,event
-  },sender);
-  await send(Math.ceil(duration*0.9)-1,130);
-  assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,false);
-  await send(Math.ceil(duration*0.9),130);
-  assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,true);
-  assert.equal(data.kinoPlaybackProgressV1['film:447301'].position,
-    Math.ceil(duration*0.9));
-});
 
-test('seeking to credits alone does not count as completing a film',async()=>{
-  const {api,data}=makeBackground();
-  const sender={id:'kino-test',tab:{id:7},
-    url:'https://theatre.stravers.live/player'};
-  const send=(position,played,event='playing')=>api.saveResumeProgress({
-    currentTime:position,duration:6989,playedSeconds:played,event
-  },sender);
-  await send(6700,240,'seeked');
-  assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,false);
-  await send(6701,20,'playing');
-  assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,false);
-  await send(6703,121,'pause');
-  assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,true);
-});
-
-test('explicit video end still completes short films as before',async()=>{
+test('94% timeline does not complete without 85% unique viewed coverage',async()=>{
   const {api,data}=makeBackground();
   const sender={id:'kino-test',tab:{id:7},
     url:'https://theatre.stravers.live/player'};
   await api.saveResumeProgress({
-    currentTime:599,duration:600,playedSeconds:30,event:'ended'
+    currentTime:6580,duration:6989,playedSeconds:140,event:'playing',
+    watchedRanges:[[6550,6555]]
   },sender);
-  assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,true);
+  assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,false);
+  assert.ok(data.kinoPlaybackCoverageV1['film:447301'].ranges.length===1);
+});
+
+test('verified repeated intervals are counted once, even across sessions',async()=>{
+  const {api,data}=makeBackground();
+  const sender={id:'kino-test',tab:{id:7},
+    url:'https://theatre.stravers.live/player'};
+  const send=(a,b,event='playing')=>api.saveResumeProgress({
+    currentTime:b,duration:600,playedSeconds:120,event,
+    watchedRanges:[[a,b]]
+  },sender);
+  for(let start=0;start<300;start+=5)await send(start,start+5);
+  for(let start=0;start<300;start+=5)await send(start,start+5);
+  const covered=data.kinoPlaybackCoverageV1['film:447301'].ranges;
+  assert.equal(covered.length,1);
+  assert.equal(covered[0][1]-covered[0][0],300);
+  assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,false);
+  for(let start=300;start<510;start+=5)await send(start,start+5);
+  assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,false,
+    '85% only grants eligibility, not automatic completion');
+  await send(510,515,'ended');
+  assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,true,
+    'confirmed video end with 85% unique coverage completes');
+});
+
+test('seeking to credits followed by ended cannot finish with insufficient coverage',async()=>{
+  const {api,data}=makeBackground();
+  const sender={id:'kino-test',tab:{id:7},
+    url:'https://theatre.stravers.live/player'};
+  await api.saveResumeProgress({
+    currentTime:590,duration:600,playedSeconds:140,event:'seeked'
+  },sender);
+  await api.saveResumeProgress({
+    currentTime:600,duration:600,playedSeconds:140,event:'ended',
+    watchedRanges:[[590,600]]
+  },sender);
+  assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,false);
 });
