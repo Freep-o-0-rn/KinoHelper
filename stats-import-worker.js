@@ -6,6 +6,7 @@
   const ALARM='kinoStatsFullImportV1';
   const JOB='kinoStatsImportJobV2';
   const RATINGS='kinoStatsRatingsV1';
+  const WATCHED='kinoStatsWatchedV1';
   const LEGACY='kinoStatsProfileImportV1';
   // Chrome may delay alarms; 30 seconds is the conservative MV3 cadence.
   const PAGE_DELAY=30 * 1000;
@@ -47,22 +48,17 @@
     if (!response?.ok) throw Error(response?.error||'Parser not available');
     return response.result;
   }
+  const scanId=()=>String(Date.now())+'-'+Math.random().toString(36).slice(2,8);
   function makeJob(id,legacy) {
     const old=safeObj(legacy);
-    const next=Number.isSafeInteger(old.nextPage)&&old.nextPage>=1
-      ? old.nextPage : 1;
-    const total=Number.isSafeInteger(old.lastPage)&&old.lastPage>=1
-      ? old.lastPage : null;
-    const done=Array.isArray(old.visitedPages)
-      ? old.visitedPages.filter(Number.isSafeInteger).length
-      : Number(old.pages)||0;
-    const completed=Boolean(total&&next>total);
+    // Re-scan old profiles: historical rating-only cursors lack watched data.
     return {
-      profileId:id, state:completed?'completed':'loading',
-      nextPage:next, pagesDone:done, totalPages:total,
-      importedVotes:Number(old.votes)||0, failures:0,
-      nextAt:Date.now()+(completed?REFRESH_DELAY:1000),
-      message:completed?'Все обнаруженные страницы загружены':'Импорт продолжается',
+      profileId:id, state:'loading', watchedVersion:1,
+      scanId:scanId(), watchedSsrPages:0,
+      nextPage:1, pagesDone:0, totalPages:null,
+      importedVotes:Number(old.votes)||0, importedWatched:0,
+      failures:0,nextAt:Date.now()+1000,
+      message:'Загружаем оценки и отметки просмотров',
       previousFingerprint:''
     };
   }
@@ -70,6 +66,11 @@
     if (!PROFILE.test(String(id)))return {ok:false,error:'invalid account ID'};
     const existing=await readJob();
     if (existing?.profileId===id) {
+      if(existing.watchedVersion!==1) {
+        const restarted=await saveJob(makeJob(id,{}));
+        await schedule(restarted.nextAt);
+        return {ok:true,job:restarted};
+      }
       // Don't replace an in-progress position when popup reopens.
       if (!['completed','loading','retry','paused'].includes(existing.state)) {
         const restarted=await saveJob({...existing,state:'loading',nextAt:Date.now()+1000});
@@ -142,7 +143,8 @@
       if(job.state==='completed') {
         job=await saveJob({...job,state:'loading',nextPage:1,
           pagesDone:0,totalPages:null,previousFingerprint:'',
-          failures:0,message:'Проверяем обновления оценок'});
+          scanId:scanId(),watchedSsrPages:0,
+          failures:0,message:'Проверяем обновления оценок и просмотров'});
       }
       try {
         const identity=await self.KinoStatsAccount.detect();
@@ -164,11 +166,14 @@
           message:'Загружаем страницу '+job.nextPage+
             (job.totalPages?' из '+job.totalPages:'')});
         const parsed=await fetchProfilePage(job);
-        if(!Array.isArray(parsed?.votes) || !parsed.votes.length &&
-            !parsed.recognized) {
+        if(!Array.isArray(parsed?.votes) || !Array.isArray(parsed?.watched) ||
+            (!parsed.votes.length && !parsed.watched.length && !parsed.recognized)) {
           throw Error('Страница не содержит распознанных записей профиля');
         }
-        const fingerprint=parsed.votes.map(v=>v.type+':'+v.id+':'+v.rating).join('|');
+        const fingerprint=JSON.stringify([
+          ...parsed.votes.map(v=>v.type+':'+v.id+':'+v.rating).sort(),
+          ...parsed.watched.map(v=>v.type+':'+v.id+':watched').sort()
+        ]);
         if(fingerprint && fingerprint===job.previousFingerprint) {
           throw Error('Кинопоиск повторил ту же страницу. Импорт приостановлен');
         }
@@ -176,8 +181,9 @@
         // was in flight. Never replace its active job with a stale write.
         const stillActive=await readJob();
         if(stillActive?.profileId!==job.profileId ||
-           stillActive.nextPage!==job.nextPage)return stillActive;
-        const snapshot=await chrome.storage.local.get([RATINGS,LEGACY]);
+           stillActive.nextPage!==job.nextPage ||
+           stillActive.scanId!==job.scanId)return stillActive;
+        const snapshot=await chrome.storage.local.get([RATINGS,LEGACY,WATCHED]);
         const all={...safeObj(snapshot[RATINGS])};
         const account={...safeObj(all[job.profileId])};
         let received=0;
@@ -192,6 +198,20 @@
           received++;
         }
         all[job.profileId]=account;
+        const watchedProfiles={...safeObj(snapshot[WATCHED])};
+        const watchedAccount={...safeObj(watchedProfiles[job.profileId])};
+        for(const item of parsed.watched) {
+          if(!['film','series'].includes(item?.type) ||
+             !PROFILE.test(String(item.id)))continue;
+          const key=item.type+':'+item.id;
+          const genres=Array.isArray(item.genres)
+            ? item.genres.filter(x=>typeof x==='string'&&x.length>=3&&x.length<=32)
+              .slice(0,12) : [];
+          watchedAccount[key]={
+            watched:true,genres,
+            source:'kinopoisk-profile',updatedAt:Date.now(),seenScanId:job.scanId
+          };
+        }
         const legacy={...safeObj(snapshot[LEGACY])};
         const previous=safeObj(legacy[job.profileId]);
         const visited=[...new Set([
@@ -210,20 +230,31 @@
           nextPage:page+1,lastPage:total,votes,updatedAt:Date.now()
         };
         const completed=Boolean(total && page>=total);
+        const watchedSsrPages=(job.watchedSsrPages||0)+(parsed.source==='ssr'?1:0);
+        // Prune removed watched marks only after a complete SSR-backed scan.
+        // If the page format falls back to HTML, preserve old marks instead.
+        if(completed && watchedSsrPages===job.pagesDone+1) {
+          for(const [key,entry] of Object.entries(watchedAccount)) {
+            if(entry?.seenScanId!==job.scanId)delete watchedAccount[key];
+          }
+        }
+        watchedProfiles[job.profileId]=watchedAccount;
+        const watchedCount=Object.keys(watchedAccount).length;
         const nextAt=Date.now()+(completed?REFRESH_DELAY:PAGE_DELAY);
         const nextJob={
           ...job,state:completed?'completed':'loading',
           nextPage:page+1,pagesDone:job.pagesDone+1,
-          totalPages:total,importedVotes:votes,
+          totalPages:total,importedVotes:votes,importedWatched:watchedCount,
+          watchedVersion:1,watchedSsrPages,
           failures:0,nextAt,previousFingerprint:fingerprint,
           message:completed?
-            'Все доступные страницы загружены. Обновления проверяются автоматически.'
-            :'Страница '+page+' загружена ('+received+' оценок); продолжаем'
+            'Оценки и просмотры синхронизированы. Обновление раз в сутки.'
+            :'Страница '+page+' загружена; продолжаем'
         };
         // Ratings, cursor and status must commit together; an alarm after
         // a service worker restart will never skip a page that was not saved.
         await chrome.storage.local.set({
-          [RATINGS]:all,[LEGACY]:legacy,
+          [RATINGS]:all,[WATCHED]:watchedProfiles,[LEGACY]:legacy,
           [JOB]:{...nextJob,updatedAt:Date.now()}
         });
         await schedule(nextAt);
