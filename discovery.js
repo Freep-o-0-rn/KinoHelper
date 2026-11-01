@@ -5,7 +5,8 @@
   const core=window.KinoDiscoveryCore;
   const box=document.getElementById('kinoDiscovery');
   if(!core||!box)return;
-  const CACHE='kinoDiscoveryCatalogV1',FACT_CACHE='kinoDiscoveryFactsV1';
+  const CACHE='kinoDiscoveryCatalogV1',FACT_CACHE='kinoDiscoveryFactsV1',
+    POSTER_CACHE='kinoDiscoveryPostersV1';
   const TTL=24*60*60*1000,STALE_TTL=14*24*60*60*1000;
   const RETRY_TTL=20*60*1000,FACT_TTL=7*24*60*60*1000,INTERVAL=5000;
   const $=id=>document.getElementById(id);
@@ -19,7 +20,7 @@
   let items=[],index=0,nextAt=Date.now()+INTERVAL,hovered=false;
   const imageCache=new Map(),detailsCache=new Map(),inFlight=new Set();
   const failedFacts=new Map();
-  let persistedFacts={};
+  let persistedFacts={},persistedPosters={};
   const factsPending=new Map();
 
   function validListResponse(response){
@@ -315,6 +316,16 @@
          /^data:image\/(?:png|jpe?g|webp);base64,/i.test(result.dataUrl)){
         imageCache.set(id,result.dataUrl);
         if(core.keyOf(items[index])===id)showImage(result.dataUrl);
+        // Session cache avoids repeated poster downloads when popup closes;
+        // keep binaries out of backups and long-term account storage.
+        if(chrome.storage.session&&result.dataUrl.length<=256000){
+          persistedPosters[id]={dataUrl:result.dataUrl,cachedAt:Date.now()};
+          const compact=Object.entries(persistedPosters)
+            .sort((a,b)=>b[1].cachedAt-a[1].cachedAt).slice(0,12);
+          persistedPosters=Object.fromEntries(compact);
+          try{await chrome.storage.session.set({[POSTER_CACHE]:persistedPosters});}
+          catch{/* Image remains available in memory. */}
+        }
       }
     }catch{/* A missing poster is a visual-only failure. */}
     finally{inFlight.delete(id);}
@@ -419,6 +430,21 @@
     box.hidden=false;
     title.textContent='Подбираем фильмы и сериалы…';
     const raw=await chrome.storage.local.get([CACHE,FACT_CACHE]);
+    if(chrome.storage.session){
+      try{
+        const saved=(await chrome.storage.session.get(POSTER_CACHE))[POSTER_CACHE];
+        if(saved&&typeof saved==='object'&&!Array.isArray(saved)){
+          for(const [id,item] of Object.entries(saved)){
+            if(!new RegExp('^(?:film|series):[1-9][0-9]{0,12}$').test(id)||
+              !item||Date.now()-Number(item.cachedAt||0)>STALE_TTL||
+              typeof item.dataUrl!=='string'||item.dataUrl.length>256000||
+              !new RegExp('^data:image/(?:png|jpe?g|webp);base64,','i').test(item.dataUrl))continue;
+            persistedPosters[id]=item;
+            imageCache.set(id,item.dataUrl);
+          }
+        }
+      }catch{}
+    }
     const stored=raw[CACHE],cached=stored&&typeof stored==='object'?stored:null;
     persistedFacts=raw[FACT_CACHE]&&typeof raw[FACT_CACHE]==='object'
       &&!Array.isArray(raw[FACT_CACHE])?raw[FACT_CACHE]:{};
