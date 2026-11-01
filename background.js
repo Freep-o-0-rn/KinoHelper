@@ -2402,11 +2402,14 @@ async function confirmCoveredPlayback(mediaKey, sender) {
     const entry=records[key];
     const coverage=coverageRaw[PLAYBACK_COVERAGE_KEY]?.[key];
     if(!entry || !Number.isFinite(entry.duration) ||
-       !coverage || Math.abs(entry.duration-coverage.duration)>
-          Math.max(10,entry.duration*0.015))
-      return {ok:false,error:'Нет подтверждённого прогресса просмотра'};
+       entry.duration<60 || entry.duration>28800)
+      return {ok:false,error:'Нет сохранённого прогресса просмотра'};
+    const validCoverage=coverage &&
+      Number.isFinite(coverage.duration) &&
+      Math.abs(entry.duration-coverage.duration)<=
+        Math.max(10,entry.duration*0.015);
     const ranges=unionPlaybackRanges(
-      Array.isArray(coverage.ranges)?coverage.ranges.filter(range=>
+      validCoverage&&Array.isArray(coverage.ranges)?coverage.ranges.filter(range=>
         Array.isArray(range)&&range.length===2&&
         range.every(Number.isFinite)&&range[0]>=0&&
         range[1]<=entry.duration&&range[1]>range[0]):[]
