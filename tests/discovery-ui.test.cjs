@@ -62,9 +62,61 @@ function setup(options={}){
    return Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,data[k]]));
  },async set(values){Object.assign(data,values);}}},runtime:{async sendMessage(){return {ok:false}}}};
  const localStorage={getItem:()=> '[]'};
- const fetch=async url=>{fetches++;urls.push(String(url));throw Error('fetch unavailable')};
+ const fetch=async url=>{
+  fetches++;urls.push(String(url));
+  if(!options.catalogData)throw Error('fetch unavailable');
+  const path=String(url);
+  let source='';
+  if(path.includes('/popular-series/year--'))source='seriesNew';
+  else if(path.includes('/popular/year--'))source='filmsNew';
+  else if(path.includes('/popular-series/'))source='seriesPopular';
+  else if(path.includes('/popular/'))source='filmsPopular';
+  if(source)return {ok:true,url:path,text:async()=>source};
+  const match=path.match(/\/(film|series)\/([1-9]\d*)\//);
+  if(match)return {ok:true,url:path,text:async()=>match[1]+':'+match[2]};
+  throw Error('unexpected network resource');
+ };
+ class FakeDOMParser {
+  parseFromString(markup){
+   if(options.catalogData?.[markup]){
+    const anchors=options.catalogData[markup].map(movie=>{
+     const img={getAttribute:()=>null};
+     const card={textContent:movie.title+' '+movie.year+' Россия • '+movie.genre,
+      querySelector(selector){
+       if(selector.startsWith('h3'))return {textContent:movie.title};
+       if(selector.includes('ratingValue'))return {textContent:'7,8'};
+       if(selector==='img')return img;
+       return null;
+      }};
+     return {getAttribute:key=>key==='href'?movie.href:null,
+      closest:()=>card,querySelector:()=>img,parentElement:card,
+      textContent:movie.title};
+    });
+    const body={querySelectorAll:()=>anchors};
+    return {body,querySelector:()=>body};
+   }
+   const match=String(markup).match(/^(film|series):([1-9]\d*)$/);
+   const date=new Date();date.setUTCMonth(date.getUTCMonth()-1);
+   const months=['января','февраля','марта','апреля','мая','июня',
+    'июля','августа','сентября','октября','ноября','декабря'];
+   const dateText=date.getUTCDate()+' '+months[date.getUTCMonth()]+' '+date.getUTCFullYear();
+   return {
+    querySelectorAll(selector){
+     if(selector.includes('application/ld+json'))
+      return [{textContent:JSON.stringify({'@type':match?.[1]==='series'?'TVSeries':'Movie',
+       name:'Проверенный '+(match?.[2]||''),genre:'драма',
+       description:'Описание из официальной карточки'})}];
+     if(selector==='dt, th, span, div')
+      return [{textContent:'Премьера в мире',children:[],
+       closest:()=>({textContent:'Премьера в мире '+dateText})}];
+     return [];
+    },
+    querySelector:()=>null
+   };
+  }
+ }
  vm.runInNewContext(script,{window,document:doc,chrome,localStorage,
-  Date:clock,URL,DOMParser:class{},AbortSignal,setInterval:fn=>timer.push(fn),
+  Date:clock,URL,DOMParser:FakeDOMParser,AbortSignal,setInterval:fn=>timer.push(fn),
   fetch,console:{warn(){}}
  });
  return {nodes,timer,data,urls,advance(ms){now+=ms},get fetches(){return fetches},
@@ -117,4 +169,25 @@ test('failed source fetches are throttled across separate popup launches',async(
  const second=setup({data:first.data});await second.settle();
  assert.equal(second.urls.length,0);
  assert.equal(second.nodes.discoveryCounter.textContent,'0 / 0');
+});
+
+test('actual film/series catalog parses and survives reopening without re-fetch',async()=>{
+ const yr=new Date().getFullYear();
+ const catalogData={
+  filmsPopular:[{href:'/film/601/',title:'Детектив 601',year:yr-1,genre:'триллер'}],
+  seriesPopular:[{href:'/film/602/',title:'Сериал 602',year:yr-1,genre:'драма'}],
+  filmsNew:[{href:'/film/603/',title:'Премьера 603',year:yr,genre:'драма'}],
+  seriesNew:[{href:'/series/604/',title:'Новый сериал 604',year:yr,genre:'драма'}]
+ };
+ const first=setup({noCache:true,catalogData});await first.settle();
+ assert.equal(first.urls.filter(u=>u.includes('/lists/movies/')).length,4);
+ assert.equal(first.data.kinoDiscoveryCatalogV1.popular.length,2);
+ assert.equal(first.data.kinoDiscoveryCatalogV1.new.length,2);
+ assert.equal(first.data.kinoDiscoveryCatalogV1.new.every(x=>Boolean(x.releaseDate)),true);
+ assert.equal(first.data.kinoDiscoveryCatalogV1.enrichedAt>0,true);
+ const second=setup({data:first.data,catalogData});await second.settle();
+ assert.equal(second.urls.length,0);
+ assert.equal(second.nodes.discoveryCounter.textContent,'1 / 4');
+ second.nodes.discoveryNext.events.click();
+ assert.equal(second.nodes.discoveryKind.textContent,'✦ Новинки');
 });
