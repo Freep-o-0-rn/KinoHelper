@@ -74,5 +74,26 @@ test('watched-only page is recognized but does not invent a rating',()=>{
   const result=parser.parsePage(page(watched));
   assert.equal(result.votes.length,0);
   assert.ok(result.recognized>=1);
-  assert.equal(result.source,'watched-only');
+  assert.equal(result.source,'ssr');
+  assert.equal(result.watched.length,3);
+  assert.ok(result.watched.every(entry=>entry.type&&entry.id));
+});
+
+
+test('watched is imported independently of votes, with safe genre metadata',()=>{
+  const x=JSON.parse(JSON.stringify(state));
+  x.apolloState['Film:789'].genres=[{__ref:'Genre:1'}];
+  x.apolloState['Genre:1']={name:'Драма'};
+  const parsed=parser.parsePage(page(x));
+  assert.deepEqual(parsed.watched,[{
+    type:'film',id:'789',genres:['драма']
+  }]);
+  assert.equal(parsed.votes.length,2);
+  assert.equal(parsed.votes.some(v=>v.id==='789'),false);
+});
+
+test('a vote on a series does not mark it watched',()=>{
+  const parsed=parser.parsePage(page(state));
+  assert.equal(parsed.votes.some(v=>v.id==='456'),true);
+  assert.equal(parsed.watched.some(w=>w.id==='456'),false);
 });
