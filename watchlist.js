@@ -289,7 +289,12 @@
             profileItems=[];
             refresh();
         }
-        if(newId){
+        if(!newId){
+            showStatus(result?.status==='logged-out'
+                ? 'Локальный список. Войдите в Кинопоиск для синхронизации.'
+                : 'Профиль Кинопоиска не подтверждён. Список пока локальный.');
+        } else {
+            showStatus('');
             try {
                 await loadProfileItems(newId);
                 await chrome.runtime.sendMessage({
