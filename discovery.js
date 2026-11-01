@@ -346,13 +346,25 @@
   }
   function compose(sources,fallback){
     const has=key=>Array.isArray(sources?.[key]);
-    const popular=has('filmsPopular')||has('seriesPopular')
-      ?dedupe([...(sources.filmsPopular||[]),...(sources.seriesPopular||[])])
-      :Array.isArray(fallback?.popular)?fallback.popular:[];
-    const news=has('filmsNew')||has('seriesNew')
-      ?dedupe([...(sources.filmsNew||[]),...(sources.seriesNew||[])])
-      :Array.isArray(fallback?.new)?fallback.new:[];
-    return {popular,new:news};
+    const freshPopular=dedupe([...(sources?.filmsPopular||[]),
+      ...(sources?.seriesPopular||[])]);
+    const freshNew=dedupe([...(sources?.filmsNew||[]),
+      ...(sources?.seriesNew||[])]);
+    // If the main ranking is unavailable but year-filtered lists work,
+    // keep those source-ranked titles as *popular*, never fabricate news.
+    const popular=freshPopular.length?freshPopular:
+      freshNew.length?freshNew:Array.isArray(fallback?.popular)?fallback.popular:[];
+    const news=freshNew.length?freshNew:
+      Array.isArray(fallback?.new)?fallback.new:[];
+    const verified=new Map((fallback?.new||[])
+      .filter(x=>x?.releaseDate).map(x=>[core.keyOf(x),x]));
+    const restored=news.map(x=>{
+      const previous=verified.get(core.keyOf(x));
+      return previous?{...x,releaseDate:previous.releaseDate,
+        description:previous.description||x.description,
+        genres:previous.genres?.length?previous.genres:x.genres}:x;
+    });
+    return {popular,new:restored};
   }
   function unavailable(message){
     if(items.length)return;
@@ -407,7 +419,8 @@
     const usable=age>=0&&age<STALE_TTL&&
       Array.isArray(cached?.popular)&&Array.isArray(cached?.new);
     if(usable)await showFrom(cached);
-    if(usable&&cached.schema===2&&age<TTL){
+    if(usable&&cached.schema===2&&age<TTL&&
+      (!cached.retrySources?.length||Date.now()<Number(cached.retryAt||0))){
       if(!cached.enrichedAt)await enrichAndSave(cached);
       return;
     }
@@ -421,15 +434,19 @@
     await chrome.storage.local.set({[CACHE]:{
       ...(cached||{}),retryAt:attemptedAt+RETRY_TTL
     }});
-    const names=['filmsPopular','seriesPopular','filmsNew','seriesNew'];
+    const allNames=['filmsPopular','seriesPopular','filmsNew','seriesNew'];
+    const names=usable&&cached.schema===2&&age<TTL&&
+      Array.isArray(cached.retrySources)&&cached.retrySources.length
+      ?cached.retrySources:allNames;
     const responses=await Promise.allSettled(names.map(name=>fetchCatalog(name)));
     const sources={...(cached?.sources||{})};
     let successes=0;
+    const retrySources=[];
     for(let i=0;i<names.length;i++){
       if(responses[i].status==='fulfilled'){
         sources[names[i]]=responses[i].value;
         successes++;
-      }
+      }else retrySources.push(names[i]);
     }
     if(!successes){
       if(!usable)unavailable('Списки Кинопоиска сейчас недоступны. Повторим запрос позже.');
@@ -437,7 +454,8 @@
     }
     const combined=compose(sources,cached);
     const fresh={schema:2,sources,...combined,savedAt:attemptedAt,
-      retryAt:attemptedAt+TTL,enrichedAt:0};
+      retrySources,retryAt:attemptedAt+(retrySources.length?RETRY_TTL:TTL),
+      enrichedAt:0};
     // Save BEFORE slow detail lookups; data remains after the popup closes.
     await chrome.storage.local.set({[CACHE]:fresh});
     await showFrom(fresh);
