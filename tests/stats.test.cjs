@@ -218,3 +218,22 @@ test('rated-only titles do not create watched films or series',()=>{
   assert.equal(data.startedSeries,0);
   assert.equal(data.completedSeries,0);
 });
+
+
+test('all genres remain individual: never collapse the tail into Другие',()=>{
+  const films={},genres={};
+  for(let i=0;i<30;i++){
+    const id=String(1000+i);
+    films['film:'+id]=film(id,true);
+    genres['film:'+id]={genres:['драма','жанр '+(i+1)]};
+  }
+  const model=core.summarize({films,genres});
+  assert.equal(model.genreRows.length,31);
+  assert.equal(model.genreRows[0].name,'драма');
+  assert.equal(model.genreRows[0].count,30);
+  assert.equal(model.genreRows.reduce((sum,item)=>sum+item.count,0),60);
+  assert.equal(model.genreRows.some(item=>item.name==='Другие'),false);
+  assert.equal(model.genreRows.some(item=>item.name==='жанр 30'),true);
+  assert.equal(new Set(model.genreRows.map(item=>item.color)).size,31);
+  assert.equal(model.taggedTitles,30);
+});
