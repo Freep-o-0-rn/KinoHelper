@@ -21,7 +21,8 @@ class Element {
   getAttribute(key){return this.attrs[key];}
 }
 function setup({reject=false,profile='7143359'}={}){
-  const movie={id:'100',type:'film',title:'Тестовый фильм',year:2013};
+  const movie={id:'100',type:'film',title:'Тестовый фильм',year:2013,
+    addedAt:1700000000000};
   const data={
     kinoWatchlistProfilesV1:{
       '7143359':{'film:100':movie},
