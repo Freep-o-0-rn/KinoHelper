@@ -11,6 +11,7 @@ function setup(options={}){
  const nodes={},timer=[];
  let now=Date.now(),fetches=0;
  const urls=[],messages=[];
+ const browserRequests=[];
  const sessionData=options.sessionData||{};
  const handlers={};
  class Element {
@@ -70,6 +71,16 @@ function setup(options={}){
    return options.imageResponder?options.imageResponder(request):{ok:false};
  }}};
  const localStorage={getItem:()=> '[]'};
+ class NativeImage {
+  naturalWidth=0;
+  set src(url){
+   browserRequests.push(url);
+   if(options.nativePoster && options.nativePoster(url)){
+    this.naturalWidth=280;
+    Promise.resolve().then(()=>this.onload?.());
+   }else Promise.resolve().then(()=>this.onerror?.());
+  }
+ }
  const fetch=async url=>{
   fetches++;urls.push(String(url));
   if(!options.catalogData)throw Error('fetch unavailable');
@@ -114,6 +125,7 @@ function setup(options={}){
     querySelectorAll(selector){
      if(selector.includes('application/ld+json'))
       return [{textContent:JSON.stringify({'@type':match?.[1]==='series'?'TVSeries':'Movie',
+       image:options.filmPoster||undefined,
        name:'Проверенный '+(match?.[2]||''),genre:'драма',
        description:'Описание из официальной карточки'})}];
      if(selector==='dt, th, span, div')
@@ -126,10 +138,13 @@ function setup(options={}){
   }
  }
  vm.runInNewContext(script,{window,document:doc,chrome,localStorage,
-  Date:clock,URL,DOMParser:FakeDOMParser,AbortSignal,setInterval:fn=>timer.push(fn),
-  fetch,console:{warn(){}}
+  Date:clock,URL,DOMParser:FakeDOMParser,AbortSignal,
+  Image:options.nativePoster?NativeImage:undefined,
+  setTimeout:(fn)=>1,clearTimeout:()=>{},setInterval:fn=>timer.push(fn),
+  fetch,console:{warn(){},debug(){}}
  });
- return {nodes,timer,data,sessionData,messages,urls,advance(ms){now+=ms},get fetches(){return fetches},
+ return {nodes,timer,data,sessionData,messages,urls,browserRequests,
+  advance(ms){now+=ms},get fetches(){return fetches},
   settle:async()=>{for(let i=0;i<100;i++)await Promise.resolve()}};
 }
 test('cached official catalog is ranked by rated genre without random movies',async()=>{
@@ -257,4 +272,36 @@ test('missing poster URL triggers established search metadata API instead of sta
  assert.equal(x.messages.some(m=>m.action==='getSearchMovieMetadata'),true);
  assert.equal(x.nodes.discoveryPoster.hidden,false);
  assert.equal(x.nodes.discoveryPoster.src,'data:image/jpeg;base64,SU1BR0U=');
+});
+
+
+test('native HTML Image preload can recover where fetch-based poster worker fails',async()=>{
+ const base='https://avatars.mds.yandex.net/get-kinopoisk-image/777/native';
+ const data={kinoDiscoveryCatalogV1:{
+  schema:2,savedAt:Date.now(),enrichedAt:Date.now(),
+  popular:[{type:'film',id:'100',title:'Триллер',year:2024,
+   posterUrl:base+'/orig',genres:['триллер']}],new:[]}};
+ const x=setup({
+  data,nativePoster:url=>url===base+'/300x450',
+  imageResponder:async()=>({ok:false,error:'CORS blocked'})
+ });
+ await x.settle();
+ assert.equal(x.nodes.discoveryPoster.hidden,false);
+ assert.equal(x.nodes.discoveryPoster.src,base+'/300x450');
+ assert.equal(x.messages.filter(m=>m.action==='loadSearchPoster').length,0);
+ assert.equal(x.sessionData.kinoDiscoveryPostersV1['film:100'].posterUrl,
+  base+'/300x450');
+ const second=setup({data,sessionData:x.sessionData,
+  nativePoster:url=>url===base+'/300x450'});await second.settle();
+ assert.equal(second.nodes.discoveryPoster.src,base+'/300x450');
+ assert.equal(second.messages.length,0);
+});
+test('film page JSON-LD image becomes verified cached poster metadata',async()=>{
+ const poster='https://avatars.mds.yandex.net/get-kinopoisk-image/777/document/orig';
+ const data={kinoDiscoveryCatalogV1:{
+  schema:2,savedAt:Date.now(),enrichedAt:Date.now(),
+  popular:[{type:'film',id:'100',title:'Фильм',year:2025,genres:['драма']}],new:[]
+ }};
+ const x=setup({data,filmPoster:poster});await x.settle();
+ assert.equal(x.data.kinoDiscoveryFactsV1['film:100'].posterUrl,poster);
 });
