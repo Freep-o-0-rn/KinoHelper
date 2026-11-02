@@ -162,40 +162,67 @@
     const minDate=new Date(Date.UTC(now.getUTCFullYear(),
       now.getUTCMonth()-5,now.getUTCDate())).toISOString().slice(0,10);
     const max=Math.min(10,Math.max(1,Number(count)||10));
-    const accepted=new Set();
-    const unique=arr=>arr.filter(m=>{
-      // Film and series identities can vary between legacy catalog URLs.
-      if(accepted.has(m.id))return false;
-      accepted.add(m.id);return true;
-    });
-    const news=unique(normalize(newReleases,'new')
+    const dedupeById=list=>{
+      const ids=new Set();
+      return list.filter(m=>{
+        if(ids.has(m.id))return false;
+        ids.add(m.id);return true;
+      });
+    };
+    const news=dedupeById(normalize(newReleases,'new')
       .filter(m=>m.year&&m.year>=year-1&&m.year<=year&&
         m.releaseDate&&m.releaseDate>=minDate&&m.releaseDate<=today)
       .sort((a,b)=>b.releaseDate.localeCompare(a.releaseDate)));
-    const raw=unique(normalize(recommended,'for-you'));
+    const raw=dedupeById(normalize(recommended,'popular'));
     const scored=raw.map((m,i)=>{
       const affinity=m.genres.reduce((n,g)=>n+(interest.get(g)||0),0);
-      return {m,affinity,score:affinity*3+(m.rating||0)*.12-i*.015};
+      return {m,affinity,index:i,
+        score:affinity*3+(m.rating||0)*.12-i*.015};
     });
+    // The two lanes use DIFFERENT reasons for the selection:
+    // a verified genre match vs. rank in Kinopoisk's real popular catalog.
+    // A film can qualify for both, but the same ID is never shown twice.
+    // A "Popular" label is truthful even for a film with positive affinity,
+    // because that slot was selected by source popularity rather than affinity.
     const personal=scored.filter(x=>x.affinity>=.35)
-      .sort((a,b)=>b.score-a.score).map(x=>x.m);
-    // Without a personal match, keep a truthful "Popular" label, but
-    // push candidates with explicitly disliked genres below neutral titles.
-    const popular=scored.filter(x=>x.affinity<.35)
-      .sort((a,b)=>(a.affinity<0?1:0)-(b.affinity<0?1:0))
+      .sort((a,b)=>b.score-a.score)
+      .map(x=>({...x.m,kind:'for-you'}));
+    const popular=scored
+      .sort((a,b)=>(a.affinity<0?1:0)-(b.affinity<0?1:0)||
+        a.index-b.index)
       .map(x=>({...x.m,kind:'popular'}));
+    // Keep one genuinely verified premiere visible when there is one.
+    // All other slots alternate personal/popular; do not reclassify a new
+    // release as Popular just to make the visual pattern look perfect.
+    const newest=news[0]||null;
+    const reservedId=newest?.id||'';
     const out=[],chosen=new Set();
-    const append=m=>{
-      if(!m||chosen.has(m.id)||out.length>=max)return;
-      chosen.add(m.id);out.push(m);
+    const take=queue=>{
+      while(queue.length){
+        const m=queue.shift();
+        if(!m||chosen.has(m.id)||m.id===reservedId)continue;
+        chosen.add(m.id);out.push(m);return true;
+      }
+      return false;
     };
-    // Mix genuine personal matches with verified premieres, then fill any
-    // remaining slots with catalog-ranked popular titles (not random picks).
-    while(out.length<max&&(personal.length||news.length)){
-      append(personal.shift());
-      append(news.shift());
+    const slots=max-(newest?1:0);
+    // 1: For You, 2: Popular, 3: For You, 4: Popular, ...
+    // If evidence is missing, fall back to catalog-ranked Popular titles,
+    // never invent personal affinity just to fill odd positions.
+    while(out.length<slots&&(personal.length||popular.length)){
+      if(out.length<slots)take(personal);
+      if(out.length<slots)take(popular);
     }
-    for(const m of popular)append(m);
+    if(newest&&out.length<max){
+      chosen.add(newest.id);
+      out.push(newest);
+    }
+    // Real, verified premieres can supply missing slots if one catalogue
+    // is shorter than requested. No duplicate film/series IDs.
+    for(const m of news){
+      if(out.length>=max)break;
+      if(!chosen.has(m.id)){chosen.add(m.id);out.push(m);}
+    }
     return out;
   }
   return {movie,poster,isPosterShape,posterSources,genres,premiereDate,keyOf,interests,viewed,select};
