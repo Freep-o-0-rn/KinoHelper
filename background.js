@@ -1837,9 +1837,8 @@ async function saveResumeProgress(payload, sender) {
       duration: item.duration,
       updatedAt: Date.now(),
       completed,
-      completedBy: completed && !older?.completed
-        ? (coverage?.eligible ? 'verified-coverage' : 'player-ended')
-        : older?.completedBy,
+      completedBy: completed
+        ? (older?.completedBy || 'verified-coverage') : undefined,
       source: RESUME_PLAYER_HOST
     };
 
