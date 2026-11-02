@@ -255,16 +255,16 @@
           description:fact.description||result[i].description||''};
       }
     }
-    // Limit the read-only detail requests; concurrency <= 2. Explicit
-    // release dates are required for new releases, while popular movies
-    // with known genres do not need extra candidate-detail requests.
+    // Bound detail requests per refresh. Popular titles lacking verified
+    // genres are needed to distinguish "For you" from generic "Popular".
     let cursor=0;
     const cap=type==='new'?16:24;
     const jobs=result.map((movie,i)=>({movie,i}))
       .filter(({movie})=>type==='new'||!movie.genres?.length)
       .slice(0,cap);
+    let failures=0;
     const work=async()=>{
-      while(cursor<jobs.length){
+      while(cursor<jobs.length&&failures<4){
         const {movie,i}=jobs[cursor++];
         try{
           const fact=await filmFacts(movie);
@@ -276,10 +276,13 @@
             releaseDate:fact.releaseDate||movie.releaseDate||'',
             posterUrl:fact.posterUrl||movie.posterUrl||'',
             posterFallback:fact.posterFallback||movie.posterFallback||''};
-        }catch{/* No verified detail => no "new" classification. */}
+        }catch{
+          // Avoid dozens of repeated timeouts if the provider is offline.
+          failures++;
+        }
       }
     };
-    await Promise.all([work(),work()]);
+    await Promise.all([work(),work(),work(),work()]);
     return result;
   }
 
@@ -733,6 +736,17 @@
     activeCatalog=catalog;
     loadContext=context;
     const chosen=selectedCandidates(catalog,context);
+    const ratings=Object.values(context.ratings||{});
+    const withRatedGenres=ratings.filter(x=>
+      Number(x?.rating)>=1&&Array.isArray(x?.genres)&&x.genres.length).length;
+    const genreCandidates=(catalog.popular||[]).filter(x=>
+      (detailsCache.get(core.keyOf(x))?.genres?.length||x.genres?.length)>0).length;
+    console.debug('[KinoHelper] Персонализация:',{
+      rated:ratings.filter(x=>Number(x?.rating)>=1).length,
+      ratedWithGenres:withRatedGenres,
+      candidatesWithGenres:genreCandidates,
+      personalSlides:chosen.filter(x=>x.kind==='for-you').length
+    });
     if(chosen.length){
       await persistFeed(chosen,at);
       display(chosen);
