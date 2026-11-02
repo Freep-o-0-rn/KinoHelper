@@ -471,7 +471,7 @@ test('eye-off immediately replaces one of ten slides, retains remaining order an
  const after=first.data.kinoDiscoveryFeedV1['7143359'];
  assert.equal(after.items.length,10);
  assert.equal(after.items.some(x=>x.id===oldIds[0]),false);
- assert.equal(after.items[0].id,oldIds[9]===oldIds[0]?'':String(1010));
+ assert.equal(after.items[0].id,'1011');
  assert.deepEqual(after.items.slice(1,9).map(x=>x.id),oldIds.slice(1,9));
  assert.equal(after.at,before.at);
  assert.equal(first.data.kinoDiscoveryHiddenV1['7143359']['film:'+oldIds[0]],true);
