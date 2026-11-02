@@ -476,7 +476,7 @@ test('eye-off immediately replaces one of ten slides, retains remaining order an
  assert.equal(after.at,before.at);
  assert.equal(first.data.kinoDiscoveryHiddenV1['7143359']['film:'+oldIds[0]],true);
  const reopened=setup({data:first.data});await reopened.settle();
- assert.equal(reopened.fetches,0);
+ assert.equal(reopened.urls.filter(u=>u.includes('/lists/movies/')).length,0);
  assert.deepEqual(reopened.data.kinoDiscoveryFeedV1['7143359'].items.map(x=>x.id),
   after.items.map(x=>x.id));
  assert.equal(reopened.nodes.discoveryCounter.textContent,'1 / 10');
@@ -488,4 +488,23 @@ test('hide does not affect personal ratings, watched progress or other account',
  assert.equal(JSON.stringify(first.data.kinoStatsRatingsV1),before);
  assert.equal(first.data.kinoDiscoveryHiddenV1['7143359']['film:100'],true);
  assert.equal(first.data.kinoDiscoveryHiddenV1['9876543'],undefined);
+});
+
+test('an open side panel refreshes due catalog at 90-minute boundary',async()=>{
+ const first=setup();await first.settle();
+ first.advance(89*60*1000);
+ await first.timer[1]();await first.settle();
+ assert.equal(first.urls.filter(u=>u.includes('/lists/movies/')).length,0);
+ first.advance(2*60*1000);
+ await first.timer[1]();await first.settle();
+ assert.equal(first.urls.filter(u=>u.includes('/lists/movies/')).length,4);
+});
+test('hidden titles are removed from new selections across subsequent cycles',()=>{
+ const catalog=Array.from({length:12},(_,i)=>({
+  type:'film',id:String(3000+i),title:'Фильм '+i,year:2025,genres:['драма']
+ }));
+ const feed=core.select({recommended:catalog,
+  hidden:{'film:3000':true,'film:3003':true}});
+ assert.equal(feed.some(x=>x.id==='3000'||x.id==='3003'),false);
+ assert.equal(feed.length,10);
 });
