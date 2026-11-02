@@ -2069,6 +2069,20 @@ button.btn-convert:active:not(:disabled) {
   overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
 }
 .discovery-kind.is-new{background:rgba(185,83,29,.88)}
+.discovery-hide{
+  position:absolute;right:50px;top:8px;z-index:5;
+  width:25px;height:24px;padding:3px;
+  display:flex;align-items:center;justify-content:center;
+  border-radius:7px;border:1px solid rgba(255,255,255,.14);
+  background:rgba(13,16,25,.63);color:rgba(255,255,255,.76);
+  cursor:pointer;transition:background .16s,color .16s;
+}
+.discovery-hide:hover,.discovery-hide:focus-visible{
+  background:rgba(127,69,75,.94);color:#fff;
+}
+.discovery-hide:focus-visible{outline:2px solid #ffd36b;outline-offset:2px}
+.discovery-hide:disabled{opacity:.45;cursor:wait}
+.discovery-hide[hidden]{display:none!important}
 .discovery-counter{
   position:absolute;top:9px;right:9px;
   border-radius:999px;padding:3px 6px;font-size:10px;font-weight:700;
