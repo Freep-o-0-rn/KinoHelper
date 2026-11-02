@@ -359,8 +359,12 @@
       // The same age is retained: hiding does not reset the 90-minute cycle.
       const originalAt=lastFeedAt||Date.now();
       await persistFeed(kept,originalAt);
-      if(kept.length)display(kept,{index:Math.min(index,kept.length-1)});
-      else showEmpty('Все доступные фильмы скрыты. Новые появятся после обновления каталога.');
+      if(kept.length){
+        // From the last slide wrap to the first existing title instead
+        // of immediately exposing the unready poster at the new last slot.
+        const nextIndex=index>=items.length-1?0:Math.min(index,kept.length-1);
+        display(kept,{index:nextIndex});
+      }else showEmpty('Все доступные фильмы скрыты. Новые появятся после обновления каталога.');
     }catch(error){
       console.warn('[KinoHelper] Не удалось скрыть фильм:',String(error?.message||error));
     }finally{
