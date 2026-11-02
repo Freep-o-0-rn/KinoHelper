@@ -200,8 +200,14 @@
              !PROFILE.test(String(item.id)) ||
              !Number.isInteger(item.rating) ||
              item.rating<1 || item.rating>10) continue;
-          account[item.type+':'+item.id]={
-            rating:item.rating,source:'kinopoisk-profile',
+          const key=item.type+':'+item.id;
+          const previous=safeObj(account[key]);
+          const genres=Array.isArray(item.genres)
+            ?item.genres.filter(g=>typeof g==='string'&&g.length>=3&&g.length<=32).slice(0,12):[];
+          account[key]={
+            ...previous,rating:item.rating,
+            genres:genres.length?genres:(previous.genres||[]),
+            source:'kinopoisk-profile',
             seenScanId:job.scanId,updatedAt:Date.now()
           };
           received++;
@@ -334,9 +340,14 @@
            !Number.isInteger(vote.rating)||vote.rating<1||vote.rating>10)continue;
         const key=vote.type+':'+vote.id;
         votedKeys.add(key);
-        if(scoped[key]?.rating!==vote.rating){
-          scoped[key]={rating:vote.rating,source:'kinopoisk-profile',
-            updatedAt:now};
+        const genres=Array.isArray(vote.genres)
+          ?vote.genres.filter(g=>typeof g==='string'&&g.length>=3&&g.length<=32).slice(0,12):[];
+        const previous=safeObj(scoped[key]);
+        const nextGenres=genres.length?genres:(previous.genres||[]);
+        if(previous.rating!==vote.rating||
+           JSON.stringify(previous.genres||[])!==JSON.stringify(nextGenres)){
+          scoped[key]={...previous,rating:vote.rating,genres:nextGenres,
+            source:'kinopoisk-profile',updatedAt:now};
           changed++;
         }
       }
