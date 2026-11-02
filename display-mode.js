@@ -52,7 +52,7 @@
   // Актуализируем настройку, когда она меняется из другого окна расширения.
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'local' || !changes[STORAGE_KEY] || input.disabled) return;
-    input.checked = changes[STORAGE_KEY].newValue === 'sidepanel';
+    input.checked = changes[STORAGE_KEY].newValue !== 'popup';
   });
 
   void loadMode();
