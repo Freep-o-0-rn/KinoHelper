@@ -54,6 +54,8 @@ function mock() {
       ? {season:entry.sources['595'].season,
         episode:entry.sources['595'].episode} : null,
     EPISODE_TTL_MS:20000,
+    SERIES_PENDING_TTL_MS:120000,
+    seriesPendingKey:tabId=>'kinoSeriesResumePending:'+tabId,
     importScripts(){}
   };
   scope.chrome.runtime={onMessage:{addListener(){}}};
