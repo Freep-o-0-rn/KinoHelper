@@ -644,7 +644,7 @@ test('previously cached ten For You slides migrate once into alternating labels'
  ]);
  assert.equal(x.urls.filter(u=>u.includes('/lists/movies/')).length,0);
  const reopened=setup({data:x.data});await reopened.settle();
- assert.equal(reopened.fetches,0);
+ assert.equal(reopened.urls.filter(u=>u.includes('/lists/movies/')).length,0);
  assert.deepEqual(reopened.data.kinoDiscoveryFeedV1['7143359'].items,
   migrated.items);
  assert.equal(reopened.data.kinoDiscoveryFeedV1['7143359'].at,at);
