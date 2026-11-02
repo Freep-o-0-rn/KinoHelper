@@ -173,7 +173,10 @@
     });
     const personal=scored.filter(x=>x.affinity>=.35)
       .sort((a,b)=>b.score-a.score).map(x=>x.m);
+    // Without a personal match, keep a truthful "Popular" label, but
+    // push candidates with explicitly disliked genres below neutral titles.
     const popular=scored.filter(x=>x.affinity<.35)
+      .sort((a,b)=>(a.affinity<0?1:0)-(b.affinity<0?1:0))
       .map(x=>({...x.m,kind:'popular'}));
     const out=[],chosen=new Set();
     const append=m=>{
