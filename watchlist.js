@@ -4,6 +4,8 @@
 
     const STORAGE_KEY = 'kinoHelperWatchlistV1';
     const COLLAPSED_KEY = 'kinoHelperWatchlistCollapsed';
+    const SORT_KEY = 'kinoHelperWatchlistSortV1';
+    let sortOrder = localStorage.getItem(SORT_KEY)==='oldest'?'oldest':'newest';
     const MAX_ITEMS = 1000;
     const PROFILE_STORE = 'kinoWatchlistProfilesV1';
     const SYNC_JOB = 'kinoWatchlistImportJobV1';
@@ -62,8 +64,10 @@
             year: Number.isInteger(year) && year >= 1888 && year <= 2200 ? year : null,
             posterUrl,
             genres: cleanGenres(movie.genres),
-            addedAt: Number.isFinite(movie.addedAt) && movie.addedAt > 0
-                ? movie.addedAt : Date.now()
+            // Older imported entries can have no verified date. Do not
+            // manufacture a fresh timestamp on every re-render.
+            addedAt: Number.isFinite(Number(movie.addedAt)) &&
+                Number(movie.addedAt)>0?Number(movie.addedAt):0
         };
     }
 
@@ -223,7 +227,8 @@
     }
 
     function toggle(movie) {
-        const next = normalize(movie);
+        const next = normalize({...movie,
+            addedAt:Number(movie?.addedAt)>0?Number(movie.addedAt):Date.now()});
         if (!next) return false;
         if (activeProfileId) { void toggleRemote(next); return true; }
         const old = getAll();
@@ -595,6 +600,15 @@
     }
 
     const renderedRows = new Map();
+    function sortedForDisplay(items){
+        const direction=sortOrder==='oldest'?1:-1;
+        return [...items].sort((a,b)=>{
+            const aDate=Number(a.addedAt)||0,bDate=Number(b.addedAt)||0;
+            if(!aDate)return bDate?1:0;
+            if(!bDate)return -1;
+            return direction*(aDate-bDate);
+        });
+    }
     function renderSignature(item) {
         return JSON.stringify([item.type,item.id,item.title,item.year,
             item.genres,item.posterUrl,Boolean(posterCache.get(keyOf(item))),
@@ -607,7 +621,7 @@
         const empty = document.getElementById('watchlistEmpty');
         if (!itemsBox || !count || !empty) return;
 
-        const items = getAll();
+        const items = sortedForDisplay(getAll());
         count.textContent = String(items.length);
         empty.hidden = items.length !== 0;
         const previous= new Map(renderedRows);
@@ -704,7 +718,16 @@
         const itemsBox = document.getElementById('watchlistBody');
         const currentButton = document.getElementById('watchlistCurrentAction');
         const syncButton = document.getElementById('watchlistSync');
+        const sortSelect = document.getElementById('watchlistSort');
         if (!section || !toggleButton || !itemsBox || !currentButton) return;
+        if(sortSelect){
+            sortSelect.value=sortOrder;
+            sortSelect.addEventListener('change',()=>{
+                sortOrder=sortSelect.value==='oldest'?'oldest':'newest';
+                localStorage.setItem(SORT_KEY,sortOrder);
+                refresh();
+            });
+        }
         const collapsed = localStorage.getItem(COLLAPSED_KEY) === 'true';
 
         function setCollapsed(value) {
@@ -766,6 +789,11 @@
         // Вторая открытая панель/окно использует то же хранилище расширения.
         window.addEventListener('storage', event => {
             if (event.key === STORAGE_KEY) refresh();
+            if (event.key === SORT_KEY) {
+                sortOrder=event.newValue==='oldest'?'oldest':'newest';
+                if(sortSelect)sortSelect.value=sortOrder;
+                refresh();
+            }
             if (event.key === COLLAPSED_KEY && event.newValue !== null) {
                 setCollapsed(event.newValue === 'true');
             }
