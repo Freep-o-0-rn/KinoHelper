@@ -496,7 +496,7 @@ test('dismissal never falls back to another older film', async () => {
 });
 
 
-test('85% actual coverage unlocks explicit finish button, not automatic completion',async()=>{
+test('UI retains manual finish as fallback while background handles automatic completion',async()=>{
   const ui=await setup({
     history:filmHistory,
     data:{'film:447301':{...movie,position:565}},
@@ -535,4 +535,16 @@ test('episode completion button identifies the exact season and episode',async()
   assert.ok(button);
   await button.events.click();
   assert.equal(ui.actions.at(-1).key,'series:404900:1:3');
+});
+
+test('opening history requests safe reconciliation of older verified film completion',async()=>{
+  const ui=await setup({data:{'film:447301':{
+    ...movie,position:588,completed:false
+  }},coverageData:{'film:447301':{
+    duration:600,ranges:[[0,576]]
+  }},history:filmHistory});
+  const reconcile=ui.actions.filter(x=>x.action==='kinoReconcileVerifiedFilms');
+  assert.equal(reconcile.length,1,'only one reconciliation on UI startup');
+  assert.ok(ui.rows[0].querySelector('.history-confirm-complete'),
+    'manual recovery stays available until background confirmation arrives');
 });
