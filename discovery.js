@@ -719,7 +719,7 @@
   }
   async function start(){
     box.hidden=false;
-    title.textContent='Подбираем фильмы и сериалы…';
+    if(!items.length)title.textContent='Подбираем фильмы и сериалы…';
     const raw=await chrome.storage.local.get([
       CACHE,FACT_CACHE,FEED_CACHE,HIDDEN_CACHE
     ]);
@@ -855,7 +855,23 @@
        window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches)return;
     if(Date.now()>=nextAt)go(index+1);
   },1000);
-  // One background catalog load per popup view. No repeated calls per slide.
+  // Read cached selection on opening, then refresh only after the same
+  // 90-minute cycle expires. Keep an open sidepanel current as well.
+  let refreshing=false;
+  setInterval(async()=>{
+    const now=Date.now();
+    if(refreshing)return;
+    const catalogAge=now-Number(activeCatalog?.savedAt||0);
+    const feedAge=now-lastFeedAt;
+    if(catalogAge<TTL&&feedAge<TTL)return;
+    refreshing=true;
+    try{
+      const previous=(await chrome.storage.local.get(CACHE))[CACHE];
+      if(now>=Number(previous?.retryAt||0))await start();
+    }catch(error){
+      console.warn('[KinoHelper] Discovery refresh:',String(error?.message||error));
+    }finally{refreshing=false;}
+  },60000);
   void start().catch(error=>{
     if(!items.length){
       title.textContent='Подборка временно недоступна';
