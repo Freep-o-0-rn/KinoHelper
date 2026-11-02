@@ -517,4 +517,11 @@
   void readDismissal();
   void readStorage();
   void updateActive();
+  // Upgrade older unfinished films that already have 85% uniquely observed
+  // playback. The background validates the original segments; the UI never
+  // marks a movie complete based on the displayed timeline percentage.
+  void chrome.runtime.sendMessage({action:'kinoReconcileVerifiedFilms'})
+    .then(response=>{
+      if(response?.ok&&response.updated>0)void readStorage();
+    }).catch(()=>{});
 })();
