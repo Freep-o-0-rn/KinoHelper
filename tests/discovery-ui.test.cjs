@@ -40,7 +40,7 @@ function setup(options={}){
   KinoStatsAccount:{async detect(){return {status:'logged-in',id:'7143359'}}},
   matchMedia:()=>({matches:false})};
  const data={kinoDiscoveryCatalogV1:{
-  schema:2,enrichedAt:now,savedAt:now,
+  schema:2,enrichedAt:now,savedAt:now,personalizationSchema:2,
   popular:[
    {type:'film',id:'100',title:'Персональный триллер',year:2024,
     genres:['триллер'],rating:7.9},
@@ -552,4 +552,60 @@ test('hiding last slide wraps to the first existing slide, never to unready new 
  assert.equal(after[9].id,'5210');
  assert.equal(h.nodes.discoveryCounter.textContent,'1 / 10');
  assert.equal(h.nodes.discoveryTitle.textContent,'Фильм 0');
+});
+
+test('one-time migration verifies genres BEFORE issuing final For You recommendations',async()=>{
+ const data={kinoDiscoveryCatalogV1:{
+  schema:2,enrichedAt:Date.now(),savedAt:Date.now(),retryAt:Date.now()+5000,
+  popular:[{type:'film',id:'901',title:'Неизвестный жанр 901',
+    year:2024,genres:[],rating:7.9},
+   {type:'film',id:'902',title:'Неизвестный жанр 902',
+    year:2024,genres:[],rating:7.2}],new:[]
+ },kinoStatsRatingsV1:{'7143359':{
+  'film:800':{rating:10,genres:['драма']},
+  'film:801':{rating:9,genres:['драма']}
+ }},kinoStatsGenresV1:{},kinoStatsWatchedV1:{'7143359':{}},
+ kinoDiscoveryFactsV1:{}};
+ const first=setup({data});
+ await first.settle();
+ assert.equal(first.data.kinoDiscoveryCatalogV1.personalizationSchema,2);
+ const chosen=first.data.kinoDiscoveryFeedV1['7143359'];
+ assert.equal(chosen.personalizationSchema,2);
+ assert.equal(chosen.items[0].kind,'for-you');
+ assert.equal(first.nodes.discoveryKind.textContent,'✦ Для вас');
+ assert.equal(first.data.kinoDiscoveryCatalogV1.popular[0].genres[0],'драма');
+ assert.equal(first.urls.filter(u=>u.includes('/lists/movies/')).length,0);
+ const second=setup({data:first.data});await second.settle();
+ assert.equal(second.fetches,0,'no metadata or catalog requests when feed is completed');
+ assert.deepEqual(second.data.kinoDiscoveryFeedV1['7143359'].items.map(
+  x=>x.id),chosen.items.map(x=>x.id));
+ assert.equal(second.nodes.discoveryKind.textContent,'✦ Для вас');
+});
+test('verified film fact cache upgrades old popular-only selections without network',async()=>{
+ const data={kinoDiscoveryCatalogV1:{
+  schema:2,enrichedAt:Date.now(),savedAt:Date.now(),
+  popular:[{type:'film',id:'915',title:'Фильм 915',year:2024,genres:[]}],
+  new:[]
+ },kinoDiscoveryFactsV1:{'film:915':{
+  genres:['триллер'],factsChecked:true,factsSchema:2,
+  cachedAt:Date.now()}},
+ kinoStatsRatingsV1:{'7143359':{
+  'film:800':{rating:10,genres:['триллер']}
+ }},kinoStatsGenresV1:{},kinoStatsWatchedV1:{'7143359':{}}};
+ const x=setup({data});await x.settle();
+ assert.equal(x.data.kinoDiscoveryFeedV1['7143359'].items[0].kind,'for-you');
+ assert.equal(x.nodes.discoveryKind.textContent,'✦ Для вас');
+ assert.equal(x.fetches,0);
+});
+test('missing reliable personal genres never fabricate a For You badge',async()=>{
+ const data={kinoDiscoveryCatalogV1:{
+  schema:2,enrichedAt:Date.now(),savedAt:Date.now(),
+  popular:[{type:'film',id:'999',title:'Фильм 999',
+   genres:['драма'],year:2024}],new:[]
+ },kinoStatsRatingsV1:{'7143359':{'film:800':{rating:10}}},
+ kinoStatsGenresV1:{},kinoStatsWatchedV1:{'7143359':{}},
+ kinoDiscoveryFactsV1:{}};
+ const x=setup({data});await x.settle();
+ assert.equal(x.data.kinoDiscoveryFeedV1['7143359'].items[0].kind,'popular');
+ assert.equal(x.nodes.discoveryKind.textContent,'✦ Популярное');
 });
