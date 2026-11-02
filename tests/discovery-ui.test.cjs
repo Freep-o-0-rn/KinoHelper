@@ -454,7 +454,7 @@ test('catalog and selected feed refresh after 90 minutes, not after 89',async()=
  const third=setup({data:recent});await third.settle();
  assert.equal(third.fetches,0);
 });
-test('eye-off immediately replaces one of ten slides, retains remaining order and persists hide',async()=>{
+test('eye-off appends replacement as slide ten, keeps visible sequence and persists hide',async()=>{
  const catalog=Array.from({length:14},(_,i)=>({
   type:'film',id:String(1001+i),title:'Вариант '+i,year:2025,
   genres:['драма'],rating:7.8
@@ -471,8 +471,10 @@ test('eye-off immediately replaces one of ten slides, retains remaining order an
  const after=first.data.kinoDiscoveryFeedV1['7143359'];
  assert.equal(after.items.length,10);
  assert.equal(after.items.some(x=>x.id===oldIds[0]),false);
- assert.equal(after.items[0].id,'1011');
- assert.deepEqual(after.items.slice(1,9).map(x=>x.id),oldIds.slice(1,9));
+ assert.equal(after.items[0].id,oldIds[1]);
+ assert.deepEqual(after.items.slice(0,9).map(x=>x.id),oldIds.slice(1));
+ assert.equal(after.items[9].id,'1011');
+ assert.equal(first.nodes.discoveryTitle.textContent,'Вариант 1');
  assert.equal(after.at,before.at);
  assert.equal(first.data.kinoDiscoveryHiddenV1['7143359']['film:'+oldIds[0]],true);
  const reopened=setup({data:first.data});await reopened.settle();
@@ -507,4 +509,26 @@ test('hidden titles are removed from new selections across subsequent cycles',()
   hidden:{'film:3000':true,'film:3003':true}});
  assert.equal(feed.some(x=>x.id==='3000'||x.id==='3003'),false);
  assert.equal(feed.length,10);
+});
+
+test('hiding a middle slide preserves later slide order and appends replacement',async()=>{
+ const catalog=Array.from({length:13},(_,i)=>({
+  type:'film',id:String(4100+i),title:'Фильм '+i,
+  year:2025,genres:['драма'],rating:7
+ }));
+ const data={kinoDiscoveryCatalogV1:{schema:2,
+  savedAt:Date.now(),enrichedAt:Date.now(),popular:catalog,new:[]},
+  kinoStatsRatingsV1:{'7143359':{}},kinoStatsWatchedV1:{'7143359':{}},
+  kinoStatsGenresV1:{}};
+ const h=setup({data});await h.settle();
+ h.nodes.discoveryNext.events.click();
+ h.nodes.discoveryNext.events.click();
+ const before=h.data.kinoDiscoveryFeedV1['7143359'].items.map(x=>x.id);
+ h.nodes.discoveryHide.events.click();await h.settle();
+ const after=h.data.kinoDiscoveryFeedV1['7143359'].items.map(x=>x.id);
+ assert.equal(after.length,10);
+ assert.deepEqual(after.slice(0,9),before.filter((_,i)=>i!==2));
+ assert.equal(after[9],'4110');
+ assert.equal(h.nodes.discoveryCounter.textContent,'3 / 10');
+ assert.equal(h.nodes.discoveryTitle.textContent,'Фильм 3');
 });
