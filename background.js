@@ -2564,10 +2564,10 @@ async function reconcileVerifiedFilmCompletion(sender) {
   for(const key of keys){
     await statsRememberCompletion(key,true)
       .catch(err=>console.warn('[KinoHelper] Film stats completion:',err));
-    if(typeof self!=='undefined' &&
-       self.KinoWatchlistAutoComplete?.onFilmCompleted)
-      await self.KinoWatchlistAutoComplete.onFilmCompleted(key)
-        .catch(err=>console.warn('[KinoHelper] Auto watchlist completion:',err));
+    // Historical checkpoints do not identify the Kinopoisk account that
+    // originally played them. Never remove a planned film from the CURRENT
+    // account based only on older, account-unscoped playback evidence.
+    // Live verified completions still trigger the normal watchlist sync.
   }
   return {ok:true,updated:keys.length};
 }
