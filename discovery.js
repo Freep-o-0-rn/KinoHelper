@@ -13,6 +13,7 @@
   // A new selection revision requires candidate-genre verification before
   // the 90-minute feed is considered complete.
   const PERSONALIZATION_SCHEMA=2;
+  const FEED_MIX_SCHEMA=3;
   const RETRY_TTL=20*60*1000,FACT_TTL=7*24*60*60*1000,INTERVAL=5000;
   const $=id=>document.getElementById(id);
   const title=$('discoveryTitle'),kind=$('discoveryKind');
@@ -343,6 +344,7 @@
     lastFeedAt=updatedAt;
     feedsByScope={...feedsByScope,[activeScope]:{
       at:updatedAt,items:next,catalogAt:Number(activeCatalog?.savedAt||0),
+      mixSchema:FEED_MIX_SCHEMA,
       personalizationSchema:
         activeCatalog?.personalizationSchema===PERSONALIZATION_SCHEMA
           ?PERSONALIZATION_SCHEMA:0
@@ -845,15 +847,18 @@
     const catalogFresh=usable&&cached.schema===2&&age<TTL;
     const completed=cached?.personalizationSchema===PERSONALIZATION_SCHEMA;
     const feedCompleted=record.personalizationSchema===PERSONALIZATION_SCHEMA;
-    // Once verified, a 90-minute feed is immutable across popup openings.
-    if(feedFresh&&catalogFresh&&completed&&feedCompleted)return;
+    const mixed=record.mixSchema===FEED_MIX_SCHEMA;
+    // Within 90 minutes, keep precisely the same saved slide sequence.
+    if(feedFresh&&catalogFresh&&completed&&feedCompleted&&mixed)return;
     // One-time migration of the previous "popular only" cache, entirely
     // without catalog refetch. Old slides remain visible while it completes.
     if(catalogFresh&&!completed){
       await enrichAndSave(cached,context,lastFeedAt||Number(cached.savedAt));
       return;
     }
-    if(catalogFresh&&completed&&saved.length&&!feedCompleted){
+    if(catalogFresh&&completed&&saved.length&&(!feedCompleted||!mixed)){
+      // Existing For-You-only feeds need one local reshuffle. No catalog
+      // network calls, no new 90-minute timestamp, and no lost opt-outs.
       await showFrom(cached,context,lastFeedAt||Number(cached.savedAt));
       return;
     }
