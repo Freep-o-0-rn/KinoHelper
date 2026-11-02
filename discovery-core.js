@@ -136,8 +136,14 @@
   // reserved for matches with local genre evidence; the fallback is explicitly
   // labeled "Popular" rather than pretending to be personalized.
   function select({recommended=[],newReleases=[],history=[],watched={},
-    ratings={},genreRecords={},count=10,year=new Date().getFullYear()}={}){
+    ratings={},genreRecords={},hidden={},count=10,year=new Date().getFullYear()}={}){
     const seen=viewed(history,watched);
+    // Opt-out is per profile, never converts into a negative rating or view.
+    for(const key of Object.keys(safe(hidden))){
+      if(!/^(?:film|series):[1-9]\d{0,12}$/.test(key))continue;
+      if(!hidden[key])continue;
+      seen.add(key);
+    }
     for(const [key,x] of Object.entries(safe(ratings))){
       if(Number(x?.rating)>=1){
         seen.add(key);
