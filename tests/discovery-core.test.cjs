@@ -216,7 +216,8 @@ test('ten personalized candidates alternate with catalog popularity rather than 
   'for-you','popular','for-you','popular'
  ]);
  assert.equal(new Set(feed.map(m=>m.id)).size,10);
- assert.equal(feed[1].id,'900','popular lane retains catalog order');
+ assert.equal(feed[0].id,'900');
+ assert.equal(feed[1].id,'901','popular lane uses next available source-ranked entry');
 });
 test('popular slot can be a genre match because it was selected from the real popular list',()=>{
  const recommended=Array.from({length:12},(_,i)=>film(1000+i,['детектив']));
