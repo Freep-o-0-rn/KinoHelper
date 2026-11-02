@@ -2512,6 +2512,73 @@ function statsRememberCompletion(key, completed) {
 
 
 
+// Reconcile old film checkpoints saved before automatic completion existed.
+// This runs only when the extension UI opens and requests it; it does not
+// scan media or trust user-facing percentages. Ranges are uniquely merged,
+// validated against the film duration and coupled to its saved timeline.
+async function reconcileVerifiedFilmCompletion(sender) {
+  if(sender?.id!==chrome.runtime.id || sender?.tab ||
+     !String(sender?.url||'').startsWith(chrome.runtime.getURL('')))
+    return {ok:false,error:'Недоверенный запрос'};
+  const work=async()=>{
+    const snapshots=await Promise.all([
+      chrome.storage.local.get(RESUME_STORAGE_KEY),
+      chrome.storage.local.get(PLAYBACK_COVERAGE_KEY)
+    ]);
+    const raw=snapshots[0][RESUME_STORAGE_KEY];
+    const coverage=snapshots[1][PLAYBACK_COVERAGE_KEY];
+    const records=raw&&typeof raw==='object'&&!Array.isArray(raw)
+      ?{...raw}:{};
+    const verified=coverage&&typeof coverage==='object'&&!Array.isArray(coverage)
+      ?coverage:{};
+    const completed=[];
+    for(const [key,entry] of Object.entries(records)){
+      if(!/^film:[1-9]\d{0,12}$/.test(key) ||
+         !entry || entry.completed || entry.type!=='film' ||
+         String(entry.id)!==key.slice(5) ||
+         !Number.isFinite(entry.duration) || entry.duration<60 ||
+         entry.duration>28800 || !Number.isFinite(entry.position) ||
+         entry.position<entry.duration*.85)continue;
+      const record=verified[key];
+      if(!record || !Number.isFinite(record.duration) ||
+         Math.abs(record.duration-entry.duration)>
+           Math.max(10,entry.duration*.015) ||
+         !Array.isArray(record.ranges))continue;
+      const ranges=unionPlaybackRanges(record.ranges.filter(pair=>
+        Array.isArray(pair)&&pair.length===2&&
+        pair.every(Number.isFinite)&&pair[0]>=0&&
+        pair[1]<=entry.duration&&pair[1]>pair[0]));
+      if(playbackCoverageSeconds(ranges)<entry.duration*.85)continue;
+      records[key]={...entry,completed:true,
+        completedBy:'verified-coverage',completedAt:Date.now()};
+      completed.push(key);
+    }
+    if(completed.length)
+      await chrome.storage.local.set({[RESUME_STORAGE_KEY]:records});
+    return completed;
+  };
+  // Reuse the player queue to avoid resurrecting unfinished states via
+  // a pending checkpoint from another tab.
+  const changed=resumeWriteQueue.then(work,work);
+  resumeWriteQueue=changed.catch(()=>{});
+  const keys=await changed;
+  for(const key of keys){
+    await statsRememberCompletion(key,true)
+      .catch(err=>console.warn('[KinoHelper] Film stats completion:',err));
+    if(typeof self!=='undefined' &&
+       self.KinoWatchlistAutoComplete?.onFilmCompleted)
+      await self.KinoWatchlistAutoComplete.onFilmCompleted(key)
+        .catch(err=>console.warn('[KinoHelper] Auto watchlist completion:',err));
+  }
+  return {ok:true,updated:keys.length};
+}
+chrome.runtime.onMessage.addListener((message,sender,respond)=>{
+  if(message?.action!=='kinoReconcileVerifiedFilms')return false;
+  reconcileVerifiedFilmCompletion(sender)
+    .then(respond).catch(err=>respond({ok:false,error:err.message}));
+  return true;
+});
+
 // A deliberate action in History can finish a title once at least 85%
 // distinct playable content has been observed. Never trust the UI's percent.
 async function confirmCoveredPlayback(mediaKey, sender) {
