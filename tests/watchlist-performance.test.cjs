@@ -25,7 +25,7 @@ function setup(count=120,{withUI=false}={}){
    replaceChildren(...nodes){replacements++;this.children=nodes}
  }
  const ids=['watchlist','watchlistToggle','watchlistBody',
-   'watchlistCurrentAction','watchlistSync','watchlistItems',
+   'watchlistCurrentAction','watchlistSync','watchlistSort','watchlistItems',
    'watchlistCount','watchlistEmpty','watchlistStatus'];
  const nodes=Object.fromEntries(ids.map(id=>[id,new El()]));
  const document={
@@ -118,4 +118,32 @@ test('metadata update replaces only the changed row and preserves other rows',()
  assert.equal(updated[0],old[0]);
  assert.equal(updated[36],old[36]);
  assert.ok(h.created-before<=18,'only one row should be rebuilt');
+});
+
+test('sort control persists date order and preserves saved content',()=>{
+ const h=setup(3,{withUI:true});
+ const select=h.nodes.watchlistSort;
+ const ids=()=>h.nodes.watchlistItems.children.map(row=>row._kinoMovie.id);
+ assert.deepEqual(ids(),['1002','1001','1000']);
+ select.value='oldest';select.listeners.change();
+ assert.deepEqual(ids(),['1000','1001','1002']);
+ assert.equal(h.data.get('kinoHelperWatchlistSortV1'),'oldest');
+ assert.equal(h.api.getAll().length,3);
+ select.value='newest';select.listeners.change();
+ assert.deepEqual(ids(),['1002','1001','1000']);
+});
+test('records without a reliable added timestamp are sorted last in both directions',()=>{
+ const h=setup(3,{withUI:true});
+ h.setRaw(JSON.stringify([
+  {type:'film',id:'1000',title:'unknown date'},
+  {type:'film',id:'1001',title:'known earlier',addedAt:100},
+  {type:'film',id:'1002',title:'known later',addedAt:200}
+ ]));
+ h.notify();
+ const ids=()=>h.nodes.watchlistItems.children.map(row=>row._kinoMovie.id);
+ assert.deepEqual(ids(),['1002','1001','1000']);
+ const select=h.nodes.watchlistSort;
+ select.value='oldest';select.listeners.change();
+ assert.deepEqual(ids(),['1001','1002','1000']);
+ assert.equal(h.api.getAll().find(x=>x.id==='1000').addedAt,0);
 });
