@@ -97,6 +97,8 @@ test('all 23 pages import in background, retry after HTTP 503',async()=>{
   assert.equal(job.pagesDone,23);
   assert.equal(job.totalPages,23);
   assert.equal(Object.keys(env.data.kinoStatsRatingsV1['1234567']).length,23);
+  assert.deepEqual(env.data.kinoStatsRatingsV1['1234567']['film:101'].genres,['драма']);
+  assert.deepEqual(env.data.kinoStatsRatingsV1['1234567']['film:123'].genres,['драма']);
   assert.equal(Object.keys(env.data.kinoStatsWatchedV1['1234567']).length,23);
   assert.equal(job.importedWatched,23);
   assert.equal(env.data.kinoStatsWatchTimeV1,undefined);
