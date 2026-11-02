@@ -6,8 +6,10 @@
   const box=document.getElementById('kinoDiscovery');
   if(!core||!box)return;
   const CACHE='kinoDiscoveryCatalogV1',FACT_CACHE='kinoDiscoveryFactsV1',
-    POSTER_CACHE='kinoDiscoveryPostersV2';
-  const TTL=24*60*60*1000,STALE_TTL=14*24*60*60*1000;
+    POSTER_CACHE='kinoDiscoveryPostersV2',FEED_CACHE='kinoDiscoveryFeedV1',
+    HIDDEN_CACHE='kinoDiscoveryHiddenV1';
+  // One 90-minute refresh cycle for the catalog and the ranked selection.
+  const TTL=90*60*1000,STALE_TTL=14*24*60*60*1000;
   const RETRY_TTL=20*60*1000,FACT_TTL=7*24*60*60*1000,INTERVAL=5000;
   const $=id=>document.getElementById(id);
   const title=$('discoveryTitle'),kind=$('discoveryKind');
@@ -16,6 +18,9 @@
   const poster=$('discoveryPoster'),backdrop=$('discoveryBackdrop');
   const empty=$('discoveryPosterEmpty'),counter=$('discoveryCounter');
   const dots=$('discoveryDots'),link=$('discoveryOpen');
+  const hideButton=$('discoveryHide');
+  let activeScope='__local__',activeCatalog=null,hiddenEntries={};
+  let feedsByScope={},lastFeedAt=0,loadContext=null;
   const copy=x=>String(x||'').replace(/\s+/g,' ').trim();
   let items=[],index=0,nextAt=Date.now()+INTERVAL,hovered=false;
   const imageCache=new Map(),detailsCache=new Map(),inFlight=new Set();
@@ -264,7 +269,10 @@
     return result;
   }
 
-  async function pick(input){
+  function safeObject(value){
+    return value&&typeof value==='object'&&!Array.isArray(value)?value:{};
+  }
+  async function preferences(){
     const raw=await chrome.storage.local.get([
       'kinoStatsRatingsV1','kinoStatsWatchedV1','kinoStatsGenresV1'
     ]);
@@ -273,15 +281,86 @@
       const current=await window.KinoStatsAccount?.detect();
       if(current?.status==='logged-in'&&/^[1-9]\d{0,12}$/.test(current.id))
         accountId=current.id;
-    }catch{ /* No confirmed login: use only generic catalog selection. */ }
+    }catch{}
     const scope=accountId||'__local__';
-    const ratings=raw.kinoStatsRatingsV1?.[scope]||{};
-    const watched=raw.kinoStatsWatchedV1?.[scope]||{};
     let history=[];
     try{history=JSON.parse(localStorage.getItem('kinopoiskHistory')||'[]');}
-    catch{history=[];}
-    return core.select({recommended:input.popular,newReleases:input.new,
-      ratings,watched,genreRecords:raw.kinoStatsGenresV1||{},history});
+    catch{}
+    return {scope,history,
+      ratings:safeObject(raw.kinoStatsRatingsV1?.[scope]),
+      watched:safeObject(raw.kinoStatsWatchedV1?.[scope]),
+      genres:safeObject(raw.kinoStatsGenresV1)};
+  }
+  function selectedCandidates(catalog,context){
+    return core.select({recommended:catalog.popular,newReleases:catalog.new,
+      ratings:context.ratings,watched:context.watched,
+      genreRecords:context.genres,history:context.history,
+      hidden:hiddenEntries});
+  }
+  function isVisible(item){
+    const key=core.keyOf(item);
+    return Boolean(key&&!hiddenEntries[key]);
+  }
+  function filterSelection(saved){
+    const seen=new Set();
+    return (Array.isArray(saved)?saved:[]).filter(item=>{
+      const key=core.keyOf(item);
+      if(!key||!isVisible(item)||seen.has(key))return false;
+      seen.add(key);return true;
+    }).slice(0,10);
+  }
+  // A saved selection belongs to the verified Kinopoisk profile, not to
+  // whichever profile happens to log in after the popup is closed.
+  async function persistFeed(next,updatedAt=Date.now()){
+    lastFeedAt=updatedAt;
+    feedsByScope={...feedsByScope,[activeScope]:{
+      at:updatedAt,items:next,catalogAt:Number(activeCatalog?.savedAt||0)
+    }};
+    await chrome.storage.local.set({[FEED_CACHE]:feedsByScope});
+  }
+  function showEmpty(message){
+    items=[];index=0;
+    title.textContent='Подборка временно недоступна';
+    kind.textContent='Что посмотреть';
+    counter.textContent='0 / 0';
+    description.textContent=message;
+    description.hidden=false;
+    if(hideButton)hideButton.hidden=true;
+    link.removeAttribute('href');
+    dots.replaceChildren();
+  }
+  function replacementCandidates(catalog,context,current){
+    const used=new Set(current.map(core.keyOf));
+    return selectedCandidates(catalog,context).filter(movie=>
+      isVisible(movie)&&!used.has(core.keyOf(movie)));
+  }
+  async function hideCurrent(){
+    const original=items[index],key=core.keyOf(original);
+    if(!key||!activeCatalog)return;
+    if(hideButton)hideButton.disabled=true;
+    try{
+      // Merge first, so a second open popup or sidepanel does not have its
+      // hidden choices overwritten by this one.
+      const raw=(await chrome.storage.local.get(HIDDEN_CACHE))[HIDDEN_CACHE];
+      const all={...safeObject(raw)};
+      const scope={...safeObject(all[activeScope]),[key]:true};
+      all[activeScope]=scope;
+      hiddenEntries=scope;
+      await chrome.storage.local.set({[HIDDEN_CACHE]:all});
+      const kept=items.filter(movie=>core.keyOf(movie)!==key&&isVisible(movie));
+      const context=loadContext||await preferences();
+      const next=replacementCandidates(activeCatalog,context,kept)[0];
+      if(next)kept.splice(Math.min(index,kept.length),0,next);
+      // The same age is retained: hiding does not reset the 90-minute cycle.
+      const originalAt=lastFeedAt||Date.now();
+      await persistFeed(kept,originalAt);
+      if(kept.length)display(kept,{index:Math.min(index,kept.length-1)});
+      else showEmpty('Все доступные фильмы скрыты. Новые появятся после обновления каталога.');
+    }catch(error){
+      console.warn('[KinoHelper] Не удалось скрыть фильм:',String(error?.message||error));
+    }finally{
+      if(hideButton)hideButton.disabled=false;
+    }
   }
   function drawDots(){
     dots.replaceChildren();
@@ -297,6 +376,7 @@
   }
   function show(){
     if(!items.length)return;
+    if(hideButton)hideButton.hidden=false;
     const item=items[index],id=core.keyOf(item),cached=detailsCache.get(id);
     title.textContent=item.title;
     kind.textContent=item.kind==='new'?'✦ Новинки':
@@ -333,12 +413,14 @@
     nextAt=Date.now()+INTERVAL;
     show();
   }
-  function display(list){
+  function display(list,options={}){
     if(!list.length)return;
-    const previous=items[index]?.id;
+    const previous=core.keyOf(items[index]);
     items=list.slice(0,10);
-    const current=items.findIndex(x=>x.id===previous);
-    index=current>=0?current:0;
+    const current=items.findIndex(x=>core.keyOf(x)===previous);
+    index=Number.isInteger(options.index)
+      ?Math.max(0,Math.min(items.length-1,options.index))
+      :current>=0?current:0;
     box.hidden=false;
     show();
     // Download the visible slide first, then fill remaining posters in the
@@ -605,23 +687,18 @@
   }
   function unavailable(message){
     if(items.length)return;
-    title.textContent='Подборка временно недоступна';
-    kind.textContent='Что посмотреть';
-    counter.textContent='0 / 0';
-    description.textContent=message;
-    description.hidden=false;
-    link.removeAttribute('href');
-    dots.replaceChildren();
+    showEmpty(message);
   }
-  async function showFrom(catalog){
-    const feed=await pick(catalog);
-    if(feed.length)display(feed);
-    else unavailable('Не удалось подобрать фильмы и сериалы из доступных каталогов.');
+  async function showFrom(catalog,context,at=Date.now()){
+    activeCatalog=catalog;
+    loadContext=context;
+    const chosen=selectedCandidates(catalog,context);
+    if(chosen.length){
+      await persistFeed(chosen,at);
+      display(chosen);
+    }else unavailable('Не удалось подобрать фильмы и сериалы из доступных каталогов.');
   }
   async function enrichAndSave(catalog){
-    // Catalog data is already persisted before slow metadata requests start.
-    // If the popup is closed during enrichment, the next opening reuses
-    // that raw catalog instead of downloading all list pages again.
     const y=new Date().getFullYear();
     const candidates=dedupe((catalog.new||[])
       .filter(x=>x.year>=y-1&&x.year<=y));
@@ -635,12 +712,16 @@
     const previous=(await chrome.storage.local.get(CACHE))[CACHE];
     if(previous?.savedAt!==catalog.savedAt)return;
     await chrome.storage.local.set({[CACHE]:patched});
-    await showFrom(patched);
+    activeCatalog=patched;
+    // Never re-rank while a fresh 90-minute selection is being displayed.
+    // New verified premiere facts are used at the next scheduled refresh.
   }
   async function start(){
     box.hidden=false;
     title.textContent='Подбираем фильмы и сериалы…';
-    const raw=await chrome.storage.local.get([CACHE,FACT_CACHE]);
+    const raw=await chrome.storage.local.get([
+      CACHE,FACT_CACHE,FEED_CACHE,HIDDEN_CACHE
+    ]);
     if(chrome.storage.session){
       try{
         const saved=(await chrome.storage.session.get(POSTER_CACHE))[POSTER_CACHE];
@@ -662,9 +743,7 @@
       }catch{}
     }
     const stored=raw[CACHE],cached=stored&&typeof stored==='object'?stored:null;
-    persistedFacts=raw[FACT_CACHE]&&typeof raw[FACT_CACHE]==='object'
-      &&!Array.isArray(raw[FACT_CACHE])?raw[FACT_CACHE]:{};
-    // Cached factual metadata survives popup and side-panel restarts.
+    persistedFacts=safeObject(raw[FACT_CACHE]);
     for(const [key,record] of Object.entries(persistedFacts)){
       const at=Number(record?.cachedAt||0);
       if(at>0&&Date.now()-at<FACT_TTL&&record&&typeof record==='object'&&
@@ -677,50 +756,70 @@
         });
       }else delete persistedFacts[key];
     }
+    const context=await preferences();
+    activeScope=context.scope;
+    loadContext=context;
+    hiddenEntries={...safeObject(safeObject(raw[HIDDEN_CACHE])[activeScope])};
+    feedsByScope={...safeObject(raw[FEED_CACHE])};
+    const record=safeObject(feedsByScope[activeScope]);
+    lastFeedAt=Number(record.at)||0;
     const age=Date.now()-Number(cached?.savedAt||0);
     const usable=age>=0&&age<STALE_TTL&&
       Array.isArray(cached?.popular)&&Array.isArray(cached?.new);
-    if(usable)await showFrom(cached);
-    if(usable&&cached.schema===2&&age<TTL&&
-      (!cached.retrySources?.length||Date.now()<Number(cached.retryAt||0))){
-      if(!cached.enrichedAt)await enrichAndSave(cached);
+    activeCatalog=usable?cached:null;
+    const saved=filterSelection(record.items);
+    if(saved.length){
+      display(saved);
+      // If another view hid a title since this feed was saved, repair the
+      // selection using cached candidates without a network request.
+      if(saved.length!==record.items.length&&usable){
+        const candidates=replacementCandidates(cached,context,saved);
+        const filled=[...saved,...candidates.slice(0,10-saved.length)];
+        await persistFeed(filled,lastFeedAt||Date.now());
+        display(filled);
+      }
+    }
+    const feedFresh=saved.length&&lastFeedAt>0&&
+      Date.now()-lastFeedAt>=0&&Date.now()-lastFeedAt<TTL;
+    const catalogFresh=usable&&cached.schema===2&&age<TTL;
+    // Reopen within 90 minutes: exactly the same titles, order and badges.
+    if(feedFresh&&catalogFresh)return;
+    // A different account has no feed yet, but an existing fresh catalog
+    // may immediately produce its first account-specific selection.
+    if(!saved.length&&catalogFresh){
+      await showFrom(cached,context);
       return;
     }
-    // Back off across window restarts and network errors, including when
-    // Kinopoisk denies access. No retry on every popup opening.
     if(Date.now()<Number(cached?.retryAt||0)){
-      if(!usable)unavailable('Кинопоиск не ответил. Повторная попытка позже.');
+      if(!saved.length&&usable)await showFrom(cached,context);
+      else if(!saved.length)unavailable('Кинопоиск не ответил. Повторная попытка позже.');
       return;
     }
     const attemptedAt=Date.now();
     await chrome.storage.local.set({[CACHE]:{
       ...(cached||{}),retryAt:attemptedAt+RETRY_TTL
     }});
-    const allNames=['filmsPopular','seriesPopular','filmsNew','seriesNew'];
-    const names=usable&&cached.schema===2&&age<TTL&&
-      Array.isArray(cached.retrySources)&&cached.retrySources.length
-      ?cached.retrySources:allNames;
+    const names=['filmsPopular','seriesPopular','filmsNew','seriesNew'];
     const responses=await Promise.allSettled(names.map(name=>fetchCatalog(name)));
     const sources={...(cached?.sources||{})};
     let successes=0;
     const retrySources=[];
     for(let i=0;i<names.length;i++){
       if(responses[i].status==='fulfilled'){
-        sources[names[i]]=responses[i].value;
-        successes++;
+        sources[names[i]]=responses[i].value;successes++;
       }else retrySources.push(names[i]);
     }
     if(!successes){
-      if(!usable)unavailable('Списки Кинопоиска сейчас недоступны. Повторим запрос позже.');
+      if(!saved.length&&usable)await showFrom(cached,context);
+      else if(!saved.length)unavailable('Списки Кинопоиска сейчас недоступны.');
       return;
     }
     const combined=compose(sources,cached);
     const fresh={schema:2,sources,...combined,savedAt:attemptedAt,
       retrySources,retryAt:attemptedAt+(retrySources.length?RETRY_TTL:TTL),
       enrichedAt:0};
-    // Save BEFORE slow detail lookups; data remains after the popup closes.
     await chrome.storage.local.set({[CACHE]:fresh});
-    await showFrom(fresh);
+    await showFrom(fresh,context,attemptedAt);
     await enrichAndSave(fresh);
   }
   // Cached remote URLs can expire between popup openings. If Chrome
@@ -738,6 +837,7 @@
       void chrome.storage.session.set({[POSTER_CACHE]:persistedPosters}).catch(()=>{});
     preparePoster(item);
   });
+  hideButton?.addEventListener('click',()=>void hideCurrent());
   $('discoveryPrevious').addEventListener('click',()=>go(index-1));
   $('discoveryNext').addEventListener('click',()=>go(index+1));
   box.addEventListener('mouseenter',()=>{hovered=true;});
