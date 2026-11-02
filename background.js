@@ -1601,7 +1601,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // Переключение способа открытия расширения: popup / боковая панель.
 // Не затрагивает поиск, историю, темы и правила фильтров.
 const DISPLAY_MODE_STORAGE_KEY = 'kinoHelperDisplayMode';
-const normalizeDisplayMode = value => value === 'sidepanel' ? 'sidepanel' : 'popup';
+// Side Panel is the default for fresh installations and unset preferences.
+// Preserve an explicitly selected popup mode across extension updates.
+const normalizeDisplayMode = value => value === 'popup' ? 'popup' : 'sidepanel';
 
 async function applyDisplayMode(mode) {
   if (mode === 'sidepanel') {
