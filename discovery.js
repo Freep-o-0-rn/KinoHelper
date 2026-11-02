@@ -713,8 +713,9 @@
     if(previous?.savedAt!==catalog.savedAt)return;
     await chrome.storage.local.set({[CACHE]:patched});
     activeCatalog=patched;
-    // Never re-rank while a fresh 90-minute selection is being displayed.
-    // New verified premiere facts are used at the next scheduled refresh.
+    // Finalize the *same* 90-minute refresh after verification of premieres.
+    // This replaces the provisional feed once, not on every popup opening.
+    if(loadContext)await showFrom(patched,loadContext,Number(catalog.savedAt));
   }
   async function start(){
     box.hidden=false;
