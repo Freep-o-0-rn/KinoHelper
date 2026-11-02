@@ -566,7 +566,7 @@ test('one-time migration verifies genres BEFORE issuing final For You recommenda
   'film:801':{rating:9,genres:['драма']}
  }},kinoStatsGenresV1:{},kinoStatsWatchedV1:{'7143359':{}},
  kinoDiscoveryFactsV1:{}};
- const first=setup({data});
+ const first=setup({data,catalogData:{}});
  await first.settle();
  assert.equal(first.data.kinoDiscoveryCatalogV1.personalizationSchema,2);
  const chosen=first.data.kinoDiscoveryFeedV1['7143359'];
