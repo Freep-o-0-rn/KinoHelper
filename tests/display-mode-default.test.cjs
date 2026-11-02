@@ -42,11 +42,11 @@ function settingsHarness(saved){
       addEventListener(k,fn){this.listeners[k]=fn;}},
     displayModeStatus:{textContent:'',classList:{toggle(){}}}
   };
-  let request=null;
+  let request=null,storageListener=null;
   const chrome={
     storage:{
       local:{async get(){return saved===undefined?{}:{kinoHelperDisplayMode:saved};}},
-      onChanged:{addListener(){}}
+      onChanged:{addListener(fn){storageListener=fn;}}
     },
     runtime:{async sendMessage(msg){
       request=msg;
@@ -58,6 +58,7 @@ function settingsHarness(saved){
   return {
     input:elements.displayModeToggle,
     get request(){return request;},
+    changeStorage(value){storageListener?.({kinoHelperDisplayMode:{newValue:value}},'local');},
     settle:async()=>{for(let i=0;i<10;i++)await Promise.resolve();}
   };
 }
@@ -100,4 +101,11 @@ test('settings popup choice sends explicit action to background',async()=>{
   h.input.checked=false;
   await h.input.listeners.change();
   assert.deepEqual(h.request,{action:'setKinoHelperDisplayMode',mode:'popup'});
+});
+
+test('clearing saved mode in another window restores side panel default',async()=>{
+  const h=settingsHarness('popup');await h.settle();
+  assert.equal(h.input.checked,false);
+  h.changeStorage(undefined);
+  assert.equal(h.input.checked,true);
 });
