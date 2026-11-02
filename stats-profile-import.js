@@ -166,8 +166,10 @@
         !html.includes('UserMovieReactions'))throw Error('Кинопоиск запросил проверку браузера');
     const ssr=profileSSR(html);
     const ssrAll=readSSRAll(ssr);
+    // Keep the genres attached to each actual personal vote. Otherwise
+    // the full rating import contains only scores and cannot inform discovery.
     const ssrVotes=ssrAll.filter(row=>row.rating!==null)
-      .map(({type,id,rating})=>({type,id,rating}));
+      .map(({type,id,rating,genres})=>({type,id,rating,genres}));
     const watched=ssrAll.filter(row=>row.watched)
       .map(({type,id,genres})=>({type,id,genres}));
     const recognized=recognizedSSRRows(ssr);
