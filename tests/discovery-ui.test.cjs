@@ -30,7 +30,8 @@ function setup(options={}){
  for(const id of ['kinoDiscovery','discoveryTitle','discoveryKind',
   'discoveryYear','discoveryGenres','discoveryDescription','discoveryRating',
   'discoveryPoster','discoveryBackdrop','discoveryPosterEmpty',
-  'discoveryCounter','discoveryDots','discoveryOpen','discoveryPrevious','discoveryNext'])
+  'discoveryCounter','discoveryDots','discoveryOpen','discoveryHide',
+  'discoveryPrevious','discoveryNext'])
    nodes[id]=new Element(id);
  const doc={hidden:false,body:{classList:{contains(){return false}}},
   getElementById:id=>nodes[id]||null,createElement:()=>new Element()};
@@ -416,4 +417,75 @@ test('the clapper placeholder is hidden in CSS once a real poster is available',
  assert.match(css,/\.discovery-poster-empty\[hidden\]/);
  assert.match(css,/\.discovery-poster-empty\{[^}]*display:grid/);
  assert.match(css,/\.discovery-poster-empty\[hidden\][^}]*\{\s*display:none!important/);
+});
+
+test('fresh 90-minute selection reopens with identical titles and order, ignoring new ratings',async()=>{
+ const first=setup();await first.settle();
+ const selected=first.data.kinoDiscoveryFeedV1?.['7143359'];
+ assert.equal(selected.items.length,4);
+ assert.equal(selected.items[0].id,'100');
+ const changed={...first.data,kinoStatsRatingsV1:{
+  '7143359':{'film:99':{rating:1,genres:['триллер']}}
+ }};
+ const second=setup({data:changed});await second.settle();
+ assert.equal(second.fetches,0);
+ assert.equal(second.data.kinoDiscoveryFeedV1['7143359'].at,selected.at);
+ assert.deepEqual(second.data.kinoDiscoveryFeedV1['7143359'].items.map(x=>x.id),
+  selected.items.map(x=>x.id));
+ assert.equal(second.nodes.discoveryTitle.textContent,'Персональный триллер');
+});
+test('catalog and selected feed refresh after 90 minutes, not after 89',async()=>{
+ const first=setup();await first.settle();
+ const stale={...first.data,
+  kinoDiscoveryCatalogV1:{...first.data.kinoDiscoveryCatalogV1,
+   savedAt:Date.now()-91*60*1000,retryAt:0},
+  kinoDiscoveryFeedV1:{'7143359':{
+   ...first.data.kinoDiscoveryFeedV1['7143359'],at:Date.now()-91*60*1000}}
+ };
+ const second=setup({data:stale});await second.settle();
+ assert.equal(second.urls.filter(u=>u.includes('/lists/movies/')).length,4);
+ assert.equal(second.nodes.discoveryTitle.textContent,'Персональный триллер');
+ const recent={...first.data,
+  kinoDiscoveryCatalogV1:{...first.data.kinoDiscoveryCatalogV1,
+   savedAt:Date.now()-89*60*1000,retryAt:0},
+  kinoDiscoveryFeedV1:{'7143359':{
+   ...first.data.kinoDiscoveryFeedV1['7143359'],at:Date.now()-89*60*1000}}
+ };
+ const third=setup({data:recent});await third.settle();
+ assert.equal(third.fetches,0);
+});
+test('eye-off immediately replaces one of ten slides, retains remaining order and persists hide',async()=>{
+ const catalog=Array.from({length:14},(_,i)=>({
+  type:'film',id:String(1001+i),title:'Вариант '+i,year:2025,
+  genres:['драма'],rating:7.8
+ }));
+ const data={kinoDiscoveryCatalogV1:{
+  schema:2,savedAt:Date.now(),enrichedAt:Date.now(),popular:catalog,new:[]
+ },kinoStatsRatingsV1:{'7143359':{}},kinoStatsGenresV1:{},
+ kinoStatsWatchedV1:{'7143359':{}}};
+ const first=setup({data});await first.settle();
+ const before=first.data.kinoDiscoveryFeedV1['7143359'];
+ assert.equal(before.items.length,10);
+ const oldIds=before.items.map(x=>x.id);
+ first.nodes.discoveryHide.events.click();await first.settle();
+ const after=first.data.kinoDiscoveryFeedV1['7143359'];
+ assert.equal(after.items.length,10);
+ assert.equal(after.items.some(x=>x.id===oldIds[0]),false);
+ assert.equal(after.items[0].id,oldIds[9]===oldIds[0]?'':String(1010));
+ assert.deepEqual(after.items.slice(1,9).map(x=>x.id),oldIds.slice(1,9));
+ assert.equal(after.at,before.at);
+ assert.equal(first.data.kinoDiscoveryHiddenV1['7143359']['film:'+oldIds[0]],true);
+ const reopened=setup({data:first.data});await reopened.settle();
+ assert.equal(reopened.fetches,0);
+ assert.deepEqual(reopened.data.kinoDiscoveryFeedV1['7143359'].items.map(x=>x.id),
+  after.items.map(x=>x.id));
+ assert.equal(reopened.nodes.discoveryCounter.textContent,'1 / 10');
+});
+test('hide does not affect personal ratings, watched progress or other account',async()=>{
+ const first=setup();await first.settle();
+ const before=JSON.stringify(first.data.kinoStatsRatingsV1);
+ first.nodes.discoveryHide.events.click();await first.settle();
+ assert.equal(JSON.stringify(first.data.kinoStatsRatingsV1),before);
+ assert.equal(first.data.kinoDiscoveryHiddenV1['7143359']['film:100'],true);
+ assert.equal(first.data.kinoDiscoveryHiddenV1['9876543'],undefined);
 });
