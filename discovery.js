@@ -10,6 +10,9 @@
     HIDDEN_CACHE='kinoDiscoveryHiddenV1';
   // One 90-minute refresh cycle for the catalog and the ranked selection.
   const TTL=90*60*1000,STALE_TTL=14*24*60*60*1000;
+  // A new selection revision requires candidate-genre verification before
+  // the 90-minute feed is considered complete.
+  const PERSONALIZATION_SCHEMA=2;
   const RETRY_TTL=20*60*1000,FACT_TTL=7*24*60*60*1000,INTERVAL=5000;
   const $=id=>document.getElementById(id);
   const title=$('discoveryTitle'),kind=$('discoveryKind');
@@ -241,11 +244,22 @@
   }
   async function enrichCatalog(candidates,type){
     const result=candidates.map(x=>({...x}));
+    // Reuse only known facts from an official film page. These were fetched
+    // for images/descriptions during earlier viewing and survive openings.
+    for(let i=0;i<result.length;i++){
+      const fact=detailsCache.get(core.keyOf(result[i]));
+      if(fact?.genres?.length){
+        result[i]={...result[i],
+          genres:core.genres(fact.genres),
+          rating:fact.rating||result[i].rating||null,
+          description:fact.description||result[i].description||''};
+      }
+    }
     // Limit the read-only detail requests; concurrency <= 2. Explicit
     // release dates are required for new releases, while popular movies
     // with known genres do not need extra candidate-detail requests.
     let cursor=0;
-    const cap=type==='new'?16:6;
+    const cap=type==='new'?16:24;
     const jobs=result.map((movie,i)=>({movie,i}))
       .filter(({movie})=>type==='new'||!movie.genres?.length)
       .slice(0,cap);
@@ -291,8 +305,19 @@
       watched:safeObject(raw.kinoStatsWatchedV1?.[scope]),
       genres:safeObject(raw.kinoStatsGenresV1)};
   }
+  function withVerifiedGenres(catalog){
+    const enhance=list=>(Array.isArray(list)?list:[]).map(movie=>{
+      const fact=detailsCache.get(core.keyOf(movie));
+      return fact?.genres?.length?{...movie,
+        genres:core.genres(fact.genres),
+        rating:fact.rating||movie.rating,
+        description:fact.description||movie.description}:movie;
+    });
+    return {...catalog,popular:enhance(catalog.popular),new:enhance(catalog.new)};
+  }
   function selectedCandidates(catalog,context){
-    return core.select({recommended:catalog.popular,newReleases:catalog.new,
+    const verified=withVerifiedGenres(catalog);
+    return core.select({recommended:verified.popular,newReleases:verified.new,
       ratings:context.ratings,watched:context.watched,
       genreRecords:context.genres,history:context.history,
       hidden:hiddenEntries});
@@ -314,7 +339,10 @@
   async function persistFeed(next,updatedAt=Date.now()){
     lastFeedAt=updatedAt;
     feedsByScope={...feedsByScope,[activeScope]:{
-      at:updatedAt,items:next,catalogAt:Number(activeCatalog?.savedAt||0)
+      at:updatedAt,items:next,catalogAt:Number(activeCatalog?.savedAt||0),
+      personalizationSchema:
+        activeCatalog?.personalizationSchema===PERSONALIZATION_SCHEMA
+          ?PERSONALIZATION_SCHEMA:0
     }};
     await chrome.storage.local.set({[FEED_CACHE]:feedsByScope});
   }
@@ -710,24 +738,30 @@
       display(chosen);
     }else unavailable('Не удалось подобрать фильмы и сериалы из доступных каталогов.');
   }
-  async function enrichAndSave(catalog){
-    const y=new Date().getFullYear();
-    const candidates=dedupe((catalog.new||[])
-      .filter(x=>x.year>=y-1&&x.year<=y));
-    const enriched=await enrichCatalog(candidates,'new');
-    const replacements=new Map(enriched.map(x=>[core.keyOf(x),x]));
-    const patched={
-      ...catalog,
-      new:(catalog.new||[]).map(x=>replacements.get(core.keyOf(x))||x),
-      enrichedAt:Date.now()
-    };
-    const previous=(await chrome.storage.local.get(CACHE))[CACHE];
-    if(previous?.savedAt!==catalog.savedAt)return;
+  async function enrichAndSave(catalog,context,feedAt){
+    // Candidate metadata must precede the FINAL ranking. The previous
+    // implementation enriched only premieres and skipped popular films.
+    const today=new Date().getFullYear();
+    const news=dedupe((catalog.new||[])
+      .filter(x=>x.year>=today-1&&x.year<=today));
+    // Verified old details are free. Missing popular genres require at most
+    // 24 bounded HTML requests per 90-minute refresh, not on every open.
+    const [popularEnriched,newEnriched]=await Promise.all([
+      enrichCatalog(catalog.popular||[],'popular'),
+      enrichCatalog(news,'new')
+    ]);
+    const replacement=new Map(newEnriched.map(x=>[core.keyOf(x),x]));
+    const patched={...catalog,popular:popularEnriched,
+      new:(catalog.new||[]).map(x=>replacement.get(core.keyOf(x))||x),
+      enrichedAt:Date.now(),personalizationSchema:PERSONALIZATION_SCHEMA};
+    const latest=(await chrome.storage.local.get(CACHE))[CACHE];
+    if(latest?.savedAt!==catalog.savedAt)return;
     await chrome.storage.local.set({[CACHE]:patched});
     activeCatalog=patched;
-    // Finalize the *same* 90-minute refresh after verification of premieres.
-    // This replaces the provisional feed once, not on every popup opening.
-    if(loadContext)await showFrom(patched,loadContext,Number(catalog.savedAt));
+    // Save one completed selection for the remaining portion of the
+    // original cycle, without pushing its expiration 90 minutes forward.
+    if(context&&activeScope===context.scope)
+      await showFrom(patched,context,feedAt||Number(catalog.savedAt)||Date.now());
   }
   async function start(){
     box.hidden=false;
@@ -795,12 +829,24 @@
     const feedFresh=saved.length&&lastFeedAt>0&&
       Date.now()-lastFeedAt>=0&&Date.now()-lastFeedAt<TTL;
     const catalogFresh=usable&&cached.schema===2&&age<TTL;
-    // Reopen within 90 minutes: exactly the same titles, order and badges.
-    if(feedFresh&&catalogFresh)return;
-    // A different account has no feed yet, but an existing fresh catalog
-    // may immediately produce its first account-specific selection.
+    const completed=cached?.personalizationSchema===PERSONALIZATION_SCHEMA;
+    const feedCompleted=record.personalizationSchema===PERSONALIZATION_SCHEMA;
+    // Once verified, a 90-minute feed is immutable across popup openings.
+    if(feedFresh&&catalogFresh&&completed&&feedCompleted)return;
+    // One-time migration of the previous "popular only" cache, entirely
+    // without catalog refetch. Old slides remain visible while it completes.
+    if(catalogFresh&&!completed){
+      await enrichAndSave(cached,context,lastFeedAt||Number(cached.savedAt));
+      return;
+    }
+    if(catalogFresh&&completed&&saved.length&&!feedCompleted){
+      await showFrom(cached,context,lastFeedAt||Number(cached.savedAt));
+      return;
+    }
+    // If a verified catalog already exists, calculate only the new
+    // account's personal selection. Do not fetch network catalogs.
     if(!saved.length&&catalogFresh){
-      await showFrom(cached,context);
+      await showFrom(cached,context,Number(cached.savedAt));
       return;
     }
     if(Date.now()<Number(cached?.retryAt||0)){
@@ -832,8 +878,10 @@
       retrySources,retryAt:attemptedAt+(retrySources.length?RETRY_TTL:TTL),
       enrichedAt:0};
     await chrome.storage.local.set({[CACHE]:fresh});
+    // Show real source-ranked provisional films immediately. Verified
+    // personalized labels replace them once official genres are available.
     await showFrom(fresh,context,attemptedAt);
-    await enrichAndSave(fresh);
+    await enrichAndSave(fresh,context,attemptedAt);
   }
   // Cached remote URLs can expire between popup openings. If Chrome
   // cannot render one, clear only that picture and retry safe sources.
