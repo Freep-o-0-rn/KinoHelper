@@ -42,7 +42,7 @@ function makeBackground() {
       unregisterContentScripts: async () => registered.clear(),
       executeScript: async () => []
     },
-    webNavigation: { getAllFrames: async () => [] }
+    webNavigation: { getAllFrames: async () => [], onCommitted: event() }
   };
   const parseMedia = raw => {
     const match = new URL(raw).pathname.match(/^\/(film|series)\/(\d+)(?:\/|$)/);
@@ -58,7 +58,8 @@ function makeBackground() {
       startedAt: Date.now(), recognizedOrigins: ['https://brogiro.cfd'],
       currentUrl: tab.url
     }),
-    parseMedia
+    parseMedia,
+    importScripts() {}
   };
   vm.createContext(context);
   vm.runInContext(background + '\nthis.resumeAPI = { saveResumeProgress, armResumeForTab, readPendingResume, acknowledgeResume, reconcileVerifiedFilmCompletion, playbackCompletionStatus };', context);
