@@ -532,3 +532,24 @@ test('hiding a middle slide preserves later slide order and appends replacement'
  assert.equal(h.nodes.discoveryCounter.textContent,'3 / 10');
  assert.equal(h.nodes.discoveryTitle.textContent,'Фильм 3');
 });
+
+test('hiding last slide wraps to the first existing slide, never to unready new last',async()=>{
+ const catalog=Array.from({length:12},(_,i)=>({
+  type:'film',id:String(5200+i),title:'Фильм '+i,
+  year:2025,genres:['комедия'],rating:7
+ }));
+ const data={kinoDiscoveryCatalogV1:{schema:2,
+  savedAt:Date.now(),enrichedAt:Date.now(),popular:catalog,new:[]},
+  kinoStatsRatingsV1:{'7143359':{}},kinoStatsWatchedV1:{'7143359':{}},
+  kinoStatsGenresV1:{}};
+ const h=setup({data});await h.settle();
+ for(let i=0;i<9;i++)h.nodes.discoveryNext.events.click();
+ assert.equal(h.nodes.discoveryCounter.textContent,'10 / 10');
+ h.nodes.discoveryHide.events.click();await h.settle();
+ const after=h.data.kinoDiscoveryFeedV1['7143359'].items;
+ assert.equal(after.length,10);
+ assert.equal(after[0].id,'5200');
+ assert.equal(after[9].id,'5210');
+ assert.equal(h.nodes.discoveryCounter.textContent,'1 / 10');
+ assert.equal(h.nodes.discoveryTitle.textContent,'Фильм 0');
+});
