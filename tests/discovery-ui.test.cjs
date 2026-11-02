@@ -163,11 +163,16 @@ test('cached official catalog is ranked by rated genre without random movies',as
 test('user can browse manually, and verified new movie has a distinct label',async()=>{
  const x=setup();await x.settle();
  x.nodes.discoveryNext.events.click();
+ assert.equal(x.nodes.discoveryTitle.textContent,'Популярная комедия');
+ assert.equal(x.nodes.discoveryKind.textContent,'✦ Популярное');
+ assert.equal(x.nodes.discoveryCounter.textContent,'2 / 4');
+ x.nodes.discoveryNext.events.click();
+ x.nodes.discoveryNext.events.click();
  assert.equal(x.nodes.discoveryTitle.textContent,'Подтверждённая премьера');
  assert.equal(x.nodes.discoveryKind.textContent,'✦ Новинки');
- assert.equal(x.nodes.discoveryCounter.textContent,'2 / 4');
+ assert.equal(x.nodes.discoveryCounter.textContent,'4 / 4');
  x.nodes.discoveryPrevious.events.click();
- assert.equal(x.nodes.discoveryTitle.textContent,'Персональный триллер');
+ assert.equal(x.nodes.discoveryTitle.textContent,'Популярный сериал');
 });
 test('autoplay advances at five seconds and pauses on hover',async()=>{
  const x=setup();await x.settle();
@@ -184,11 +189,11 @@ test('autoplay advances at five seconds and pauses on hover',async()=>{
 test('uncategorized source-ranked movie and series stay in popular, never for-you',async()=>{
  const x=setup();await x.settle();
  x.nodes.discoveryNext.events.click();
- x.nodes.discoveryNext.events.click();
  assert.equal(x.nodes.discoveryTitle.textContent,'Популярная комедия');
  assert.equal(x.nodes.discoveryKind.textContent,'✦ Популярное');
  x.nodes.discoveryNext.events.click();
  assert.equal(x.nodes.discoveryTitle.textContent,'Популярный сериал');
+ assert.equal(x.nodes.discoveryKind.textContent,'✦ Популярное');
  assert.equal(x.nodes.discoveryOpen.href,'https://www.kinopoisk.ru/series/102/');
 });
 
@@ -218,6 +223,8 @@ test('actual film/series catalog parses and survives reopening without re-fetch'
  const second=setup({data:first.data,catalogData});await second.settle();
  assert.equal(second.urls.length,0);
  assert.equal(second.nodes.discoveryCounter.textContent,'1 / 4');
+ second.nodes.discoveryNext.events.click();
+ assert.equal(second.nodes.discoveryKind.textContent,'✦ Популярное');
  second.nodes.discoveryNext.events.click();
  assert.equal(second.nodes.discoveryKind.textContent,'✦ Новинки');
 });
