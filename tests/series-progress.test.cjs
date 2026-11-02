@@ -53,7 +53,8 @@ function mock() {
     resolvedEpisode:entry => entry?.sources?.['595']
       ? {season:entry.sources['595'].season,
         episode:entry.sources['595'].episode} : null,
-    EPISODE_TTL_MS:20000
+    EPISODE_TTL_MS:20000,
+    importScripts(){}
   };
   scope.chrome.runtime={onMessage:{addListener(){}}};
   vm.createContext(scope);
