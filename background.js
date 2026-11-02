@@ -1822,7 +1822,10 @@ async function saveResumeProgress(payload, sender) {
       ? { ...store[RESUME_STORAGE_KEY] } : {};
     const older = entries[key];
     const coverage = await rememberPlaybackCoverage(key,item,payload);
-    const completed = playbackCompletionStatus(item, older, coverage);
+    // Films now finish automatically once 85% of distinct video material
+    // has actually played and the playback head has reached the threshold.
+    // A seek to 85% without the coverage evidence cannot finish a film.
+    const completed = playbackCompletionStatus(item, older, coverage, true);
 
     // If playback restarted from the beginning after completion, a new
     // verified session creates a fresh unfinished entry.
@@ -1834,6 +1837,9 @@ async function saveResumeProgress(payload, sender) {
       duration: item.duration,
       updatedAt: Date.now(),
       completed,
+      completedBy: completed && !older?.completed
+        ? (coverage?.eligible ? 'verified-coverage' : 'player-ended')
+        : older?.completedBy,
       source: RESUME_PLAYER_HOST
     };
 
@@ -2301,8 +2307,8 @@ function rememberPlaybackCoverage(mediaKey, item, payload) {
       }
       await chrome.storage.local.set({[PLAYBACK_COVERAGE_KEY]:all});
     }
-    // 85% coverage only unlocks a confirmation. It never auto-completes
-    // a film that may still have its ending ahead.
+    // Unique observed intervals, never the seek position, constitute
+    // completion evidence. Series episode policy remains independent.
     return {seconds,eligible:seconds >= item.duration*0.85};
   };
   const result = playbackCoverageQueue.then(task,task);
@@ -2311,13 +2317,16 @@ function rememberPlaybackCoverage(mediaKey, item, payload) {
   return result;
 }
 
-function playbackCompletionStatus(item, previous, coverage) {
-  // No automatic completion at 85%: the story can still be in progress.
-  // An actual player ended event is accepted only after 85% verified unique
-  // coverage. The viewer can separately confirm after 85% (UI action).
-  const verifiedEnd = item.event === 'ended' && Boolean(coverage?.eligible) &&
-    item.position >= item.duration - 5;
-  return verifiedEnd || Boolean(previous?.completed &&
+function playbackCompletionStatus(item, previous, coverage, autoFilm=false) {
+  const observed=Boolean(coverage?.eligible);
+  // For films, reaching the 85% point is sufficient *only* if at least
+  // 85% of the distinct media timeline was observed being played.
+  const verifiedFilm=autoFilm && observed &&
+    item.position >= item.duration * 0.85;
+  // Keep prior verified player-ended behavior for series episodes.
+  const verifiedEnd=item.event==='ended' && observed &&
+    item.position>=item.duration-5;
+  return verifiedFilm || verifiedEnd || Boolean(previous?.completed &&
     item.position >= item.duration * 0.1);
 }
 const SERIES_PROGRESS_KEY = 'kinoSeriesEpisodeProgressV1';
