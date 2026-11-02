@@ -163,3 +163,35 @@ test('only suitably large portrait images qualify as carousel posters',()=>{
  assert.equal(core.isPosterShape(100,350),false,'invalid extreme portrait');
  assert.equal(core.isPosterShape(0,0),false);
 });
+
+test('all imported personal ratings with embedded genres contribute to preference ranking',()=>{
+ const votes={};
+ for(let i=1;i<=40;i++) votes['film:'+i]={
+  rating:i<=30?9:2,
+  genres:i<=30?['фантастика','приключения']:['ужасы']
+ };
+ const options=[
+  film(600,['ужасы'],{rating:9.7}),
+  film(601,['фантастика'],{rating:7.6}),
+  film(602,['приключения'],{rating:7.7})
+ ];
+ const result=core.select({recommended:options,ratings:votes,genreRecords:{}});
+ assert.deepEqual(result.map(x=>x.id),['601','602','600']);
+ assert.equal(result[0].kind,'for-you');
+ assert.equal(result[2].kind,'popular');
+});
+test('votes with genres can override positive stale genre-index data',()=>{
+ const r=core.select({
+  recommended:[film(80,['ужасы']),film(81,['драма'])],
+  ratings:{'film:77':{rating:2,genres:['ужасы']}},
+  genreRecords:{'film:77':{genres:['драма']}}
+ });
+ assert.equal(r.find(x=>x.id==='80').kind,'popular');
+ assert.equal(r.find(x=>x.id==='81').kind,'popular');
+});
+test('unknown genres do not create imaginary matches from imported votes',()=>{
+ const r=core.select({recommended:[film(501,['детектив'])],
+  ratings:{'film:1':{rating:10},'film:2':{rating:9}}});
+ assert.equal(r.length,1);
+ assert.equal(r[0].kind,'popular');
+});
