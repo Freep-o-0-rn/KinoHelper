@@ -61,7 +61,7 @@ function makeBackground() {
     parseMedia
   };
   vm.createContext(context);
-  vm.runInContext(background + '\nthis.resumeAPI = { saveResumeProgress, armResumeForTab, readPendingResume, acknowledgeResume };', context);
+  vm.runInContext(background + '\nthis.resumeAPI = { saveResumeProgress, armResumeForTab, readPendingResume, acknowledgeResume, reconcileVerifiedFilmCompletion, playbackCompletionStatus };', context);
   return { api: context.resumeAPI, data, sessionData, registered,
     setTab: next => { tab = next; },
     revoke: () => { granted = false; } };
@@ -271,11 +271,11 @@ test('verified repeated intervals are counted once, even across sessions',async(
   assert.equal(covered[0][1]-covered[0][0],300);
   assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,false);
   for(let start=300;start<510;start+=5)await send(start,start+5);
-  assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,false,
-    '85% only grants eligibility, not automatic completion');
+  assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,true,
+    '85% unique confirmed film playback automatically marks watched');
   await send(595,600,'ended');
   assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,true,
-    'confirmed video end with 85% unique coverage completes');
+    'the end event does not reverse the automatic completion');
 });
 
 test('seeking to credits followed by ended cannot finish with insufficient coverage',async()=>{
@@ -310,4 +310,90 @@ test('verified film completion triggers one transition, not one per checkpoint',
   },sender);
   assert.equal(next.completed,true);
   assert.equal(next.newlyCompleted,false);
+});
+
+test('verified 85% of unique film footage autocompletes without player ended',async()=>{
+  const {api,data}=makeBackground();
+  const sender={id:'kino-test',tab:{id:7},
+    url:'https://theatre.stravers.live/player'};
+  data.kinoPlaybackCoverageV1={
+    'film:447301':{duration:600,ranges:[[0,507]],updatedAt:Date.now()}
+  };
+  const first=await api.saveResumeProgress({
+    currentTime:509,duration:600,playedSeconds:507,event:'playing',
+    watchedRanges:[[507,509]]
+  },sender);
+  assert.equal(first.completed,false);
+  const completed=await api.saveResumeProgress({
+    currentTime:512,duration:600,playedSeconds:512,event:'playing',
+    watchedRanges:[[509,512]]
+  },sender);
+  assert.equal(completed.completed,true);
+  assert.equal(completed.newlyCompleted,true);
+  const record=data.kinoPlaybackProgressV1['film:447301'];
+  assert.equal(record.completed,true);
+  assert.equal(record.completedBy,'verified-coverage');
+  const paused=await api.saveResumeProgress({
+    currentTime:512,duration:600,playedSeconds:513,event:'pause'
+  },sender);
+  assert.equal(paused.newlyCompleted,false);
+});
+test('high seek position alone never marks watched, even when the player ends',async()=>{
+  const {api,data}=makeBackground();
+  const sender={id:'kino-test',tab:{id:7},
+    url:'https://theatre.stravers.live/player'};
+  await api.saveResumeProgress({
+    currentTime:590,duration:600,playedSeconds:40,event:'playing',
+    watchedRanges:[[570,576]]
+  },sender);
+  await api.saveResumeProgress({
+    currentTime:600,duration:600,playedSeconds:50,event:'ended',
+    watchedRanges:[[594,600]]
+  },sender);
+  assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,false);
+});
+test('film 85% auto threshold leaves episode completion policy unchanged',()=>{
+  const {api}=makeBackground();
+  const item={position:511,duration:600,event:'playing'};
+  const coverage={eligible:true,seconds:511};
+  assert.equal(api.playbackCompletionStatus(item,null,coverage,true),true);
+  assert.equal(api.playbackCompletionStatus(item,null,coverage),false);
+});
+test('old 96% verified progress is reconciled without changing playback timestamp',async()=>{
+  const {api,data}=makeBackground();
+  const savedAt=Date.now()-3600000;
+  data.kinoPlaybackProgressV1={
+    'film:447301':{type:'film',id:'447301',duration:600,
+      position:587,updatedAt:savedAt,completed:false,title:'Астрал'}
+  };
+  data.kinoPlaybackCoverageV1={
+    'film:447301':{duration:600,ranges:[[0,576]],updatedAt:savedAt}
+  };
+  const sender={id:'kino-test',url:'chrome-extension://kino-test/sidepanel.html'};
+  const result=await api.reconcileVerifiedFilmCompletion(sender);
+  assert.equal(result.ok,true);
+  assert.equal(result.updated,1);
+  const watched=data.kinoPlaybackProgressV1['film:447301'];
+  assert.equal(watched.completed,true);
+  assert.equal(watched.completedBy,'verified-coverage');
+  assert.equal(watched.updatedAt,savedAt,'old history ordering must be preserved');
+  assert.equal(data.kinoStatsLibraryV1['film:447301'].completed,true);
+  assert.equal((await api.reconcileVerifiedFilmCompletion(sender)).updated,0);
+});
+test('reconciliation rejects untrusted requests and low unique coverage',async()=>{
+  const {api,data}=makeBackground();
+  data.kinoPlaybackProgressV1={
+    'film:447301':{type:'film',id:'447301',duration:600,
+      position:590,updatedAt:Date.now(),completed:false}
+  };
+  data.kinoPlaybackCoverageV1={
+    'film:447301':{duration:600,ranges:[[560,590]],updatedAt:Date.now()}
+  };
+  const trusted={id:'kino-test',url:'chrome-extension://kino-test/popup.html'};
+  assert.equal((await api.reconcileVerifiedFilmCompletion({...trusted,
+    url:'https://example.com'})).ok,false);
+  assert.equal((await api.reconcileVerifiedFilmCompletion({
+    ...trusted,tab:{id:7}})).ok,false);
+  assert.equal((await api.reconcileVerifiedFilmCompletion(trusted)).updated,0);
+  assert.equal(data.kinoPlaybackProgressV1['film:447301'].completed,false);
 });
