@@ -327,8 +327,10 @@
     const scope = detected?.status === 'logged-in' ? detected.id : '__local__';
     const stored = await chrome.storage.local.get('kinoStatsRatingsV1');
     const all = {...safeObject(stored.kinoStatsRatingsV1)};
+    const previous = safeObject(safeObject(all[scope])[media]);
+    // A newly confirmed rating must not erase genres imported earlier.
     all[scope] = {...safeObject(all[scope]),
-      [media]: {rating:n,updatedAt:Date.now()}};
+      [media]: {...previous,rating:n,updatedAt:Date.now()}};
     await chrome.storage.local.set({kinoStatsRatingsV1:all});
   }
 
