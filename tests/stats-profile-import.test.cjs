@@ -37,8 +37,8 @@ test('personal votes are extracted by explicit Vote objects only',()=>{
   const parsed=parser.parsePage(page(state,'<a href="?page=2">2</a>'));
   assert.equal(parsed.source,'ssr');
   assert.equal(parsed.lastPage,2);
-  assert.deepEqual(parsed.votes,[{type:'film',id:'123',rating:10},
-    {type:'series',id:'456',rating:7}]);
+  assert.deepEqual(parsed.votes,[{type:'film',id:'123',rating:10,genres:[]},
+    {type:'series',id:'456',rating:7,genres:[]}]);
 });
 test('public movie score and watched-only records do not count as votes',()=>{
   const x=JSON.parse(JSON.stringify(state));
@@ -96,4 +96,16 @@ test('a vote on a series does not mark it watched',()=>{
   const parsed=parser.parsePage(page(state));
   assert.equal(parsed.votes.some(v=>v.id==='456'),true);
   assert.equal(parsed.watched.some(w=>w.id==='456'),false);
+});
+
+test('full profile importer keeps verified genres on rated film and series',()=>{
+ const x=JSON.parse(JSON.stringify(state));
+ x.apolloState['Film:123'].genres=[{__ref:'Genre:1'},{__ref:'Genre:2'}];
+ x.apolloState['Series:456'].genres=[{__ref:'Genre:2'}];
+ x.apolloState['Genre:1']={name:'Фантастика'};
+ x.apolloState['Genre:2']={name:'Драма'};
+ const ratings=parser.parsePage(page(x)).votes;
+ assert.deepEqual(ratings[0].genres,['фантастика','драма']);
+ assert.deepEqual(ratings[1].genres,['драма']);
+ assert.equal(ratings[0].rating,10);
 });
