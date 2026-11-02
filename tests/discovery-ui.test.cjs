@@ -616,3 +616,60 @@ test('missing reliable personal genres never fabricate a For You badge',async()=
  assert.equal(x.data.kinoDiscoveryFeedV1['7143359'].items[0].kind,'popular');
  assert.equal(x.nodes.discoveryKind.textContent,'✦ Популярное');
 });
+
+test('previously cached ten For You slides migrate once into alternating labels',async()=>{
+ const at=Date.now()-30*60*1000;
+ const catalog=Array.from({length:17},(_,i)=>({
+  type:'film',id:String(1700+i),title:'Рекомендация '+i,
+  year:2025,genres:['драма'],rating:7.8
+ }));
+ const votes={'film:50':{rating:10,genres:['драма']}};
+ const previous=catalog.slice(0,10).map(m=>({...m,kind:'for-you'}));
+ const data={
+  kinoDiscoveryCatalogV1:{schema:2,savedAt:at,enrichedAt:at,
+   personalizationSchema:2,popular:catalog,new:[]},
+  kinoDiscoveryFeedV1:{'7143359':{
+   at,items:previous,catalogAt:at,personalizationSchema:2
+  }},
+  kinoStatsRatingsV1:{'7143359':votes},kinoStatsWatchedV1:{'7143359':{}},
+  kinoStatsGenresV1:{},kinoDiscoveryFactsV1:{}
+ };
+ const x=setup({data});await x.settle();
+ const migrated=x.data.kinoDiscoveryFeedV1['7143359'];
+ assert.equal(migrated.at,at);
+ assert.equal(migrated.mixSchema,3);
+ assert.deepEqual(migrated.items.map(m=>m.kind),[
+  'for-you','popular','for-you','popular','for-you',
+  'popular','for-you','popular','for-you','popular'
+ ]);
+ assert.equal(x.urls.filter(u=>u.includes('/lists/movies/')).length,0);
+ const reopened=setup({data:x.data});await reopened.settle();
+ assert.equal(reopened.fetches,0);
+ assert.deepEqual(reopened.data.kinoDiscoveryFeedV1['7143359'].items,
+  migrated.items);
+ assert.equal(reopened.data.kinoDiscoveryFeedV1['7143359'].at,at);
+});
+test('hiding one personalized title keeps ten slides and appends a catalog-based replacement',async()=>{
+ const catalog=Array.from({length:16},(_,i)=>({
+  type:'film',id:String(1800+i),title:'Фильм '+i,
+  year:2025,genres:['фантастика']
+ }));
+ const data={kinoDiscoveryCatalogV1:{
+  schema:2,savedAt:Date.now(),enrichedAt:Date.now(),
+  personalizationSchema:2,popular:catalog,new:[]},
+  kinoStatsRatingsV1:{'7143359':{
+   'film:89':{rating:9,genres:['фантастика']}
+  }},kinoStatsWatchedV1:{'7143359':{}},kinoStatsGenresV1:{}};
+ const h=setup({data});await h.settle();
+ const oldFeed=h.data.kinoDiscoveryFeedV1['7143359'];
+ assert.deepEqual(oldFeed.items.slice(0,4).map(m=>m.kind),
+  ['for-you','popular','for-you','popular']);
+ h.nodes.discoveryHide.events.click();await h.settle();
+ const next=h.data.kinoDiscoveryFeedV1['7143359'];
+ assert.equal(next.items.length,10);
+ assert.equal(next.at,oldFeed.at);
+ assert.deepEqual(next.items.slice(0,9).map(x=>x.id),
+  oldFeed.items.slice(1).map(x=>x.id));
+ assert.equal(next.items.some(x=>x.id===oldFeed.items[0].id),false);
+ assert.equal(h.nodes.discoveryTitle.textContent,oldFeed.items[1].title);
+});
