@@ -107,19 +107,27 @@
     }
     return ids;
   }
+  // Evaluate every imported personal vote that has verified genres.
+  // Missing genres do not become random or guessed preferences.
   function interests(genreRecords,ratings,watched){
     const weight=new Map();
-    const watch=safe(watched),scores=safe(ratings);
-    const sources={...watch,...safe(genreRecords)};
-    for(const [id,item] of Object.entries(sources)){
-      const gs=genres(item?.genres);
-      if(!gs.length)continue;
+    const watch=safe(watched),scores=safe(ratings),records=safe(genreRecords);
+    const keys=new Set([...Object.keys(records),...Object.keys(watch),
+      ...Object.keys(scores)]);
+    for(const id of keys){
       const vote=Number(scores[id]?.rating);
+      const rated=Number.isInteger(vote)&&vote>=1&&vote<=10;
+      const gs=genres(scores[id]?.genres?.length?scores[id].genres:
+        records[id]?.genres?.length?records[id].genres:watch[id]?.genres);
+      if(!gs.length)continue;
       let w=watch[id]?.watched?0.35:0;
-      if(vote>=8&&vote<=10)w+=3+(vote-8);
-      else if(vote>=5&&vote<8)w+=0.4;
-      else if(vote>=1&&vote<5)w-=2.5;
+      if(rated){
+        if(vote>=8)w+=3+(vote-8);
+        else if(vote>=5)w+=0.4;
+        else w-=2.5;
+      }
       if(w===0)continue;
+      // The same film can appear in all three datasets; count it only once.
       for(const g of gs)weight.set(g,(weight.get(g)||0)+w);
     }
     return weight;
