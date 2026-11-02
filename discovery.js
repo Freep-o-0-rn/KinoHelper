@@ -350,7 +350,12 @@
       const kept=items.filter(movie=>core.keyOf(movie)!==key&&isVisible(movie));
       const context=loadContext||await preferences();
       const next=replacementCandidates(activeCatalog,context,kept)[0];
-      if(next)kept.splice(Math.min(index,kept.length),0,next);
+      // Append the replacement as the last slide. Existing titles keep
+      // their order, leaving several autoplay intervals for its poster.
+      if(next){
+        kept.push(next);
+        preparePoster(next,true);
+      }
       // The same age is retained: hiding does not reset the 90-minute cycle.
       const originalAt=lastFeedAt||Date.now();
       await persistFeed(kept,originalAt);
@@ -427,13 +432,16 @@
     // background. The queue deduplicates movie IDs across rapid navigation.
     for(const movie of items)preparePoster(movie);
   }
-  function preparePoster(item){
+  function preparePoster(item,priority=false){
     if(!item)return;
     const id=core.keyOf(item);
     if(!id||imageCache.has(id)||inFlight.has(id)||
        (failedPosters.get(id)||0)>Date.now())return;
     inFlight.add(id);
-    posterJobs.push({item,id});
+    // The newly appended title is a high priority preload; it does not
+    // jump to the visible position, and remains the final carousel slide.
+    if(priority)posterJobs.unshift({item,id});
+    else posterJobs.push({item,id});
     pumpPosterJobs();
   }
   function pumpPosterJobs(){
