@@ -195,3 +195,12 @@ test('unknown genres do not create imaginary matches from imported votes',()=>{
  assert.equal(r.length,1);
  assert.equal(r[0].kind,'popular');
 });
+
+test('popular fallback deprioritizes genres disliked across imported votes',()=>{
+ const result=core.select({
+  recommended:[film(801,['ужасы']),film(802,['детектив'])],
+  ratings:{'film:90':{rating:1,genres:['ужасы']}}
+ });
+ assert.deepEqual(result.map(x=>x.id),['802','801']);
+ assert.equal(result[0].kind,'popular');
+});
