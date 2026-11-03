@@ -772,6 +772,7 @@ button.btn-convert:active:not(:disabled) {
 }
 
 .movie-genres {
+  margin: 4px 0 0 28px;
   color: var(--text-muted);
   font-size: 10px;
   line-height: 1.45;
@@ -1765,7 +1766,7 @@ button.btn-convert:active:not(:disabled) {
 
 /* Current watch: same track, label and local snapshot as the history rows. */
 .current-watch-progress {
-  margin: 5px 0 0 28px;
+  margin: 4px 0 0 28px;
   width: calc(100% - 28px);
   min-width: 0;
 }
