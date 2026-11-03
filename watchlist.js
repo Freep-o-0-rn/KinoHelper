@@ -334,11 +334,14 @@
         const saved = contains(current);
         const busy = savingRemote.has(keyOf(current));
         button.disabled = busy;
-        button.textContent = busy ? '↻ Сохраняем…'
-            : saved ? '✓ В списке «Буду смотреть»' : '☆ В «Буду смотреть»';
+        // Preserve the icon SVG: only the accessible label and state change.
+        const label = busy ? 'Сохраняем…'
+            : saved ? 'Убрать из «Буду смотреть»' : 'Добавить в «Буду смотреть»';
         button.setAttribute('aria-pressed', String(saved));
-        button.title = saved ? 'Убрать из списка' : 'Сохранить на потом';
+        button.setAttribute('aria-label', label);
+        button.title = label;
         button.classList.toggle('saved', saved);
+        button.classList.toggle('busy', busy);
     }
 
     async function openWatch(item) {
@@ -754,8 +757,7 @@
         setCollapsed(collapsed);
         toggleButton.addEventListener('click',
             () => setCollapsed(!section.classList.contains('collapsed')));
-        // The Current Watching card no longer has a bookmark button.
-        // Keep the watchlist itself and its search-result bookmark actions.
+        // This compact bookmark appears only on Kinopoisk detail pages.
         currentButton?.addEventListener('click', () => {
             if (current) toggle(current);
         });
