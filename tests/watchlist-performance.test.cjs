@@ -6,7 +6,7 @@ const path=require('node:path');
 const vm=require('node:vm');
 const source=fs.readFileSync(path.join(__dirname,'..','watchlist.js'),'utf8');
 
-function setup(count=120,{withUI=false}={}){
+function setup(count=120,{withUI=false,withoutCurrentButton=false}={}){
  const entries=Array.from({length:count},(_,i)=>({
    id:String(1000+i),type:'film',title:'Фильм '+i,addedAt:i+1
  }));
@@ -30,7 +30,7 @@ function setup(count=120,{withUI=false}={}){
  const nodes=Object.fromEntries(ids.map(id=>[id,new El()]));
  const document={
    readyState:withUI?'complete':'loading',
-   getElementById:id=>withUI?nodes[id]||null:null,
+   getElementById:id=>withUI&&!(withoutCurrentButton&&id==='watchlistCurrentAction')?nodes[id]||null:null,
    querySelectorAll(){return []},
    addEventListener(){},
    createElement(){created++;return new El()}
@@ -146,4 +146,18 @@ test('records without a reliable added timestamp are sorted last in both directi
  select.value='oldest';select.listeners.change();
  assert.deepEqual(ids(),['1001','1002','1000']);
  assert.equal(h.api.getAll().find(x=>x.id==='1000').addedAt,0);
+});
+
+test('watchlist still initializes and sorts when current-view bookmark button is removed',()=>{
+ const h=setup(3,{withUI:true,withoutCurrentButton:true});
+ assert.equal(h.nodes.watchlistItems.children.length,3);
+ const initial=h.nodes.watchlistItems.children.map(row=>row._kinoMovie.id);
+ assert.deepEqual(initial,['1002','1001','1000']);
+ h.nodes.watchlistSort.value='oldest';
+ h.nodes.watchlistSort.listeners.change();
+ assert.deepEqual(h.nodes.watchlistItems.children.map(row=>row._kinoMovie.id),
+   ['1000','1001','1002']);
+ assert.equal(h.api.getAll().length,3);
+ h.api.toggle({type:'film',id:'1003',title:'Новый'});
+ assert.equal(h.api.contains({type:'film',id:'1003'}),true);
 });

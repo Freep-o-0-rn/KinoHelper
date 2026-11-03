@@ -709,6 +709,48 @@ button.btn-convert:active:not(:disabled) {
 .context-card.error { border-left-color: var(--error); }
 .context-card.warning { border-left-color: var(--warning); }
 
+.current-view-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  min-width: 0;
+}
+.current-view-heading #message {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.watchlist-current-action {
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
+  padding: 5px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color .15s ease, background-color .15s ease, border-color .15s ease;
+}
+.watchlist-current-action[hidden] {
+  display: none !important;
+}
+.watchlist-current-action:hover,
+.watchlist-current-action:focus-visible {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: var(--bg-secondary);
+}
+.watchlist-current-action.saved {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: var(--bg-secondary);
+}
+.watchlist-current-action.saved svg { fill: currentColor; }
+.watchlist-current-action.busy { opacity: .5; cursor: wait; }
+.watchlist-current-action:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
 #message {
   min-height: 22px;
   display: flex;
@@ -772,6 +814,7 @@ button.btn-convert:active:not(:disabled) {
 }
 
 .movie-genres {
+  margin: 4px 0 0 28px;
   color: var(--text-muted);
   font-size: 10px;
   line-height: 1.45;
@@ -1526,34 +1569,10 @@ button.btn-convert:active:not(:disabled) {
 
 
 /* «Буду смотреть»: автономный список без изменения существующей истории. */
-.watchlist-current-action[hidden],
 .watchlist-body[hidden],
 .watchlist-empty[hidden],
 .watchlist-status[hidden] {
   display: none !important;
-}
-
-.watchlist-current-action {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 27px;
-  max-width: 100%;
-  margin-top: 6px;
-  padding: 5px 9px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  background: var(--bg-secondary);
-  font-size: 10px;
-  font-weight: 650;
-  cursor: pointer;
-}
-
-.watchlist-current-action:hover,
-.watchlist-current-action.saved {
-  color: var(--primary);
-  border-color: var(--primary);
 }
 
 .title-search-actions {
@@ -1765,7 +1784,7 @@ button.btn-convert:active:not(:disabled) {
 
 /* Current watch: same track, label and local snapshot as the history rows. */
 .current-watch-progress {
-  margin: 5px 0 0 28px;
+  margin: 4px 0 0 28px;
   width: calc(100% - 28px);
   min-width: 0;
 }
