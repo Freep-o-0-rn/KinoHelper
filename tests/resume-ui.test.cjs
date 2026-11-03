@@ -646,3 +646,17 @@ test('Now Watching progress uses same DOM hooks in popup and sidepanel',()=>{
       assert.match(html,new RegExp('id="'+id+'"'));
   }
 });
+
+test('Now Watching uses the existing identified session, not a second progress request',()=>{
+  const fs=require('node:fs'),path=require('node:path');
+  const popup=fs.readFileSync(path.join(__dirname,'..','popup.js'),'utf8');
+  assert.match(popup,/if \(session\?\.returnUrl\) \{\s*window\.KinoResumeUI\?\.setCurrentMedia\(session\)/);
+  assert.match(popup,/if \(directPlayerMedia\) \{\s*window\.KinoResumeUI\?\.setCurrentMedia\(directPlayerMedia\)/);
+  assert.match(popup,/if \(isKinopoiskMedia\) \{\s*\/\/[^\n]*\n\s*window\.KinoResumeUI\?\.setCurrentMedia\(null\)/);
+  const resume=fs.readFileSync(path.join(__dirname,'..','resume-ui.js'),'utf8');
+  const start=resume.indexOf('  function setCurrentMedia(media) {');
+  const stop=resume.indexOf('  function lastIdentity(candidate)',start);
+  assert.ok(start>=0&&stop>start);
+  assert.equal(resume.slice(start,stop).includes('chrome.storage'),false);
+  assert.equal(resume.slice(start,stop).includes('fetch('),false);
+});
