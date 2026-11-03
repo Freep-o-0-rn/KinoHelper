@@ -1763,6 +1763,23 @@ button.btn-convert:active:not(:disabled) {
 }
 
 
+/* Current watch: same track, label and local snapshot as the history rows. */
+.current-watch-progress {
+  margin: 5px 0 0 28px;
+  width: calc(100% - 28px);
+  min-width: 0;
+}
+.current-watch-progress[hidden],
+.current-watch-progress .history-coverage-label[hidden] {
+  display: none !important;
+}
+.current-watch-progress .history-progress-label {
+  margin-top: 4px;
+}
+.current-watch-progress .history-coverage-label {
+  margin-top: 2px;
+}
+
 /* История: реальная позиция просмотра, если она была сохранена. */
 .history-item-main {
   flex: 1 1 auto;
