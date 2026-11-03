@@ -1527,34 +1527,10 @@ button.btn-convert:active:not(:disabled) {
 
 
 /* «Буду смотреть»: автономный список без изменения существующей истории. */
-.watchlist-current-action[hidden],
 .watchlist-body[hidden],
 .watchlist-empty[hidden],
 .watchlist-status[hidden] {
   display: none !important;
-}
-
-.watchlist-current-action {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 27px;
-  max-width: 100%;
-  margin-top: 6px;
-  padding: 5px 9px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  background: var(--bg-secondary);
-  font-size: 10px;
-  font-weight: 650;
-  cursor: pointer;
-}
-
-.watchlist-current-action:hover,
-.watchlist-current-action.saved {
-  color: var(--primary);
-  border-color: var(--primary);
 }
 
 .title-search-actions {
