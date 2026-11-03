@@ -930,6 +930,7 @@ async function showCurrentMovie({ force = false } = {}) {
         if (legacyOpenButton) legacyOpenButton.style.display = 'none';
 
         if (!tab?.url) {
+            window.KinoResumeUI?.setCurrentMedia(null);
             lastRenderedTabSignature = tabSignature;
             hideRatingCard();
             setConvertButtonMode('unavailable');
@@ -942,6 +943,8 @@ async function showCurrentMovie({ force = false } = {}) {
         const isKinopoiskMedia = url.startsWith(KINOPOISK_BASE) && Boolean(media);
 
         if (isKinopoiskMedia) {
+            // A Kinopoisk detail page is not an active player session.
+            window.KinoResumeUI?.setCurrentMedia(null);
             setConvertButtonMode('watch');
             const type = media.type === 'series' ? 'сериал' : 'фильм';
             const title = await getKinopoiskMovieTitle(tab);
@@ -959,6 +962,7 @@ async function showCurrentMovie({ force = false } = {}) {
         if (!isCurrentViewRefresh(refreshSequence)) return;
 
         if (session?.returnUrl) {
+            window.KinoResumeUI?.setCurrentMedia(session);
             lastRenderedTabSignature = tabSignature;
             setConvertButtonMode('return', session.returnUrl);
 
@@ -980,6 +984,7 @@ async function showCurrentMovie({ force = false } = {}) {
 
         const directPlayerMedia = getDirectPlayerMedia(url);
         if (directPlayerMedia) {
+            window.KinoResumeUI?.setCurrentMedia(directPlayerMedia);
             lastRenderedTabSignature = tabSignature;
             setConvertButtonMode('return', `${KINOPOISK_BASE}/${directPlayerMedia.type}/${directPlayerMedia.id}/`);
 
@@ -999,6 +1004,7 @@ async function showCurrentMovie({ force = false } = {}) {
             return;
         }
 
+        window.KinoResumeUI?.setCurrentMedia(null);
         lastRenderedTabSignature = tabSignature;
         hideRatingCard();
         setConvertButtonMode('unavailable');
@@ -1008,6 +1014,7 @@ async function showCurrentMovie({ force = false } = {}) {
         if (!isCurrentViewRefresh(refreshSequence)) return;
 
         lastRenderedTabSignature = '';
+        window.KinoResumeUI?.setCurrentMedia(null);
         hideRatingCard();
         setConvertButtonMode('unavailable');
         showMessage("Выберите фильтры и нажмите 'Случайный'", 'info');
