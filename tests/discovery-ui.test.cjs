@@ -1,0 +1,675 @@
+'use strict';
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
+const vm=require('node:vm');
+const core=require('../discovery-core.js');
+const script=fs.readFileSync(path.join(__dirname,'..','discovery.js'),'utf8');
+const recent=()=>{const d=new Date();d.setUTCMonth(d.getUTCMonth()-2);return d.toISOString().slice(0,10);};
+function setup(options={}){
+ const nodes={},timer=[];
+ let now=Date.now(),fetches=0;
+ const urls=[],messages=[];
+ const browserRequests=[];
+ const sessionData=options.sessionData||{};
+ const handlers={};
+ class Element {
+  constructor(id=''){this.id=id;this.textContent='';this.hidden=false;
+   this.src='';this.href='';this.children=[];this.attributes={};this.events={};
+   this.classList={toggle(){},add(){},remove(){}};
+  }
+  addEventListener(k,fn){this.events[k]=fn}
+  setAttribute(k,v){this.attributes[k]=v}
+  removeAttribute(k){delete this.attributes[k];}
+  replaceChildren(...children){this.children=children}
+  appendChild(child){this.children.push(child)}
+  getClientRects(){return [{}]}
+  contains(){return false}
+ }
+ for(const id of ['kinoDiscovery','discoveryTitle','discoveryKind',
+  'discoveryYear','discoveryGenres','discoveryDescription','discoveryRating',
+  'discoveryPoster','discoveryBackdrop','discoveryPosterEmpty',
+  'discoveryCounter','discoveryDots','discoveryOpen','discoveryHide',
+  'discoveryPrevious','discoveryNext'])
+   nodes[id]=new Element(id);
+ const doc={hidden:false,body:{classList:{contains(){return false}}},
+  getElementById:id=>nodes[id]||null,createElement:()=>new Element()};
+ const clock=class extends Date{static now(){return now}};
+ const window={KinoDiscoveryCore:core,
+  KinoStatsAccount:{async detect(){return {status:'logged-in',id:'7143359'}}},
+  matchMedia:()=>({matches:false})};
+ const data={kinoDiscoveryCatalogV1:{
+  schema:2,enrichedAt:now,savedAt:now,personalizationSchema:2,
+  popular:[
+   {type:'film',id:'100',title:'Персональный триллер',year:2024,
+    genres:['триллер'],rating:7.9},
+   {type:'film',id:'101',title:'Популярная комедия',year:2024,
+    genres:['комедия'],rating:9.3},
+   {type:'series',id:'102',title:'Популярный сериал',year:2025,
+    genres:['драма'],rating:8.2}
+  ],
+  new:[
+   {type:'film',id:'200',title:'Подтверждённая премьера',year:new Date().getFullYear(),
+    releaseDate:recent(),rating:7.2,genres:['драма']}
+  ]
+ },kinoStatsRatingsV1:{
+  '7143359':{'film:99':{rating:10}}
+ },kinoStatsGenresV1:{'film:99':{genres:['триллер']}},
+ kinoStatsWatchedV1:{'7143359':{}},
+ kinoDiscoveryFactsV1:{'film:100':{genres:['триллер'],
+  description:'Настоящее описание',cachedAt:now}}};
+ if(options.data)Object.assign(data,options.data);
+ if(options.noCache)delete data.kinoDiscoveryCatalogV1;
+ const chrome={storage:{local:{async get(keys){
+   return Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,data[k]]));
+ },async set(values){Object.assign(data,values);}},
+ session:{async get(keys){
+  return Object.fromEntries((Array.isArray(keys)?keys:[keys]).map(k=>[k,sessionData[k]]));
+ },async set(values){Object.assign(sessionData,values);}}},
+ runtime:{async sendMessage(request){
+   messages.push(request);
+   return options.imageResponder?options.imageResponder(request):{ok:false};
+ }}};
+ const localStorage={getItem:()=> '[]'};
+ class NativeImage {
+  naturalWidth=0;
+  naturalHeight=0;
+  set src(url){
+   browserRequests.push(url);
+   const result=options.nativePoster?.(url);
+   if(result){
+    this.naturalWidth=typeof result==='object'?result.width:280;
+    this.naturalHeight=typeof result==='object'?result.height:420;
+    Promise.resolve().then(()=>this.onload?.());
+   }else Promise.resolve().then(()=>this.onerror?.());
+  }
+ }
+ const fetch=async url=>{
+  fetches++;urls.push(String(url));
+  if(!options.catalogData)throw Error('fetch unavailable');
+  const path=String(url);
+  let source='';
+  if(path.includes('/popular-series/year--'))source='seriesNew';
+  else if(path.includes('/popular/year--'))source='filmsNew';
+  else if(path.includes('/popular-series/'))source='seriesPopular';
+  else if(path.includes('/popular/'))source='filmsPopular';
+  if(source)return {ok:true,url:path,text:async()=>source};
+  const match=path.match(/\/(film|series)\/([1-9]\d*)\//);
+  if(match)return {ok:true,url:path,text:async()=>match[1]+':'+match[2]};
+  throw Error('unexpected network resource');
+ };
+ class FakeDOMParser {
+  parseFromString(markup){
+   if(options.catalogData?.[markup]){
+    const anchors=options.catalogData[markup].map(movie=>{
+     const img={getAttribute:key=>movie.imageAttrs?.[key]||null};
+     const card={textContent:movie.title+' '+movie.year+' Россия • '+movie.genre,
+      querySelector(selector){
+       if(selector.startsWith('h3'))return {textContent:movie.title};
+       if(selector.includes('ratingValue'))return {textContent:'7,8'};
+       if(selector==='img')return img;
+       return null;
+      }};
+     return {getAttribute:key=>key==='href'?movie.href:null,
+      closest:()=>card,querySelector:()=>img,parentElement:card,
+      textContent:movie.title};
+    });
+    const body={querySelectorAll:()=>anchors};
+    return {body,querySelector:()=>body};
+   }
+   const match=String(markup).match(/^(film|series):([1-9]\d*)$/);
+   const date=new Date();date.setUTCMonth(date.getUTCMonth()-1);
+   const months=['января','февраля','марта','апреля','мая','июня',
+    'июля','августа','сентября','октября','ноября','декабря'];
+   const dateText=['601','602'].includes(match?.[2])
+    ?'1 января '+(date.getUTCFullYear()-3)
+    :date.getUTCDate()+' '+months[date.getUTCMonth()]+' '+date.getUTCFullYear();
+   return {
+    querySelectorAll(selector){
+     if(selector.includes('application/ld+json'))
+      return [{textContent:JSON.stringify({'@type':match?.[1]==='series'?'TVSeries':'Movie',
+       image:options.filmPoster||undefined,
+       aggregateRating:options.filmRating?{ratingValue:options.filmRating}:undefined,
+       name:'Проверенный '+(match?.[2]||''),genre:'драма',
+       description:'Описание из официальной карточки'})}];
+     if(selector==='dt, th, span, div')
+      return [{textContent:'Премьера в мире',children:[],
+       closest:()=>({textContent:'Премьера в мире '+dateText})}];
+     return [];
+    },
+    querySelector:()=>null
+   };
+  }
+ }
+ vm.runInNewContext(script,{window,document:doc,chrome,localStorage,
+  Date:clock,URL,DOMParser:FakeDOMParser,AbortSignal,
+  Image:options.nativePoster?NativeImage:undefined,
+  setTimeout:(fn)=>1,clearTimeout:()=>{},setInterval:fn=>timer.push(fn),
+  fetch,console:{warn(){},debug(){}}
+ });
+ return {nodes,timer,data,sessionData,messages,urls,browserRequests,
+  advance(ms){now+=ms},get fetches(){return fetches},
+  settle:async()=>{for(let i=0;i<100;i++)await Promise.resolve()}};
+}
+test('cached official catalog is ranked by rated genre without random movies',async()=>{
+ const x=setup();await x.settle();
+ assert.equal(x.nodes.kinoDiscovery.hidden,false);
+ assert.equal(x.nodes.discoveryTitle.textContent,'Персональный триллер');
+ assert.equal(x.nodes.discoveryKind.textContent,'✦ Для вас');
+ assert.equal(x.nodes.discoveryCounter.textContent,'1 / 4');
+ assert.equal(x.fetches,0);
+});
+test('user can browse manually, and verified new movie has a distinct label',async()=>{
+ const x=setup();await x.settle();
+ x.nodes.discoveryNext.events.click();
+ assert.equal(x.nodes.discoveryTitle.textContent,'Популярная комедия');
+ assert.equal(x.nodes.discoveryKind.textContent,'✦ Популярное');
+ assert.equal(x.nodes.discoveryCounter.textContent,'2 / 4');
+ x.nodes.discoveryNext.events.click();
+ x.nodes.discoveryNext.events.click();
+ assert.equal(x.nodes.discoveryTitle.textContent,'Подтверждённая премьера');
+ assert.equal(x.nodes.discoveryKind.textContent,'✦ Новинки');
+ assert.equal(x.nodes.discoveryCounter.textContent,'4 / 4');
+ x.nodes.discoveryPrevious.events.click();
+ assert.equal(x.nodes.discoveryTitle.textContent,'Популярный сериал');
+});
+test('autoplay advances at five seconds and pauses on hover',async()=>{
+ const x=setup();await x.settle();
+ x.advance(6000);x.timer[0]();
+ assert.equal(x.nodes.discoveryCounter.textContent,'2 / 4');
+ x.nodes.kinoDiscovery.events.mouseenter();
+ x.advance(6000);x.timer[0]();
+ assert.equal(x.nodes.discoveryCounter.textContent,'2 / 4');
+ x.nodes.kinoDiscovery.events.mouseleave();
+ x.advance(6000);x.timer[0]();
+ assert.equal(x.nodes.discoveryCounter.textContent,'3 / 4');
+});
+
+test('uncategorized source-ranked movie and series stay in popular, never for-you',async()=>{
+ const x=setup();await x.settle();
+ x.nodes.discoveryNext.events.click();
+ assert.equal(x.nodes.discoveryTitle.textContent,'Популярная комедия');
+ assert.equal(x.nodes.discoveryKind.textContent,'✦ Популярное');
+ x.nodes.discoveryNext.events.click();
+ assert.equal(x.nodes.discoveryTitle.textContent,'Популярный сериал');
+ assert.equal(x.nodes.discoveryKind.textContent,'✦ Популярное');
+ assert.equal(x.nodes.discoveryOpen.href,'https://www.kinopoisk.ru/series/102/');
+});
+
+test('failed source fetches are throttled across separate popup launches',async()=>{
+ const first=setup({noCache:true});await first.settle();
+ assert.equal(first.urls.filter(u=>u.includes('/lists/movies/')).length,4);
+ assert.equal(first.data.kinoDiscoveryCatalogV1.retryAt>Date.now(),true);
+ const second=setup({data:first.data});await second.settle();
+ assert.equal(second.urls.length,0);
+ assert.equal(second.nodes.discoveryCounter.textContent,'0 / 0');
+});
+
+test('actual film/series catalog parses and survives reopening without re-fetch',async()=>{
+ const yr=new Date().getFullYear();
+ const catalogData={
+  filmsPopular:[{href:'/film/601/',title:'Детектив 601',year:yr-1,genre:'триллер'}],
+  seriesPopular:[{href:'/film/602/',title:'Сериал 602',year:yr-1,genre:'драма'}],
+  filmsNew:[{href:'/film/603/',title:'Премьера 603',year:yr,genre:'драма'}],
+  seriesNew:[{href:'/series/604/',title:'Новый сериал 604',year:yr,genre:'драма'}]
+ };
+ const first=setup({noCache:true,catalogData});await first.settle();
+ assert.equal(first.urls.filter(u=>u.includes('/lists/movies/')).length,4);
+ assert.equal(first.data.kinoDiscoveryCatalogV1.popular.length,2);
+ assert.equal(first.data.kinoDiscoveryCatalogV1.new.length,4);
+ assert.equal(first.data.kinoDiscoveryCatalogV1.new.every(x=>Boolean(x.releaseDate)),true);
+ assert.equal(first.data.kinoDiscoveryCatalogV1.enrichedAt>0,true);
+ const second=setup({data:first.data,catalogData});await second.settle();
+ assert.equal(second.urls.length,0);
+ assert.equal(second.nodes.discoveryCounter.textContent,'1 / 4');
+ second.nodes.discoveryNext.events.click();
+ assert.equal(second.nodes.discoveryKind.textContent,'✦ Популярное');
+ second.nodes.discoveryNext.events.click();
+ assert.equal(second.nodes.discoveryKind.textContent,'✦ Новинки');
+});
+
+test('carousel tries another image size after first CDN failure and stores poster in session',async()=>{
+ const base='https://avatars.mds.yandex.net/get-kinopoisk-image/777/realimage';
+ const data={kinoDiscoveryCatalogV1:{
+  schema:2,savedAt:Date.now(),enrichedAt:Date.now(),
+  popular:[{type:'film',id:'100',title:'Персональный триллер',year:2024,
+   posterUrl:base+'/orig',genres:['триллер'],rating:7.7}],new:[]
+ }};
+ const imageResponder=async request=>{
+  if(request.action==='loadSearchPoster')
+    return request.payload.url.endsWith('/300x450')
+      ?{ok:true,dataUrl:'data:image/png;base64,SU1BR0U='}
+      :{ok:false,error:'HTTP 404'};
+  return {ok:false,error:'unavailable'};
+ };
+ const x=setup({data,imageResponder});await x.settle();
+ const pictureCalls=x.messages.filter(m=>m.action==='loadSearchPoster');
+ assert.equal(pictureCalls[0].payload.url,base+'/280x420');
+ assert.equal(pictureCalls[1].payload.url,base+'/300x450');
+ assert.equal(x.nodes.discoveryPoster.hidden,false);
+ assert.equal(x.nodes.discoveryPoster.src,'data:image/png;base64,SU1BR0U=');
+ assert.equal(x.nodes.discoveryPosterEmpty.hidden,true);
+ assert.equal(x.sessionData.kinoDiscoveryPostersV2['film:100'].dataUrl,
+  'data:image/png;base64,SU1BR0U=');
+ const second=setup({data,sessionData:x.sessionData,imageResponder});await second.settle();
+ assert.equal(second.nodes.discoveryPoster.src,'data:image/png;base64,SU1BR0U=');
+ assert.equal(second.messages.filter(m=>m.action==='loadSearchPoster').length,0);
+});
+test('catalog placeholder data-src does not hide working src poster URL',async()=>{
+ const poster='https://avatars.mds.yandex.net/get-kinopoisk-image/x/y/orig';
+ const catalogData={
+  filmsPopular:[{href:'/film/601/',title:'Детектив 601',year:2025,
+    genre:'триллер',imageAttrs:{'data-src':'data:image/gif;base64,abc',
+     src:poster}}],
+  seriesPopular:[],filmsNew:[],seriesNew:[]
+ };
+ const x=setup({noCache:true,catalogData});await x.settle();
+ assert.equal(x.data.kinoDiscoveryCatalogV1.popular[0].posterUrl,poster);
+});
+test('missing poster URL triggers established search metadata API instead of staying blank',async()=>{
+ const base='https://avatars.mds.yandex.net/get-kinopoisk-image/777/metadata';
+ const data={kinoDiscoveryCatalogV1:{schema:2,savedAt:Date.now(),
+  enrichedAt:Date.now(),popular:[{type:'film',id:'100',
+   title:'Детектив 100',year:2024,genres:[]}],new:[]}};
+ const responder=async request=>{
+  if(request.action==='getSearchMovieMetadata')
+   return {ok:true,metadata:{poster:base+'/orig'}};
+  if(request.action==='loadSearchPoster')
+   return request.payload.url===base+'/280x420'
+    ?{ok:true,dataUrl:'data:image/jpeg;base64,SU1BR0U='}
+    :{ok:false,error:'not found'};
+  return {ok:false};
+ };
+ const x=setup({data,imageResponder:responder});await x.settle();
+ assert.equal(x.messages.some(m=>m.action==='getSearchMovieMetadata'),true);
+ assert.equal(x.nodes.discoveryPoster.hidden,false);
+ assert.equal(x.nodes.discoveryPoster.src,'data:image/jpeg;base64,SU1BR0U=');
+});
+
+
+test('native HTML Image preload can recover where fetch-based poster worker fails',async()=>{
+ const base='https://avatars.mds.yandex.net/get-kinopoisk-image/777/native';
+ const data={kinoDiscoveryCatalogV1:{
+  schema:2,savedAt:Date.now(),enrichedAt:Date.now(),
+  popular:[{type:'film',id:'100',title:'Триллер',year:2024,
+   posterUrl:base+'/orig',genres:['триллер']}],new:[]}};
+ const x=setup({
+  data,nativePoster:url=>url===base+'/300x450',
+  imageResponder:async()=>({ok:false,error:'CORS blocked'})
+ });
+ await x.settle();
+ assert.equal(x.nodes.discoveryPoster.hidden,false);
+ assert.equal(x.nodes.discoveryPoster.src,base+'/300x450');
+ assert.equal(x.messages.filter(m=>m.action==='loadSearchPoster').length,0);
+ assert.equal(x.sessionData.kinoDiscoveryPostersV2['film:100'].posterUrl,
+  base+'/300x450');
+ const second=setup({data,sessionData:x.sessionData,
+  nativePoster:url=>url===base+'/300x450'});await second.settle();
+ assert.equal(second.nodes.discoveryPoster.src,base+'/300x450');
+ assert.equal(second.messages.filter(m=>m.action==='loadSearchPoster').length,0);
+});
+test('film page JSON-LD image becomes verified cached poster metadata',async()=>{
+ const poster='https://avatars.mds.yandex.net/get-kinopoisk-image/777/document/orig';
+ const data={kinoDiscoveryCatalogV1:{
+  schema:2,savedAt:Date.now(),enrichedAt:Date.now(),
+  popular:[{type:'film',id:'777',title:'Фильм',year:2025,genres:['драма']}],new:[]
+ }};
+ const x=setup({data,filmPoster:poster,catalogData:{}});await x.settle();
+ assert.equal(x.data.kinoDiscoveryFactsV1['film:777'].posterUrl,poster);
+});
+
+test('official GraphQL rating appears even when poster loads independently',async()=>{
+ const url='https://avatars.mds.yandex.net/get-kinopoisk-image/1/2/orig';
+ const data={kinoDiscoveryCatalogV1:{schema:2,savedAt:Date.now(),
+  enrichedAt:Date.now(),popular:[{type:'film',id:'880',
+   title:'Фильм с оценкой',year:2025,genres:['драма'],posterUrl:url}],
+  new:[]}};
+ const x=setup({data,nativePoster:src=>src===url,
+  imageResponder:async request=>request.action==='getSearchMovieMetadata'
+   ?{ok:true,metadata:{rating:8.7,poster:url}}
+   :{ok:false}});
+ await x.settle();
+ assert.equal(x.nodes.discoveryRating.hidden,false);
+ assert.equal(x.nodes.discoveryRating.textContent,'★ КП 8,7');
+ assert.equal(x.nodes.discoveryPoster.hidden,false);
+ assert.equal(x.data.kinoDiscoveryFactsV1['film:880'].rating,8.7);
+ const second=setup({data:x.data,sessionData:x.sessionData});
+ await second.settle();
+ assert.equal(second.nodes.discoveryRating.textContent,'★ КП 8,7');
+});
+test('film page JSON-LD rating used when GraphQL is unavailable',async()=>{
+ const data={kinoDiscoveryCatalogV1:{schema:2,savedAt:Date.now(),
+  enrichedAt:Date.now(),popular:[{type:'film',id:'990',
+   title:'Фильм с рейтингом',year:2025,genres:['драма']}],new:[]}};
+ const x=setup({data,catalogData:{},filmRating:'7.9'});
+ await x.settle();
+ assert.equal(x.nodes.discoveryRating.textContent,'★ КП 7,9');
+ assert.equal(x.nodes.discoveryRating.hidden,false);
+ assert.equal(x.data.kinoDiscoveryFactsV1['film:990'].rating,7.9);
+});
+
+test('expired session poster URL is replaced when the browser reports an image error',async()=>{
+ const broken='https://avatars.mds.yandex.net/get-kinopoisk-image/x/y/orig';
+ const data={kinoDiscoveryCatalogV1:{schema:2,savedAt:Date.now(),
+  enrichedAt:Date.now(),popular:[{type:'film',id:'125',
+   title:'Фильм 125',year:2025,genres:['драма']}],new:[]}};
+ const sessionData={kinoDiscoveryPostersV2:{
+  'film:125':{posterUrl:broken,cachedAt:Date.now(),verifiedPortrait:true}}};
+ const responder=async request=>{
+  if(request.action==='loadSearchPoster')
+   return {ok:true,dataUrl:'data:image/png;base64,SU1BR0U='};
+  return {ok:false};
+ };
+ const x=setup({data,sessionData,imageResponder:responder});
+ await x.settle();
+ assert.equal(x.nodes.discoveryPoster.src,broken);
+ x.nodes.discoveryPoster.events.error();
+ await x.settle();
+ assert.equal(x.nodes.discoveryPoster.src,'data:image/png;base64,SU1BR0U=');
+ assert.equal(x.nodes.discoveryPoster.hidden,false);
+});
+
+test('landscape catalog images are rejected and actual portrait metadata poster wins',async()=>{
+ const wide='https://avatars.mds.yandex.net/get-kinopoisk-image/777/wide/orig';
+ const portrait='https://avatars.mds.yandex.net/get-kinopoisk-image/777/real/orig';
+ const data={kinoDiscoveryCatalogV1:{schema:2,savedAt:Date.now(),
+  enrichedAt:Date.now(),popular:[{type:'film',id:'126',
+   title:'Постер против кадра',year:2026,genres:['триллер'],posterUrl:wide}],new:[]}};
+ const responder=async request=>{
+  if(request.action==='getSearchMovieMetadata')
+    return {ok:true,metadata:{poster:portrait,rating:8.3}};
+  return {ok:false,error:'network blocked'};
+ };
+ const x=setup({data,imageResponder:responder,
+  nativePoster:src=>src.includes('/wide/')
+    ?{width:640,height:360}
+    :src.includes('/real/')?{width:300,height:450}:false});
+ await x.settle();
+ assert.equal(x.nodes.discoveryPoster.src,portrait.replace('/orig','/280x420'));
+ assert.equal(x.nodes.discoveryRating.textContent,'★ КП 8,3');
+ assert.equal(x.sessionData.kinoDiscoveryPostersV2['film:126'].verifiedPortrait,true);
+ assert.equal(x.browserRequests.some(u=>u.includes('/wide/')),true);
+});
+test('landscape pictures from the background poster worker are not cached',async()=>{
+ const wide='https://st.kp.yandex.net/images/film_big/127.jpg';
+ const data={kinoDiscoveryCatalogV1:{schema:2,savedAt:Date.now(),
+  enrichedAt:Date.now(),popular:[{type:'film',id:'127',
+   title:'Не тот кадр',year:2026,genres:['драма']}],new:[]}};
+ const x=setup({data,nativePoster:src=>src.startsWith('data:')
+    ?{width:640,height:360}:false,
+  imageResponder:async request=>request.action==='loadSearchPoster'
+    ?{ok:true,dataUrl:'data:image/png;base64,SU1BR0U='}:{ok:false}});
+ await x.settle();
+ assert.equal(x.nodes.discoveryPoster.hidden,true);
+ assert.equal(x.nodes.discoveryPosterEmpty.hidden,false);
+ assert.equal(x.sessionData.kinoDiscoveryPostersV2?.['film:127'],undefined);
+ assert.equal(x.messages.some(m=>m.action==='loadSearchPoster'),true);
+});
+test('old cached thumbnails are ignored after upgrading to poster validation V2',async()=>{
+ const data={kinoDiscoveryCatalogV1:{schema:2,savedAt:Date.now(),
+  enrichedAt:Date.now(),popular:[{type:'film',id:'128',
+   title:'Тест кэша',year:2026,genres:['драма']}],new:[]}};
+ const sessionData={kinoDiscoveryPostersV1:{
+  'film:128':{posterUrl:'https://st.kp.yandex.net/images/film_big/128.jpg',
+   cachedAt:Date.now()}}};
+ const x=setup({data,sessionData});
+ await x.settle();
+ assert.equal(x.nodes.discoveryPoster.hidden,true);
+ assert.equal(x.sessionData.kinoDiscoveryPostersV2?.['film:128'],undefined);
+});
+
+test('the clapper placeholder is hidden in CSS once a real poster is available',()=>{
+ const css=fs.readFileSync(path.join(__dirname,'..','popup.css'),'utf8');
+ assert.match(css,/\.discovery-poster-empty\[hidden\]/);
+ assert.match(css,/\.discovery-poster-empty\{[^}]*display:grid/);
+ assert.match(css,/\.discovery-poster-empty\[hidden\][^}]*\{\s*display:none!important/);
+});
+
+test('fresh 90-minute selection reopens with identical titles and order, ignoring new ratings',async()=>{
+ const first=setup();await first.settle();
+ const selected=first.data.kinoDiscoveryFeedV1?.['7143359'];
+ assert.equal(selected.items.length,4);
+ assert.equal(selected.items[0].id,'100');
+ const changed={...first.data,kinoStatsRatingsV1:{
+  '7143359':{'film:99':{rating:1,genres:['триллер']}}
+ }};
+ const second=setup({data:changed});await second.settle();
+ assert.equal(second.fetches,0);
+ assert.equal(second.data.kinoDiscoveryFeedV1['7143359'].at,selected.at);
+ assert.deepEqual(second.data.kinoDiscoveryFeedV1['7143359'].items.map(x=>x.id),
+  selected.items.map(x=>x.id));
+ assert.equal(second.nodes.discoveryTitle.textContent,'Персональный триллер');
+});
+test('catalog and selected feed refresh after 90 minutes, not after 89',async()=>{
+ const first=setup();await first.settle();
+ const stale={...first.data,
+  kinoDiscoveryCatalogV1:{...first.data.kinoDiscoveryCatalogV1,
+   savedAt:Date.now()-91*60*1000,retryAt:0},
+  kinoDiscoveryFeedV1:{'7143359':{
+   ...first.data.kinoDiscoveryFeedV1['7143359'],at:Date.now()-91*60*1000}}
+ };
+ const second=setup({data:stale});await second.settle();
+ assert.equal(second.urls.filter(u=>u.includes('/lists/movies/')).length,4);
+ assert.equal(second.nodes.discoveryTitle.textContent,'Персональный триллер');
+ const recent={...first.data,
+  kinoDiscoveryCatalogV1:{...first.data.kinoDiscoveryCatalogV1,
+   savedAt:Date.now()-89*60*1000,retryAt:0},
+  kinoDiscoveryFeedV1:{'7143359':{
+   ...first.data.kinoDiscoveryFeedV1['7143359'],at:Date.now()-89*60*1000}}
+ };
+ const third=setup({data:recent});await third.settle();
+ assert.equal(third.fetches,0);
+});
+test('eye-off appends replacement as slide ten, keeps visible sequence and persists hide',async()=>{
+ const catalog=Array.from({length:14},(_,i)=>({
+  type:'film',id:String(1001+i),title:'Вариант '+i,year:2025,
+  genres:['драма'],rating:7.8
+ }));
+ const data={kinoDiscoveryCatalogV1:{
+  schema:2,savedAt:Date.now(),enrichedAt:Date.now(),popular:catalog,new:[]
+ },kinoStatsRatingsV1:{'7143359':{}},kinoStatsGenresV1:{},
+ kinoStatsWatchedV1:{'7143359':{}}};
+ const first=setup({data});await first.settle();
+ const before=first.data.kinoDiscoveryFeedV1['7143359'];
+ assert.equal(before.items.length,10);
+ const oldIds=before.items.map(x=>x.id);
+ first.nodes.discoveryHide.events.click();await first.settle();
+ const after=first.data.kinoDiscoveryFeedV1['7143359'];
+ assert.equal(after.items.length,10);
+ assert.equal(after.items.some(x=>x.id===oldIds[0]),false);
+ assert.equal(after.items[0].id,oldIds[1]);
+ assert.deepEqual(after.items.slice(0,9).map(x=>x.id),oldIds.slice(1));
+ assert.equal(after.items[9].id,'1011');
+ assert.equal(first.nodes.discoveryTitle.textContent,'Вариант 1');
+ assert.equal(after.at,before.at);
+ assert.equal(first.data.kinoDiscoveryHiddenV1['7143359']['film:'+oldIds[0]],true);
+ const reopened=setup({data:first.data});await reopened.settle();
+ assert.equal(reopened.urls.filter(u=>u.includes('/lists/movies/')).length,0);
+ assert.deepEqual(reopened.data.kinoDiscoveryFeedV1['7143359'].items.map(x=>x.id),
+  after.items.map(x=>x.id));
+ assert.equal(reopened.nodes.discoveryCounter.textContent,'1 / 10');
+});
+test('hide does not affect personal ratings, watched progress or other account',async()=>{
+ const first=setup();await first.settle();
+ const before=JSON.stringify(first.data.kinoStatsRatingsV1);
+ first.nodes.discoveryHide.events.click();await first.settle();
+ assert.equal(JSON.stringify(first.data.kinoStatsRatingsV1),before);
+ assert.equal(first.data.kinoDiscoveryHiddenV1['7143359']['film:100'],true);
+ assert.equal(first.data.kinoDiscoveryHiddenV1['9876543'],undefined);
+});
+
+test('an open side panel refreshes due catalog at 90-minute boundary',async()=>{
+ const first=setup();await first.settle();
+ first.advance(89*60*1000);
+ await first.timer[1]();await first.settle();
+ assert.equal(first.urls.filter(u=>u.includes('/lists/movies/')).length,0);
+ first.advance(2*60*1000);
+ await first.timer[1]();await first.settle();
+ assert.equal(first.urls.filter(u=>u.includes('/lists/movies/')).length,4);
+});
+test('hidden titles are removed from new selections across subsequent cycles',()=>{
+ const catalog=Array.from({length:12},(_,i)=>({
+  type:'film',id:String(3000+i),title:'Фильм '+i,year:2025,genres:['драма']
+ }));
+ const feed=core.select({recommended:catalog,
+  hidden:{'film:3000':true,'film:3003':true}});
+ assert.equal(feed.some(x=>x.id==='3000'||x.id==='3003'),false);
+ assert.equal(feed.length,10);
+});
+
+test('hiding a middle slide preserves later slide order and appends replacement',async()=>{
+ const catalog=Array.from({length:13},(_,i)=>({
+  type:'film',id:String(4100+i),title:'Фильм '+i,
+  year:2025,genres:['драма'],rating:7
+ }));
+ const data={kinoDiscoveryCatalogV1:{schema:2,
+  savedAt:Date.now(),enrichedAt:Date.now(),popular:catalog,new:[]},
+  kinoStatsRatingsV1:{'7143359':{}},kinoStatsWatchedV1:{'7143359':{}},
+  kinoStatsGenresV1:{}};
+ const h=setup({data});await h.settle();
+ h.nodes.discoveryNext.events.click();
+ h.nodes.discoveryNext.events.click();
+ const before=h.data.kinoDiscoveryFeedV1['7143359'].items.map(x=>x.id);
+ h.nodes.discoveryHide.events.click();await h.settle();
+ const after=h.data.kinoDiscoveryFeedV1['7143359'].items.map(x=>x.id);
+ assert.equal(after.length,10);
+ assert.deepEqual(after.slice(0,9),before.filter((_,i)=>i!==2));
+ assert.equal(after[9],'4110');
+ assert.equal(h.nodes.discoveryCounter.textContent,'3 / 10');
+ assert.equal(h.nodes.discoveryTitle.textContent,'Фильм 3');
+});
+
+test('hiding last slide wraps to the first existing slide, never to unready new last',async()=>{
+ const catalog=Array.from({length:12},(_,i)=>({
+  type:'film',id:String(5200+i),title:'Фильм '+i,
+  year:2025,genres:['комедия'],rating:7
+ }));
+ const data={kinoDiscoveryCatalogV1:{schema:2,
+  savedAt:Date.now(),enrichedAt:Date.now(),popular:catalog,new:[]},
+  kinoStatsRatingsV1:{'7143359':{}},kinoStatsWatchedV1:{'7143359':{}},
+  kinoStatsGenresV1:{}};
+ const h=setup({data});await h.settle();
+ for(let i=0;i<9;i++)h.nodes.discoveryNext.events.click();
+ assert.equal(h.nodes.discoveryCounter.textContent,'10 / 10');
+ h.nodes.discoveryHide.events.click();await h.settle();
+ const after=h.data.kinoDiscoveryFeedV1['7143359'].items;
+ assert.equal(after.length,10);
+ assert.equal(after[0].id,'5200');
+ assert.equal(after[9].id,'5210');
+ assert.equal(h.nodes.discoveryCounter.textContent,'1 / 10');
+ assert.equal(h.nodes.discoveryTitle.textContent,'Фильм 0');
+});
+
+test('one-time migration verifies genres BEFORE issuing final For You recommendations',async()=>{
+ const data={kinoDiscoveryCatalogV1:{
+  schema:2,enrichedAt:Date.now(),savedAt:Date.now(),retryAt:Date.now()+5000,
+  popular:[{type:'film',id:'901',title:'Неизвестный жанр 901',
+    year:2024,genres:[],rating:7.9},
+   {type:'film',id:'902',title:'Неизвестный жанр 902',
+    year:2024,genres:[],rating:7.2}],new:[]
+ },kinoStatsRatingsV1:{'7143359':{
+  'film:800':{rating:10,genres:['драма']},
+  'film:801':{rating:9,genres:['драма']}
+ }},kinoStatsGenresV1:{},kinoStatsWatchedV1:{'7143359':{}},
+ kinoDiscoveryFactsV1:{}};
+ const first=setup({data,catalogData:{}});
+ await first.settle();
+ assert.equal(first.data.kinoDiscoveryCatalogV1.personalizationSchema,2);
+ const chosen=first.data.kinoDiscoveryFeedV1['7143359'];
+ assert.equal(chosen.personalizationSchema,2);
+ assert.equal(chosen.items[0].kind,'for-you');
+ assert.equal(first.nodes.discoveryKind.textContent,'✦ Для вас');
+ assert.equal(first.data.kinoDiscoveryCatalogV1.popular[0].genres[0],'драма');
+ assert.equal(first.urls.filter(u=>u.includes('/lists/movies/')).length,0);
+ const second=setup({data:first.data});await second.settle();
+ assert.equal(second.fetches,0,'no metadata or catalog requests when feed is completed');
+ assert.deepEqual(second.data.kinoDiscoveryFeedV1['7143359'].items.map(
+  x=>x.id),chosen.items.map(x=>x.id));
+ assert.equal(second.nodes.discoveryKind.textContent,'✦ Для вас');
+});
+test('verified film fact cache upgrades old popular-only selections without network',async()=>{
+ const data={kinoDiscoveryCatalogV1:{
+  schema:2,enrichedAt:Date.now(),savedAt:Date.now(),
+  popular:[{type:'film',id:'915',title:'Фильм 915',year:2024,genres:[]}],
+  new:[]
+ },kinoDiscoveryFactsV1:{'film:915':{
+  genres:['триллер'],factsChecked:true,factsSchema:2,
+  cachedAt:Date.now()}},
+ kinoStatsRatingsV1:{'7143359':{
+  'film:800':{rating:10,genres:['триллер']}
+ }},kinoStatsGenresV1:{},kinoStatsWatchedV1:{'7143359':{}}};
+ const x=setup({data});await x.settle();
+ assert.equal(x.data.kinoDiscoveryFeedV1['7143359'].items[0].kind,'for-you');
+ assert.equal(x.nodes.discoveryKind.textContent,'✦ Для вас');
+ assert.equal(x.fetches,0);
+});
+test('missing reliable personal genres never fabricate a For You badge',async()=>{
+ const data={kinoDiscoveryCatalogV1:{
+  schema:2,enrichedAt:Date.now(),savedAt:Date.now(),
+  popular:[{type:'film',id:'999',title:'Фильм 999',
+   genres:['драма'],year:2024}],new:[]
+ },kinoStatsRatingsV1:{'7143359':{'film:800':{rating:10}}},
+ kinoStatsGenresV1:{},kinoStatsWatchedV1:{'7143359':{}},
+ kinoDiscoveryFactsV1:{}};
+ const x=setup({data});await x.settle();
+ assert.equal(x.data.kinoDiscoveryFeedV1['7143359'].items[0].kind,'popular');
+ assert.equal(x.nodes.discoveryKind.textContent,'✦ Популярное');
+});
+
+test('previously cached ten For You slides migrate once into alternating labels',async()=>{
+ const at=Date.now()-30*60*1000;
+ const catalog=Array.from({length:17},(_,i)=>({
+  type:'film',id:String(1700+i),title:'Рекомендация '+i,
+  year:2025,genres:['драма'],rating:7.8
+ }));
+ const votes={'film:50':{rating:10,genres:['драма']}};
+ const previous=catalog.slice(0,10).map(m=>({...m,kind:'for-you'}));
+ const data={
+  kinoDiscoveryCatalogV1:{schema:2,savedAt:at,enrichedAt:at,
+   personalizationSchema:2,popular:catalog,new:[]},
+  kinoDiscoveryFeedV1:{'7143359':{
+   at,items:previous,catalogAt:at,personalizationSchema:2
+  }},
+  kinoStatsRatingsV1:{'7143359':votes},kinoStatsWatchedV1:{'7143359':{}},
+  kinoStatsGenresV1:{},kinoDiscoveryFactsV1:{}
+ };
+ const x=setup({data});await x.settle();
+ const migrated=x.data.kinoDiscoveryFeedV1['7143359'];
+ assert.equal(migrated.at,at);
+ assert.equal(migrated.mixSchema,3);
+ assert.deepEqual(migrated.items.map(m=>m.kind),[
+  'for-you','popular','for-you','popular','for-you',
+  'popular','for-you','popular','for-you','popular'
+ ]);
+ assert.equal(x.urls.filter(u=>u.includes('/lists/movies/')).length,0);
+ const reopened=setup({data:x.data});await reopened.settle();
+ assert.equal(reopened.urls.filter(u=>u.includes('/lists/movies/')).length,0);
+ assert.deepEqual(reopened.data.kinoDiscoveryFeedV1['7143359'].items,
+  migrated.items);
+ assert.equal(reopened.data.kinoDiscoveryFeedV1['7143359'].at,at);
+});
+test('hiding one personalized title keeps ten slides and appends a catalog-based replacement',async()=>{
+ const catalog=Array.from({length:16},(_,i)=>({
+  type:'film',id:String(1800+i),title:'Фильм '+i,
+  year:2025,genres:['фантастика']
+ }));
+ const data={kinoDiscoveryCatalogV1:{
+  schema:2,savedAt:Date.now(),enrichedAt:Date.now(),
+  personalizationSchema:2,popular:catalog,new:[]},
+  kinoStatsRatingsV1:{'7143359':{
+   'film:89':{rating:9,genres:['фантастика']}
+  }},kinoStatsWatchedV1:{'7143359':{}},kinoStatsGenresV1:{}};
+ const h=setup({data});await h.settle();
+ const oldFeed=h.data.kinoDiscoveryFeedV1['7143359'];
+ assert.deepEqual(oldFeed.items.slice(0,4).map(m=>m.kind),
+  ['for-you','popular','for-you','popular']);
+ h.nodes.discoveryHide.events.click();await h.settle();
+ const next=h.data.kinoDiscoveryFeedV1['7143359'];
+ assert.equal(next.items.length,10);
+ assert.equal(next.at,oldFeed.at);
+ assert.deepEqual(next.items.slice(0,9).map(x=>x.id),
+  oldFeed.items.slice(1).map(x=>x.id));
+ assert.equal(next.items.some(x=>x.id===oldFeed.items[0].id),false);
+ assert.equal(h.nodes.discoveryTitle.textContent,oldFeed.items[1].title);
+});

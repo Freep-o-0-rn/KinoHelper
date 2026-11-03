@@ -102,6 +102,38 @@ const TITLE_SUGGEST_QUERY = `
   }
 `;
 
+const MOVIE_SET_PLANNED_QUERY = `
+  mutation MovieSetPlannedToWatch($movieId: Long!) {
+    movie {
+      plannedToWatch {
+        set(input: {movieId: $movieId}) {
+          status
+          error { message __typename }
+          __typename
+        }
+        __typename
+      }
+      __typename
+    }
+  }
+`;
+
+const MOVIE_REMOVE_PLANNED_QUERY = `
+  mutation MovieRemovePlannedToWatch($movieId: Long!) {
+    movie {
+      plannedToWatch {
+        remove(input: {movieId: $movieId}) {
+          status
+          error { message __typename }
+          __typename
+        }
+        __typename
+      }
+      __typename
+    }
+  }
+`;
+
 const MOVIE_SET_VOTE_QUERY = `
   mutation MovieSetVote($movieId: Long!, $rate: Int!) {
     movie {
@@ -232,7 +264,7 @@ async function installRatingOriginRule() {
         ]
       },
       condition: {
-        regexFilter: "^https://graphql\\.kinopoisk\\.ru/graphql/\\?operationName=(?:MoviePreviewCard|MovieSetVote|SuggestSearch)$",
+        regexFilter: "^https://graphql\\.kinopoisk\\.ru/graphql/\\?operationName=(?:MoviePreviewCard|MovieSetVote|MovieSetPlannedToWatch|MovieRemovePlannedToWatch|SuggestSearch)$",
         requestMethods: ["post"],
         resourceTypes: ["xmlhttprequest"],
         tabIds: [chrome.tabs.TAB_ID_NONE]
@@ -377,7 +409,10 @@ async function findPosterOnMoviePage(payload) {
 }
 
 const imageDataCache = new Map();
+const imageInFlight = new Map();
 const IMAGE_CACHE_MAX = 40;
+const IMAGE_CACHE_MAX_CHARS = 16 * 1024 * 1024;
+let imageCacheChars = 0;
 async function loadSearchPoster(payload) {
   const raw = String(payload?.url || '').trim();
   const address = new URL(raw);
@@ -386,11 +421,23 @@ async function loadSearchPoster(payload) {
       !['avatars.mds.yandex.net', 'st.kp.yandex.net'].includes(host)) {
     throw new Error('Недопустимый источник постера');
   }
-  if (imageDataCache.has(address.href)) return imageDataCache.get(address.href);
+  const cached = imageDataCache.get(address.href);
+  if (cached) {
+    // Recent images remain cached; rarely used images are evicted first.
+    imageDataCache.delete(address.href);
+    imageDataCache.set(address.href,cached);
+    return cached;
+  }
+  const existing = imageInFlight.get(address.href);
+  if(existing)return existing;
+  const task=(async()=>{
+  const requestedTimeout=Number(payload?.timeoutMs);
+  const timeoutMs=Number.isFinite(requestedTimeout)&&requestedTimeout>0
+    ?Math.max(1800,Math.min(6500,requestedTimeout)):6500;
   const result = await fetch(address.href, {
     credentials: 'omit',
     cache: 'force-cache',
-    signal: AbortSignal.timeout(6500)
+    signal: AbortSignal.timeout(timeoutMs)
   });
   if (!result.ok) throw new Error('Постер: HTTP ' + result.status);
   const mime = (result.headers.get('content-type') || '').split(';')[0].trim();
@@ -406,11 +453,22 @@ async function loadSearchPoster(payload) {
     binary += String.fromCharCode(...bytes.subarray(start, start + 8192));
   }
   const dataUrl = 'data:' + mime + ';base64,' + btoa(binary);
-  imageDataCache.set(address.href, dataUrl);
-  if (imageDataCache.size > IMAGE_CACHE_MAX) {
-    imageDataCache.delete(imageDataCache.keys().next().value);
+  // Bound the base64 cache by memory, not only by entry count.
+  // A single image can be nearly 2 MB; 40 such images are expensive.
+  if(dataUrl.length <= IMAGE_CACHE_MAX_CHARS) {
+    imageDataCache.set(address.href,dataUrl);
+    imageCacheChars += dataUrl.length;
+    while(imageDataCache.size > IMAGE_CACHE_MAX ||
+          imageCacheChars > IMAGE_CACHE_MAX_CHARS) {
+      const oldest=imageDataCache.keys().next().value;
+      imageCacheChars -= imageDataCache.get(oldest).length;
+      imageDataCache.delete(oldest);
+    }
   }
   return dataUrl;
+  })().finally(()=>imageInFlight.delete(address.href));
+  imageInFlight.set(address.href,task);
+  return task;
 }
 
 function convertSuggestedMovie(movie) {
@@ -569,18 +627,27 @@ async function searchMovieTitles(payload) {
 }
 
 const searchMetadataCache = new Map();
+const metadataInFlight = new Map();
 const SEARCH_META_TTL_MS = 30 * 60 * 1000;
 const SEARCH_META_MAX_CACHE = 100;
+let searchMetadataOfflineUntil=0;
 
 async function getSearchMovieMetadata(payload) {
   const media = normalizeMediaPayload(payload);
+  const discovery=payload?.discovery===true;
   const key = media.type + ':' + media.id;
   const cached = searchMetadataCache.get(key);
   if (cached && Date.now() - cached.time < SEARCH_META_TTL_MS) {
     return cached.data;
   }
-
+  const existing = metadataInFlight.get(key);
+  if(existing)return existing;
+  const task=(async()=>{
   const data = await runRatingRequest(async () => {
+    // Check inside the serialized queue too: after a network outage the
+    // other queued discovery cards should not each wait for a timeout.
+    if(discovery&&Date.now()<searchMetadataOfflineUntil)
+      throw Error('Метаданные временно недоступны, повторим позже');
     const fetchMetadata = async query => {
       const response = await fetch(
         ratingGraphqlUrl("MoviePreviewCard"),
@@ -590,7 +657,7 @@ async function getSearchMovieMetadata(payload) {
             { movieId: media.id, actorsLimit: 0, withUserData: false },
             query
           ),
-          signal: AbortSignal.timeout(12000)
+          signal: AbortSignal.timeout(6500)
         }
       );
       if (!response.ok) throw new Error("Кинопоиск вернул HTTP " + response.status);
@@ -606,7 +673,15 @@ async function getSearchMovieMetadata(payload) {
     try {
       movie = await fetchMetadata(MOVIE_SEARCH_METADATA_QUERY);
     } catch (error) {
-      console.warn("[KinoHelper] Дополнительные поля постера недоступны:", error.message);
+      // An unknown GraphQL gallery field may be fixed by the basic query.
+      // A network timeout/HTTP outage will not; avoid the same slow call twice.
+      const message=String(error?.message||error);
+      const isNetwork=/fetch|network|timeout|timed out|abort|ERR_|HTTP (?:403|429|5\d\d)/i.test(message);
+      if(isNetwork){
+        if(discovery)searchMetadataOfflineUntil=Date.now()+45*1000;
+        throw error;
+      }
+      console.warn("[KinoHelper] Дополнительные поля постера недоступны:", message);
       movie = await fetchMetadata(MOVIE_PREVIEW_CARD_QUERY);
     }
     if (!movie) throw new Error("Не удалось получить карточку фильма");
@@ -642,6 +717,9 @@ async function getSearchMovieMetadata(payload) {
     }
   }
   return data;
+  })().finally(()=>metadataInFlight.delete(key));
+  metadataInFlight.set(key,task);
+  return task;
 }
 
 async function getMovieRating(payload) {
@@ -706,6 +784,8 @@ async function getMovieRating(payload) {
     return {
       authorized: true,
       rating: Number.isInteger(rating) && rating >= 1 && rating <= 10 ? rating : null,
+      planned: typeof userData.isPlannedToWatch === 'boolean'
+        ? userData.isPlannedToWatch : null,
       ...previewMeta
     };
   });
@@ -752,6 +832,41 @@ async function setMovieRating(payload) {
       authRequired,
       error: details || "Кинопоиск не подтвердил сохранение оценки"
     };
+  });
+}
+
+// Writes the same GraphQL mutation used by Kinopoisk's own bookmark
+// control, with the same session headers and queue as movie ratings.
+// This never creates a tab or changes local watchlist data on failure.
+async function setMoviePlanned(payload, desired) {
+  const media = normalizeMediaPayload(payload);
+  if (typeof desired !== 'boolean')
+    throw new Error('Не указано действие для «Буду смотреть»');
+  const operationName = desired
+    ? 'MovieSetPlannedToWatch' : 'MovieRemovePlannedToWatch';
+  const query = desired ? MOVIE_SET_PLANNED_QUERY : MOVIE_REMOVE_PLANNED_QUERY;
+  return runRatingRequest(async () => {
+    const response = await fetch(
+      ratingGraphqlUrl(operationName),
+      ratingRequestOptions(operationName,{ movieId: media.id },query)
+    );
+    if(response.status === 401 || response.status === 403)
+      return {ok:false,authRequired:true,
+        error:'Войдите в аккаунт Кинопоиска'};
+    if(!response.ok)
+      return {ok:false,error:'Кинопоиск: HTTP '+response.status};
+    const result = await response.json();
+    const responseField = result?.data?.movie?.plannedToWatch;
+    const operation = desired ? responseField?.set : responseField?.remove;
+    const problems = [
+      operation?.error?.message,
+      ...(Array.isArray(result?.errors)
+        ? result.errors.map(error => error?.message):[])
+    ].filter(Boolean).join('; ');
+    if(operation?.status === 'SUCCESS' && !problems)
+      return {ok:true,planned:desired};
+    return {ok:false,authRequired:/auth|login|unauthor|forbidden|авториз/i
+      .test(problems),error:problems||'Кинопоиск не подтвердил изменение'};
   });
 }
 
@@ -1486,7 +1601,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // Переключение способа открытия расширения: popup / боковая панель.
 // Не затрагивает поиск, историю, темы и правила фильтров.
 const DISPLAY_MODE_STORAGE_KEY = 'kinoHelperDisplayMode';
-const normalizeDisplayMode = value => value === 'sidepanel' ? 'sidepanel' : 'popup';
+// Side Panel is the default for fresh installations and unset preferences.
+// Preserve an explicitly selected popup mode across extension updates.
+const normalizeDisplayMode = value => value === 'popup' ? 'popup' : 'sidepanel';
 
 async function applyDisplayMode(mode) {
   if (mode === 'sidepanel') {
@@ -1525,3 +1642,1012 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     .catch(error => sendResponse({ ok: false, error: error.message }));
   return true;
 });
+
+
+// -------------------------
+// Resume playback: passive, manifest-scoped film autosave.
+// No player control or seek. Series deliberately excluded until episode identity
+// is independently verified, to prevent restoring an unrelated episode.
+// -------------------------
+const RESUME_STORAGE_KEY = 'kinoPlaybackProgressV1';
+const RESUME_PLAYER_ORIGIN = 'https://theatre.stravers.live/*';
+const RESUME_PLAYER_HOST = 'theatre.stravers.live';
+const RESUME_MAX_ENTRIES = 120;
+const PENDING_RESUME_PREFIX = 'kinoResumePending:';
+const PENDING_RESUME_TTL = 120000;
+function pendingResumeKey(tabId) {
+  return PENDING_RESUME_PREFIX + tabId;
+}
+let resumeWriteQueue = Promise.resolve();
+
+function resumeOrigin(url) {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' ? u.origin : '';
+  } catch {
+    return '';
+  }
+}
+
+function resumeSourceIsTrusted(sender) {
+  return sender?.id === chrome.runtime.id &&
+    Number.isInteger(sender?.tab?.id) &&
+    resumeOrigin(sender.url) === 'https://' + RESUME_PLAYER_HOST;
+}
+
+async function resumeIdentifyFilm(tabId) {
+  const tab = await chrome.tabs.get(tabId);
+  if (!tab?.url) return null;
+  const origin = resumeOrigin(tab.url);
+  // Recovered session may have no longer existed after redirect. A stable
+  // /film/<id> path on the known parent site is an independent identity.
+  const direct = parseMedia(tab.url);
+  // An explicit series URL must NEVER inherit an old film watch session.
+  if (direct && direct.type !== 'film') return null;
+  if (direct?.type === 'film' &&
+      [resumeOrigin(WATCH_BASE), resumeOrigin(FALLBACK_WATCH_BASE),
+        'https://brogiro.cfd'].includes(origin)) {
+    const session = await getSession(tabId);
+    // Series players sometimes use /film/<id>. A verified series session or
+    // a still-valid player episode selection overrides that route.
+    if (session?.type === 'series' && session.currentUrl === tab.url)
+      return null;
+    const evidence = (await chrome.storage.session.get(episodeKey(tabId)))
+      [episodeKey(tabId)];
+    if (resolvedEpisode(evidence, direct.id)) return null;
+    // An existing session for another movie must never attach its title.
+    const title = session?.type === 'film' && String(session.id) === direct.id
+      ? session.title : '';
+    return { id: direct.id, title: title || tab.title || '' };
+  }
+
+  const session = await getSession(tabId);
+  if (session?.type !== 'film' || !/^\d+$/.test(String(session.id))) return null;
+  // The active top-level page must be a known step in the tracked watch chain.
+  if (!Array.isArray(session.recognizedOrigins) ||
+      !session.recognizedOrigins.includes(origin) ||
+      session.currentUrl !== tab.url ||
+      origin === KINOPOISK_BASE) return null;
+  return { id: String(session.id), title: session.title || tab.title || '' };
+}
+
+function validatePlaybackEvent(data) {
+  if (!data || typeof data !== 'object') return null;
+  const position = Number(data.currentTime);
+  const duration = Number(data.duration);
+  const played = Number(data.playedSeconds);
+  const event = data.event;
+  if (!Number.isFinite(position) || !Number.isFinite(duration) ||
+      !Number.isFinite(played) || played < 2 ||
+      duration < 60 || duration > 8 * 3600 ||
+      position < 1 || position > duration + 2 ||
+      !['playing', 'pause', 'seeked', 'hidden', 'pagehide', 'ended'].includes(event)) return null;
+  return { position: Math.min(Math.floor(position), Math.floor(duration)),
+    duration: Math.floor(duration), played, event };
+}
+
+
+async function armResumeForTab(tabId, filmId, sender) {
+  if (sender?.id !== chrome.runtime.id ||
+      !sender?.url?.startsWith(chrome.runtime.getURL('')) ||
+      !Number.isInteger(tabId) || tabId < 0 ||
+      !/^[1-9]\d{0,12}$/.test(String(filmId))) {
+    return { ok: false, reason: 'untrusted request' };
+  }
+
+  const session = await getSession(tabId);
+  if (session?.type !== 'film' || String(session.id) !== String(filmId) ||
+      Date.now() - session.startedAt > 60000) {
+    return { ok: false, reason: 'watch session mismatch' };
+  }
+  const raw = (await chrome.storage.local.get(RESUME_STORAGE_KEY))[RESUME_STORAGE_KEY];
+  const entry = raw?.['film:' + filmId];
+  if (!entry || entry.completed || entry.type !== 'film' ||
+      String(entry.id) !== String(filmId) ||
+      !Number.isFinite(entry.duration) || entry.duration < 60 ||
+      !Number.isFinite(entry.position) || entry.position < 10 ||
+      entry.position > entry.duration - 25) {
+    return { ok: false, reason: 'no resumable progress' };
+  }
+  await chrome.storage.session.set({
+    [pendingResumeKey(tabId)]: {
+      filmId: String(filmId), position: entry.position,
+      duration: entry.duration, createdAt: Date.now()
+    }
+  });
+  return { ok: true, position: entry.position };
+}
+
+async function readPendingResume(sender) {
+  if (!resumeSourceIsTrusted(sender)) return null;
+  const tabId = sender.tab.id;
+  const key = pendingResumeKey(tabId);
+  const raw = (await chrome.storage.session.get(key))[key];
+  if (!raw) return null;
+  if (!Number.isFinite(raw.createdAt) ||
+      Date.now() - raw.createdAt > PENDING_RESUME_TTL) {
+    await chrome.storage.session.remove(key);
+    return null;
+  }
+  const film = await resumeIdentifyFilm(tabId);
+  if (!film || String(film.id) !== raw.filmId) return null;
+  return { filmId: raw.filmId, position: raw.position, duration: raw.duration };
+}
+
+async function acknowledgeResume(sender, position) {
+  const raw = await readPendingResume(sender);
+  if (!raw || !Number.isFinite(position) || Math.abs(position - raw.position) > 4)
+    return { ok: false };
+  await chrome.storage.session.remove(pendingResumeKey(sender.tab.id));
+  return { ok: true };
+}
+
+async function saveResumeProgress(payload, sender) {
+  const item = validatePlaybackEvent(payload);
+  if (!item || !resumeSourceIsTrusted(sender)) {
+    return { ok: false, skipped: 'invalid source or progress' };
+  }
+  // A still-open content script must stop writing immediately after the user
+  // revokes host permission, even before that page is reloaded.
+  const allowed = await chrome.permissions.contains({
+    origins: [RESUME_PLAYER_ORIGIN]
+  });
+  if (!allowed) return { ok: false, skipped: 'player access revoked' };
+  // A series may use a film-looking URL. An armed series restoration
+  // prevents any film progress from contaminating the same media ID.
+  const seriesPending = (await chrome.storage.session.get(seriesPendingKey(sender.tab.id)))
+    [seriesPendingKey(sender.tab.id)];
+  if (seriesPending && Date.now() - seriesPending.createdAt < SERIES_PENDING_TTL_MS)
+    return {ok:false,skipped:'series restoration active'};
+  const film = await resumeIdentifyFilm(sender.tab.id);
+  if (!film) return { ok: false, skipped: 'movie identification unavailable' };
+  const pending = (await chrome.storage.session.get(pendingResumeKey(sender.tab.id)))
+    [pendingResumeKey(sender.tab.id)];
+  // During restoration, don't replace the checkpoint with the new video's 0:00.
+  if (pending && Date.now() - pending.createdAt < PENDING_RESUME_TTL &&
+      pending.filmId === String(film.id)) {
+    return { ok: false, skipped: 'restoring saved position' };
+  }
+  const key = 'film:' + film.id;
+  const safeTitle = String(film.title || '').replace(/\s+/g, ' ').trim().slice(0, 150);
+  if (key.length > 40) return { ok: false, skipped: 'invalid movie id' };
+
+  // Serialize writes to prevent a racing old storage snapshot from overwriting
+  // another tab's progress. No storage API calls from the iframe itself.
+  const write = async () => {
+    const store = await chrome.storage.local.get(RESUME_STORAGE_KEY);
+    const entries = store[RESUME_STORAGE_KEY] &&
+      typeof store[RESUME_STORAGE_KEY] === 'object' &&
+      !Array.isArray(store[RESUME_STORAGE_KEY])
+      ? { ...store[RESUME_STORAGE_KEY] } : {};
+    const older = entries[key];
+    const coverage = await rememberPlaybackCoverage(key,item,payload);
+    // Films now finish automatically once 85% of distinct video material
+    // has actually played and the playback head has reached the threshold.
+    // A seek to 85% without the coverage evidence cannot finish a film.
+    const completed = playbackCompletionStatus(item, older, coverage, true);
+
+    // If playback restarted from the beginning after completion, a new
+    // verified session creates a fresh unfinished entry.
+    entries[key] = {
+      type: 'film',
+      id: film.id,
+      title: safeTitle || older?.title || 'Фильм №' + film.id,
+      position: item.position,
+      duration: item.duration,
+      updatedAt: Date.now(),
+      completed,
+      completedBy: completed
+        ? (older?.completedBy || 'verified-coverage') : undefined,
+      source: RESUME_PLAYER_HOST
+    };
+
+    const kept = Object.entries(entries)
+      .filter(([id, value]) => /^film:\d+$/.test(id) &&
+        value && Number.isFinite(value.updatedAt))
+      .sort((a, b) => b[1].updatedAt - a[1].updatedAt)
+      .slice(0, RESUME_MAX_ENTRIES);
+    await chrome.storage.local.set({
+      [RESUME_STORAGE_KEY]: Object.fromEntries(kept)
+    });
+    return { ok: true, key, position: item.position, completed,
+      newlyCompleted: completed && !Boolean(older?.completed) };
+  };
+  const result = resumeWriteQueue.then(write, write);
+  resumeWriteQueue = result.catch(error => {
+    console.warn('[KinoHelper] Не удалось сохранить таймкод:', error);
+  });
+  return result;
+}
+
+// The tracker now loads declaratively from manifest.content_scripts.
+// On extension update, inject once into already-open matching iframe documents.
+// The script has a global guard against double initialization.
+async function injectResumeIntoOpenTabs() {
+  const tabs = await chrome.tabs.query({});
+  for (const tab of tabs) {
+    if (!Number.isInteger(tab.id)) continue;
+    try {
+      const frames = await chrome.webNavigation.getAllFrames({ tabId: tab.id });
+      const ids = (frames || []).filter(frame =>
+        resumeOrigin(frame.url) === 'https://' + RESUME_PLAYER_HOST)
+        .map(frame => frame.frameId);
+      if (ids.length) {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id, frameIds: ids },
+          files: ['playback-tracker.js', 'playback-resume.js',
+            'series-progress-tracker.js', 'series-playback-resume.js'],
+          world: 'ISOLATED'
+        });
+      }
+      const episodeFrames = (frames || []).filter(frame =>
+        ['https://brogiro.cfd', 'https://theatre.stravers.live']
+          .includes(resumeOrigin(frame.url)))
+        .map(frame => frame.frameId);
+      if (episodeFrames.length) {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id, frameIds: episodeFrames },
+          files: ['episode-detector.js'],
+          world: 'ISOLATED'
+        });
+      }
+    } catch {
+      // Tab may close or its iframe may navigate during extension update.
+    }
+  }
+}
+
+async function migrateLegacyResumeRegistration() {
+  // 1.545/1.546 registered this script dynamically. 1.547 uses the manifest.
+  // Remove the old registration to avoid extra work or duplicate injections.
+  const legacyId = 'kino-playback-tracker-v1';
+  try {
+    const old = await chrome.scripting.getRegisteredContentScripts({ ids: [legacyId] });
+    if (old.length) {
+      await chrome.scripting.unregisterContentScripts({ ids: [legacyId] });
+    }
+  } catch (error) {
+    console.warn('[KinoHelper] Не удалось удалить старую регистрацию:', error);
+  }
+}
+
+async function prepareResumeTracking() {
+  await migrateLegacyResumeRegistration();
+  await injectResumeIntoOpenTabs();
+}
+
+chrome.runtime.onInstalled.addListener(() => {
+  void prepareResumeTracking().catch(error =>
+    console.warn('[KinoHelper] Не удалось подключить отслеживание после обновления:', error));
+});
+chrome.runtime.onStartup.addListener(() => {
+  void prepareResumeTracking().catch(error =>
+    console.warn('[KinoHelper] Не удалось подключить отслеживание после запуска:', error));
+});
+
+chrome.tabs.onRemoved.addListener(tabId => {
+  void chrome.storage.session.remove(pendingResumeKey(tabId)).catch(() => {});
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.action === 'kinoResumeArm') {
+    armResumeForTab(message.tabId, message.filmId, sender)
+      .then(sendResponse).catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+  if (message?.action === 'kinoResumeGetPending') {
+    readPendingResume(sender)
+      .then(value => sendResponse({ ok: Boolean(value), pending: value }))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+  if (message?.action === 'kinoResumeAcknowledge') {
+    acknowledgeResume(sender, Number(message.position))
+      .then(sendResponse).catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+  if (message?.action !== 'kinoPlaybackProgress') return false;
+  saveResumeProgress(message.payload, sender)
+    .then(async result => {
+      // Count only playback samples already accepted as verified film progress.
+      if (result?.ok) {
+        await statsRememberCompletion(result.key, result.completed)
+          .catch(error => console.warn('[KinoHelper stats] Film catalog:', error));
+        if (result.newlyCompleted &&
+            typeof self !== 'undefined' &&
+            self.KinoWatchlistAutoComplete?.onFilmCompleted) {
+          await self.KinoWatchlistAutoComplete.onFilmCompleted(result.key)
+            .catch(error => console.warn('[KinoHelper] Auto watchlist transfer:',error));
+        }
+        await statsRecordVerifiedTime(result.key, message.payload)
+          .catch(error => console.warn('[KinoHelper stats] Film time:', error));
+      }
+      sendResponse(result);
+    })
+    .catch(error => sendResponse({ ok: false, error: error.message }));
+  return true;
+});
+
+
+// 1.550: season/episode recognition is read-only and kept in session memory.
+// A series timecode is NOT saved or restored until real player selection is
+// verified: wrong episodes can have identical durations.
+const EPISODE_KEY_PREFIX = 'kinoEpisodeSelection:';
+const EPISODE_TTL_MS = 20000;
+const episodeKey = tabId => EPISODE_KEY_PREFIX + tabId;
+
+function originOfEpisodeSender(sender) {
+  return resumeOrigin(sender?.url);
+}
+
+async function trustedSeriesTab(tabId, { playerConfirmed = false } = {}) {
+  const tab = await chrome.tabs.get(tabId);
+  if (!tab?.url) return null;
+  const origin = resumeOrigin(tab.url);
+  if (!['https://brogiro.cfd', resumeOrigin(WATCH_BASE),
+    resumeOrigin(FALLBACK_WATCH_BASE)].includes(origin)) return null;
+  const direct = parseMedia(tab.url);
+  const session = await getSession(tabId);
+
+  if (direct?.type === 'series') {
+    if (session && (session.type !== 'series' ||
+        String(session.id) !== String(direct.id))) return null;
+    return { id: String(direct.id), title: session?.title || tab.title || '' };
+  }
+
+  if (direct?.type === 'film') {
+    // The provider uses /film/<id> even for confirmed series. Never infer
+    // a series merely from its URL/title. Require a fresh episode selection
+    // from the trusted player iframe (or its existing verified observation).
+    if (session?.currentUrl === tab.url && session.id != null &&
+        String(session.id) !== String(direct.id)) return null;
+    const observed = (await chrome.storage.session.get(episodeKey(tabId)))
+      [episodeKey(tabId)];
+    if (!playerConfirmed && !resolvedEpisode(observed, direct.id)) return null;
+    return { id: String(direct.id), title: session?.title || tab.title || '' };
+  }
+
+  if (session?.type !== 'series' || !/^[1-9]\d{0,12}$/.test(String(session.id)) ||
+      !Array.isArray(session.recognizedOrigins) ||
+      !session.recognizedOrigins.includes(origin) ||
+      session.currentUrl !== tab.url) return null;
+  return { id: String(session.id), title: session.title || tab.title || '' };
+}
+
+function resolvedEpisode(entry, seriesId, at = Date.now()) {
+  if (!entry || entry.seriesId !== seriesId ||
+      !entry.sources || typeof entry.sources !== 'object') return null;
+  const values = Object.values(entry.sources).filter(source =>
+    source && Number.isInteger(source.season) && Number.isInteger(source.episode) &&
+    source.season >= 1 && source.season <= 250 &&
+    source.episode >= 1 && source.episode <= 250 &&
+    Number.isFinite(source.at) && at - source.at >= 0 &&
+    at - source.at <= EPISODE_TTL_MS);
+  if (!values.length) return null;
+  const identities = new Set(values.map(value => value.season + ':' + value.episode));
+  if (identities.size !== 1) return null;
+  return { season: values[0].season, episode: values[0].episode };
+}
+
+async function saveEpisodeObservation(payload, sender) {
+  if (sender?.id !== chrome.runtime.id ||
+      !Number.isInteger(sender.tab?.id) ||
+      !Number.isInteger(sender.frameId) ||
+      !['https://brogiro.cfd', 'https://theatre.stravers.live']
+        .includes(originOfEpisodeSender(sender))) return { ok: false };
+  const clearing = payload?.clear === true;
+  const season = clearing ? null : Number(payload?.season);
+  const episode = clearing ? null : Number(payload?.episode);
+  if (!clearing && (!Number.isInteger(season) || season < 1 || season > 250 ||
+      !Number.isInteger(episode) || episode < 1 || episode > 250)) {
+    return { ok: false };
+  }
+
+  const tabId = sender.tab.id;
+  // The iframe's own selected season and episode are sufficient evidence
+  // to classify a /film/<id> route as a series for this particular tab.
+  const series = await trustedSeriesTab(tabId, {
+    playerConfirmed: !clearing &&
+      originOfEpisodeSender(sender) === 'https://theatre.stravers.live'
+  });
+  if (!series) return { ok: false };
+  const key = episodeKey(tabId);
+  const stored = (await chrome.storage.session.get(key))[key];
+  const before = resolvedEpisode(stored, series.id);
+  const at = Date.now();
+  const sources = stored?.seriesId === series.id && stored?.sources
+    ? { ...stored.sources } : {};
+  for (const [frame, data] of Object.entries(sources)) {
+    if (!data || at - data.at > EPISODE_TTL_MS || at < data.at) delete sources[frame];
+  }
+  if (clearing) delete sources[String(sender.frameId)];
+  else sources[String(sender.frameId)] = { season, episode, at };
+  const next = { seriesId: series.id, sources };
+  if (!Object.keys(sources).length) await chrome.storage.session.remove(key);
+  else await chrome.storage.session.set({ [key]: next });
+  const after = resolvedEpisode(next, series.id);
+  if (before?.season !== after?.season || before?.episode !== after?.episode) {
+    chrome.runtime.sendMessage({ action: 'kinoEpisodeSelectionChanged', tabId })
+      .catch(() => {});
+  }
+  return { ok: true, confirmed: Boolean(after) };
+}
+
+async function getEpisodeIdentity(tabId, sender) {
+  if (sender?.id !== chrome.runtime.id ||
+      !sender?.url?.startsWith(chrome.runtime.getURL('')) ||
+      !Number.isInteger(tabId)) return null;
+  const series = await trustedSeriesTab(tabId);
+  if (!series) return null;
+  const value = (await chrome.storage.session.get(episodeKey(tabId)))
+    [episodeKey(tabId)];
+  const selection = resolvedEpisode(value, series.id);
+  return selection ? { seriesId: series.id, ...selection } : null;
+}
+
+chrome.tabs.onRemoved.addListener(tabId => {
+  void chrome.storage.session.remove(episodeKey(tabId)).catch(() => {});
+});
+chrome.webNavigation.onCommitted.addListener(details => {
+  if (details.frameId === 0) {
+    void chrome.storage.session.remove(episodeKey(details.tabId)).catch(() => {});
+  }
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.action === 'kinoSeriesEpisodeObserved') {
+    saveEpisodeObservation(message.payload, sender)
+      .then(sendResponse).catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+  if (message?.action === 'kinoGetEpisodeIdentity') {
+    getEpisodeIdentity(message.tabId, sender)
+      .then(value => sendResponse({ ok: Boolean(value), identity: value }))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+  return false;
+});
+
+
+// 1.555 — one-shot episode restoration, distinct from film checkpoints.
+// The extension UI arms a specific stored episode BEFORE navigating a new tab.
+// The iframe must select and verify that episode before touching currentTime.
+const SERIES_PENDING_PREFIX = 'kinoSeriesResumePending:';
+const SERIES_PENDING_TTL_MS = 120000;
+const seriesPendingKey = tabId => SERIES_PENDING_PREFIX + tabId;
+
+function episodeRecord(seriesId, season, episode, source) {
+  const key = 'series:' + seriesId + ':' + season + ':' + episode;
+  const item = source?.[key];
+  if (!item || item.type !== 'series' || item.completed ||
+      String(item.id) !== String(seriesId) ||
+      item.season !== season || item.episode !== episode ||
+      !Number.isFinite(item.position) || item.position < 10 ||
+      !Number.isFinite(item.duration) || item.duration < 60 ||
+      item.duration > 8 * 3600 || item.position > item.duration - 25)
+    return null;
+  return { key, position: item.position, duration: item.duration };
+}
+
+async function armSeriesResume(tabId, seriesId, season, episode, sender) {
+  if (sender?.id !== chrome.runtime.id ||
+      !sender?.url?.startsWith(chrome.runtime.getURL('')) ||
+      !Number.isInteger(tabId) || tabId < 0 ||
+      !/^[1-9]\d{0,12}$/.test(String(seriesId)) ||
+      !Number.isInteger(season) || season < 1 || season > 250 ||
+      !Number.isInteger(episode) || episode < 1 || episode > 250)
+    return { ok: false, reason: 'invalid resume request' };
+
+  const session = await getSession(tabId);
+  if (!session || String(session.id) !== String(seriesId) ||
+      Date.now() - session.startedAt > 60000 ||
+      !session.watchUrl || !['film','series'].includes(session.type)) {
+    return { ok: false, reason: 'watch session does not match series' };
+  }
+  const urlId = parseMedia(session.watchUrl);
+  if (!urlId || urlId.id !== String(seriesId)) {
+    return { ok: false, reason: 'watch address does not match series' };
+  }
+  const items = (await chrome.storage.local.get(SERIES_PROGRESS_KEY))[SERIES_PROGRESS_KEY];
+  const checkpoint = episodeRecord(seriesId, season, episode, items);
+  if (!checkpoint) return { ok: false, reason: 'no resumable episode checkpoint' };
+  await chrome.storage.session.set({
+    [seriesPendingKey(tabId)]: {
+      seriesId: String(seriesId), season, episode,
+      position: checkpoint.position, duration: checkpoint.duration,
+      createdAt: Date.now()
+    }
+  });
+  return { ok: true, position: checkpoint.position };
+}
+
+async function seriesPendingForFrame(sender) {
+  if (!resumeSourceIsTrusted(sender)) return null;
+  const tabId = sender.tab.id;
+  const key = seriesPendingKey(tabId);
+  const data = (await chrome.storage.session.get(key))[key];
+  if (!data) return null;
+  if (!Number.isFinite(data.createdAt) ||
+      Date.now() - data.createdAt >= SERIES_PENDING_TTL_MS) {
+    await chrome.storage.session.remove(key);
+    return null;
+  }
+  const tab = await chrome.tabs.get(tabId);
+  const route = parseMedia(tab?.url || '');
+  const session = await getSession(tabId);
+  // /film/ and /series/ are both used for series by this provider.
+  if (!route || route.id !== data.seriesId ||
+      !session || String(session.id) !== data.seriesId)
+    return null;
+  return data;
+}
+
+async function confirmSeriesSeek(sender, payload) {
+  const target = await seriesPendingForFrame(sender);
+  if (!target || Number(payload?.season) !== target.season ||
+      Number(payload?.episode) !== target.episode ||
+      !Number.isFinite(payload?.position) ||
+      Math.abs(payload.position - target.position) > 3 ||
+      !Number.isFinite(payload?.duration) ||
+      Math.abs(payload.duration - target.duration) >
+        Math.max(15, target.duration * 0.015)) return {ok:false};
+
+  // The independent episode detector must also confirm the *same* iframe
+  // is showing the intended season/episode.
+  if (!await episodeSourceMatches(sender.tab.id, sender.frameId,
+      target.seriesId, target.season, target.episode)) return {ok:false};
+
+  await chrome.storage.session.remove(seriesPendingKey(sender.tab.id));
+  return {ok:true};
+}
+
+chrome.tabs.onRemoved.addListener(tabId => {
+  void chrome.storage.session.remove(seriesPendingKey(tabId)).catch(() => {});
+});
+
+chrome.runtime.onMessage.addListener((message, sender, respond) => {
+  if (message?.action === 'kinoSeriesResumeArm') {
+    armSeriesResume(message.tabId, String(message.seriesId),
+      Number(message.season), Number(message.episode), sender)
+      .then(respond).catch(error => respond({ok:false,error:error.message}));
+    return true;
+  }
+  if (message?.action === 'kinoSeriesResumeGetPending') {
+    seriesPendingForFrame(sender)
+      .then(pending => respond({ok:Boolean(pending),pending}))
+      .catch(() => respond({ok:false}));
+    return true;
+  }
+  if (message?.action === 'kinoSeriesResumeAcknowledge') {
+    confirmSeriesSeek(sender, message.payload)
+      .then(respond).catch(() => respond({ok:false}));
+    return true;
+  }
+  return false;
+});
+
+// 1.553: Episode checkpoints are isolated from film progress. We write only
+// when the iframe's own confirmed selector AND the parent series ID agree.
+// No automatic series seeking/selecting in this stage.
+
+// v1.569: only unique *observed* sections count towards 85% eligibility.
+// Position alone (including a video "ended" after a seek) never counts.
+const PLAYBACK_COVERAGE_KEY = 'kinoPlaybackCoverageV1';
+const PLAYBACK_COVERAGE_MAX_RANGES = 512;
+const PLAYBACK_COVERAGE_MAX_TITLES = 600;
+let playbackCoverageQueue = Promise.resolve();
+
+function unionPlaybackRanges(ranges) {
+  const ordered = ranges
+    .filter(pair => Array.isArray(pair) && pair.length === 2 &&
+      Number.isFinite(pair[0]) && Number.isFinite(pair[1]) &&
+      pair[1] > pair[0])
+    .sort((a,b) => a[0] - b[0] || a[1] - b[1]);
+  const result = [];
+  for(const item of ordered) {
+    const end = result[result.length - 1];
+    if(end && item[0] <= end[1] + 0.05) {
+      end[1] = Math.max(end[1],item[1]);
+    } else {
+      result.push([item[0],item[1]]);
+    }
+  }
+  return result;
+}
+
+function playbackCoverageSeconds(ranges) {
+  return ranges.reduce((sum,[from,to]) => sum + (to-from),0);
+}
+
+function validateObservedRanges(payload, duration) {
+  if (!Array.isArray(payload?.watchedRanges) ||
+      payload.watchedRanges.length > 64) return [];
+  return payload.watchedRanges.filter(pair =>
+    Array.isArray(pair) && pair.length === 2 &&
+    Number.isFinite(pair[0]) && Number.isFinite(pair[1]) &&
+    pair[0] >= 0 && pair[1] <= duration + 0.1 &&
+    pair[1] - pair[0] >= 0.05 && pair[1] - pair[0] <= 20
+  ).map(([start,end]) => [Math.max(0,start),Math.min(end,duration)]);
+}
+
+// Called only after verifying tab identity, permissions, and the active
+// film or individual series episode. Serialize writes across tabs/sessions.
+function rememberPlaybackCoverage(mediaKey, item, payload) {
+  const task = async () => {
+    if (!/^(?:film:[1-9]\d{0,12}|series:[1-9]\d{0,12}:\d{1,3}:\d{1,3})$/
+      .test(mediaKey)) return {completed:false,seconds:0};
+    const fresh = validateObservedRanges(payload,item.duration);
+    const stored = (await chrome.storage.local.get(PLAYBACK_COVERAGE_KEY))
+      [PLAYBACK_COVERAGE_KEY];
+    const all = stored && typeof stored === 'object' && !Array.isArray(stored)
+      ? {...stored} : {};
+    const old = all[mediaKey];
+    const sameDuration = Number.isFinite(old?.duration) &&
+      Math.abs(old.duration - item.duration) <=
+        Math.max(10,item.duration * 0.015);
+    const oldRanges = sameDuration && Array.isArray(old.ranges) ?
+      old.ranges.filter(x => Array.isArray(x) && x.length===2 &&
+        Number.isFinite(x[0]) && Number.isFinite(x[1]) &&
+        x[0]>=0 && x[1]<=item.duration && x[1]>x[0]) : [];
+    const ranges = unionPlaybackRanges([...oldRanges,...fresh]);
+    // For excessively fragmented histories, retain a conservative bounded
+    // subset. Dropping intervals can delay completion, but never invent it.
+    const bounded = ranges.length > PLAYBACK_COVERAGE_MAX_RANGES
+      ? ranges.slice(-PLAYBACK_COVERAGE_MAX_RANGES) : ranges;
+    const seconds = playbackCoverageSeconds(bounded);
+    if(fresh.length || !sameDuration) {
+      all[mediaKey]={duration:item.duration,ranges:bounded,updatedAt:Date.now()};
+      const keys = Object.keys(all);
+      if(keys.length > PLAYBACK_COVERAGE_MAX_TITLES) {
+        keys.sort((a,b)=>Number(all[b]?.updatedAt||0)-
+          Number(all[a]?.updatedAt||0));
+        for(const key of keys.slice(PLAYBACK_COVERAGE_MAX_TITLES))delete all[key];
+      }
+      await chrome.storage.local.set({[PLAYBACK_COVERAGE_KEY]:all});
+    }
+    // Unique observed intervals, never the seek position, constitute
+    // completion evidence. Series episode policy remains independent.
+    return {seconds,eligible:seconds >= item.duration*0.85};
+  };
+  const result = playbackCoverageQueue.then(task,task);
+  playbackCoverageQueue = result.catch(error => console.warn(
+    '[KinoHelper] Coverage save failed:',error));
+  return result;
+}
+
+function playbackCompletionStatus(item, previous, coverage, autoFilm=false) {
+  const observed=Boolean(coverage?.eligible);
+  // For films, reaching the 85% point is sufficient *only* if at least
+  // 85% of the distinct media timeline was observed being played.
+  const verifiedFilm=autoFilm && observed &&
+    item.position >= item.duration * 0.85;
+  // Keep prior verified player-ended behavior for series episodes.
+  const verifiedEnd=item.event==='ended' && observed &&
+    item.position>=item.duration-5;
+  return verifiedFilm || verifiedEnd || Boolean(previous?.completed &&
+    item.position >= item.duration * 0.1);
+}
+const SERIES_PROGRESS_KEY = 'kinoSeriesEpisodeProgressV1';
+const SERIES_PROGRESS_LIMIT = 300;
+let seriesProgressQueue = Promise.resolve();
+
+function validateEpisodeProgress(payload) {
+  const base = validatePlaybackEvent(payload);
+  const season = Number(payload?.season);
+  const episode = Number(payload?.episode);
+  if (!base || !Number.isInteger(season) || !Number.isInteger(episode) ||
+      season < 1 || season > 250 || episode < 1 || episode > 250) return null;
+  return { ...base, season, episode };
+}
+
+async function episodeSourceMatches(tabId, frameId, seriesId, season, episode) {
+  const key = episodeKey(tabId);
+  const entry = (await chrome.storage.session.get(key))[key];
+  const confirmed = resolvedEpisode(entry, String(seriesId));
+  if (!confirmed || confirmed.season !== season || confirmed.episode !== episode)
+    return false;
+  const source = entry?.sources?.[String(frameId)];
+  const at = Date.now();
+  return Boolean(source && source.season === season && source.episode === episode &&
+    Number.isFinite(source.at) && at >= source.at && at - source.at <= EPISODE_TTL_MS);
+}
+
+async function saveSeriesEpisodeProgress(payload, sender) {
+  const item = validateEpisodeProgress(payload);
+  if (!item || !resumeSourceIsTrusted(sender) || !Number.isInteger(sender.frameId))
+    return { ok: false, skipped: 'invalid source or episode' };
+  const granted = await chrome.permissions.contains({
+    origins: [RESUME_PLAYER_ORIGIN]
+  });
+  if (!granted) return { ok: false, skipped: 'player permission revoked' };
+
+  const pending = (await chrome.storage.session.get(seriesPendingKey(sender.tab.id)))
+    [seriesPendingKey(sender.tab.id)];
+  // While selecting an episode / seeking, never replace its saved checkpoint
+  // with initial playback from the provider's default episode.
+  if (pending && Number.isFinite(pending.createdAt) &&
+      Date.now() - pending.createdAt < SERIES_PENDING_TTL_MS) {
+    return {ok:false, skipped:'restoring episode selection'};
+  }
+  const series = await trustedSeriesTab(sender.tab.id);
+  if (!series) return { ok: false, skipped: 'not a known series tab' };
+  if (!await episodeSourceMatches(sender.tab.id, sender.frameId,
+    series.id, item.season, item.episode))
+    return { ok: false, skipped: 'unconfirmed selection' };
+
+  const key = 'series:' + series.id + ':' + item.season + ':' + item.episode;
+  const write = async () => {
+    // Recheck immediately before writing: a queued checkpoint from the
+    // previous episode must not be written after the user has switched.
+    const current = await trustedSeriesTab(sender.tab.id);
+    if (!current || current.id !== series.id ||
+        !await episodeSourceMatches(sender.tab.id, sender.frameId,
+          series.id, item.season, item.episode))
+      return { ok: false, skipped: 'episode changed while queued' };
+
+    const data = (await chrome.storage.local.get(SERIES_PROGRESS_KEY))[SERIES_PROGRESS_KEY];
+    const entries = data && typeof data === 'object' && !Array.isArray(data)
+      ? { ...data } : {};
+    const older = entries[key];
+    const coverage = await rememberPlaybackCoverage(key,item,payload);
+    const completed = playbackCompletionStatus(item, older, coverage);
+    const cleanTitle = String(current.title || '').replace(/\s+/g, ' ').trim().slice(0, 150);
+    entries[key] = {
+      type: 'series', id: series.id,
+      season: item.season, episode: item.episode,
+      title: cleanTitle || older?.title || 'Сериал №' + series.id,
+      position: item.position, duration: item.duration,
+      completed, updatedAt: Date.now()
+    };
+    const kept = Object.entries(entries)
+      .filter(([entryKey, value]) =>
+        /^series:[1-9]\d{0,12}:\d{1,3}:\d{1,3}$/.test(entryKey) &&
+        value && Number.isFinite(value.updatedAt))
+      .sort((a,b) => b[1].updatedAt - a[1].updatedAt)
+      .slice(0, SERIES_PROGRESS_LIMIT);
+    await chrome.storage.local.set({
+      [SERIES_PROGRESS_KEY]: Object.fromEntries(kept)
+    });
+    return { ok: true, key, position: item.position, completed };
+  };
+  const result = seriesProgressQueue.then(write, write);
+  seriesProgressQueue = result.catch(error =>
+    console.warn('[KinoHelper] Ошибка сохранения прогресса серии:', error));
+  return result;
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.action !== 'kinoSeriesEpisodeProgress') return false;
+  saveSeriesEpisodeProgress(message.payload, sender)
+    .then(async result => {
+      // The episode was verified against the actual player selection.
+      if (result?.ok) {
+        await statsRememberCompletion(result.key, result.completed)
+          .catch(error => console.warn('[KinoHelper stats] Episode catalog:', error));
+        await statsRecordVerifiedTime(
+          'series:' + String(result.key).split(':')[1], message.payload
+        ).catch(error => console.warn('[KinoHelper stats] Series time:', error));
+      }
+      sendResponse(result);
+    })
+    .catch(error => sendResponse({ ok:false, error: error.message }));
+  return true;
+});
+
+
+// KinoHelper 1.558: wall-clock time actually observed while playing.
+// Counters come from trusted content scripts and are accepted ONLY after
+// existing film/episode identity and authorization checks have succeeded.
+// A seek changes currentTime, but never these cumulative playback counters.
+const STATS_TIME_KEY = 'kinoStatsWatchTimeV1';
+const STATS_COUNTER_PREFIX = 'kinoStatsCounterV1:';
+let statsTimeQueue = Promise.resolve();
+
+function statsRecordVerifiedTime(mediaKey, payload) {
+  const task = async () => {
+    if (!/^(?:film|series):[1-9]\d{0,12}$/.test(mediaKey)) return;
+    const token = String(payload?.statsTrackingId || '');
+    const total = Number(payload?.playedSeconds);
+    if (!/^[\w-]{20,80}$/.test(token) ||
+        !Number.isFinite(total) || total < 2 || total > 1e7) return;
+
+    // Token created on each video/episode change; protects against duplicate
+    // asynchronous messages and distinguishes independent playback sessions.
+    const counterKey = STATS_COUNTER_PREFIX + token;
+    const counter = (await chrome.storage.session.get(counterKey))[counterKey];
+    if (counter && counter.mediaKey !== mediaKey) return;
+    const before = counter && Number.isFinite(counter.total) ? counter.total : 0;
+    if (total <= before) return;
+    // Cap unexpectedly large gaps rather than inventing hours on resume,
+    // service-worker restarts, or stalled/background tabs.
+    const delta = Math.min(total - before, 15);
+    const stored = (await chrome.storage.local.get(STATS_TIME_KEY))[STATS_TIME_KEY];
+    const items = stored && typeof stored === 'object' && !Array.isArray(stored)
+      ? { ...stored } : {};
+    const older = items[mediaKey];
+    const seconds = Number.isFinite(older?.seconds) && older.seconds >= 0
+      ? older.seconds : 0;
+    items[mediaKey] = {
+      seconds: Math.round((seconds + delta) * 10) / 10,
+      updatedAt: Date.now()
+    };
+    // Local storage is the durable source of truth. Update the dedup counter
+    // only after the accumulation was successfully committed.
+    await chrome.storage.local.set({ [STATS_TIME_KEY]: items });
+    await chrome.storage.session.set({
+      [counterKey]: { mediaKey, total, updatedAt: Date.now() }
+    });
+  };
+  const result = statsTimeQueue.then(task, task);
+  statsTimeQueue = result.catch(() => {});
+  return result;
+}
+
+
+// Keep an unpruned index of verified films and individual series episodes.
+// The resume progress stores have intentional 120/300-entry limits; those
+// limits must not silently erase lifetime statistics.
+const STATS_CATALOG_KEY = 'kinoStatsLibraryV1';
+let statsCatalogQueue = Promise.resolve();
+function statsRememberCompletion(key, completed) {
+  const task = async () => {
+    if (!/^(?:film:[1-9]\d{0,12}|series:[1-9]\d{0,12}:\d{1,3}:\d{1,3})$/.test(key))
+      return;
+    const raw = (await chrome.storage.local.get(STATS_CATALOG_KEY))[STATS_CATALOG_KEY];
+    const catalog = raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? { ...raw } : {};
+    const previous = catalog[key];
+    const everCompleted = Boolean(previous?.completed || completed);
+    if (previous && Boolean(previous.completed) === everCompleted) return;
+    catalog[key] = { completed: everCompleted, updatedAt: Date.now() };
+    await chrome.storage.local.set({ [STATS_CATALOG_KEY]: catalog });
+  };
+  const result = statsCatalogQueue.then(task, task);
+  statsCatalogQueue = result.catch(() => {});
+  return result;
+}
+
+
+
+
+// Reconcile old film checkpoints saved before automatic completion existed.
+// This runs only when the extension UI opens and requests it; it does not
+// scan media or trust user-facing percentages. Ranges are uniquely merged,
+// validated against the film duration and coupled to its saved timeline.
+async function reconcileVerifiedFilmCompletion(sender) {
+  if(sender?.id!==chrome.runtime.id || sender?.tab ||
+     !String(sender?.url||'').startsWith(chrome.runtime.getURL('')))
+    return {ok:false,error:'Недоверенный запрос'};
+  const work=async()=>{
+    const snapshots=await Promise.all([
+      chrome.storage.local.get(RESUME_STORAGE_KEY),
+      chrome.storage.local.get(PLAYBACK_COVERAGE_KEY)
+    ]);
+    const raw=snapshots[0][RESUME_STORAGE_KEY];
+    const coverage=snapshots[1][PLAYBACK_COVERAGE_KEY];
+    const records=raw&&typeof raw==='object'&&!Array.isArray(raw)
+      ?{...raw}:{};
+    const verified=coverage&&typeof coverage==='object'&&!Array.isArray(coverage)
+      ?coverage:{};
+    const completed=[];
+    for(const [key,entry] of Object.entries(records)){
+      if(!/^film:[1-9]\d{0,12}$/.test(key) ||
+         !entry || entry.completed || entry.type!=='film' ||
+         String(entry.id)!==key.slice(5) ||
+         !Number.isFinite(entry.duration) || entry.duration<60 ||
+         entry.duration>28800 || !Number.isFinite(entry.position) ||
+         entry.position<entry.duration*.85)continue;
+      const record=verified[key];
+      if(!record || !Number.isFinite(record.duration) ||
+         Math.abs(record.duration-entry.duration)>
+           Math.max(10,entry.duration*.015) ||
+         !Array.isArray(record.ranges))continue;
+      const ranges=unionPlaybackRanges(record.ranges.filter(pair=>
+        Array.isArray(pair)&&pair.length===2&&
+        pair.every(Number.isFinite)&&pair[0]>=0&&
+        pair[1]<=entry.duration&&pair[1]>pair[0]));
+      if(playbackCoverageSeconds(ranges)<entry.duration*.85)continue;
+      records[key]={...entry,completed:true,
+        completedBy:'verified-coverage',completedAt:Date.now()};
+      completed.push(key);
+    }
+    if(completed.length)
+      await chrome.storage.local.set({[RESUME_STORAGE_KEY]:records});
+    return completed;
+  };
+  // Reuse the player queue to avoid resurrecting unfinished states via
+  // a pending checkpoint from another tab.
+  const changed=resumeWriteQueue.then(work,work);
+  resumeWriteQueue=changed.catch(()=>{});
+  const keys=await changed;
+  for(const key of keys){
+    await statsRememberCompletion(key,true)
+      .catch(err=>console.warn('[KinoHelper] Film stats completion:',err));
+    // Historical checkpoints do not identify the Kinopoisk account that
+    // originally played them. Never remove a planned film from the CURRENT
+    // account based only on older, account-unscoped playback evidence.
+    // Live verified completions still trigger the normal watchlist sync.
+  }
+  return {ok:true,updated:keys.length};
+}
+chrome.runtime.onMessage.addListener((message,sender,respond)=>{
+  if(message?.action!=='kinoReconcileVerifiedFilms')return false;
+  reconcileVerifiedFilmCompletion(sender)
+    .then(respond).catch(err=>respond({ok:false,error:err.message}));
+  return true;
+});
+
+// A deliberate action in History can finish a title once at least 85%
+// distinct playable content has been observed. Never trust the UI's percent.
+async function confirmCoveredPlayback(mediaKey, sender) {
+  if(sender?.id !== chrome.runtime.id || sender?.tab ||
+      !String(sender?.url||'').startsWith(chrome.runtime.getURL('')))
+    return {ok:false,error:'Недоверенный запрос'};
+  const key=String(mediaKey||'');
+  const isFilm=/^film:[1-9]\d{0,12}$/.test(key);
+  const isEpisode=/^series:[1-9]\d{0,12}:\d{1,3}:\d{1,3}$/.test(key);
+  if(!isFilm && !isEpisode)return {ok:false,error:'Неверная запись'};
+  const progressKey=isFilm?RESUME_STORAGE_KEY:SERIES_PROGRESS_KEY;
+  const work=async()=>{
+    const [raw,coverageRaw]=await Promise.all([
+      chrome.storage.local.get(progressKey),
+      chrome.storage.local.get(PLAYBACK_COVERAGE_KEY)
+    ]);
+    const records=raw[progressKey]&&typeof raw[progressKey]==='object'
+      ?{...raw[progressKey]}:{};
+    const entry=records[key];
+    const coverage=coverageRaw[PLAYBACK_COVERAGE_KEY]?.[key];
+    if(!entry || !Number.isFinite(entry.duration) ||
+       entry.duration<60 || entry.duration>28800)
+      return {ok:false,error:'Нет сохранённого прогресса просмотра'};
+    const validCoverage=coverage &&
+      Number.isFinite(coverage.duration) &&
+      Math.abs(entry.duration-coverage.duration)<=
+        Math.max(10,entry.duration*0.015);
+    const ranges=unionPlaybackRanges(
+      validCoverage&&Array.isArray(coverage.ranges)?coverage.ranges.filter(range=>
+        Array.isArray(range)&&range.length===2&&
+        range.every(Number.isFinite)&&range[0]>=0&&
+        range[1]<=entry.duration&&range[1]>range[0]):[]
+    );
+    const seconds=playbackCoverageSeconds(ranges);
+    // A legacy checkpoint from a pre-coverage build cannot prove viewing.
+    // The viewer may explicitly attest that the story has ended when the
+    // saved timeline position is at least 85%. Never apply this automatically.
+    const legacyManual=entry.position>=entry.duration*0.85;
+    if(seconds<entry.duration*0.85 && !legacyManual)
+      return {ok:false,error:'Для подтверждения требуется 85% просмотра или сохранённого таймкода'};
+    const newlyCompleted=!Boolean(entry.completed);
+    records[key]={...entry,completed:true,
+      completedBy:'user',updatedAt:Date.now()};
+    await chrome.storage.local.set({[progressKey]:records});
+    await statsRememberCompletion(key,true);
+    if(isFilm && newlyCompleted &&
+       typeof self !== 'undefined' &&
+       self.KinoWatchlistAutoComplete?.onFilmCompleted) {
+      await self.KinoWatchlistAutoComplete.onFilmCompleted(key)
+        .catch(error=>console.warn('[KinoHelper] Watchlist transfer:',error));
+    }
+    return {ok:true,key,coverage:Math.round(seconds/entry.duration*100)};
+  };
+  // Use the same serial write queues as the player to prevent an older
+  // checkpoint from overwriting the user's explicit confirmation.
+  if(isFilm){
+    const result=resumeWriteQueue.then(work,work);
+    resumeWriteQueue=result.catch(()=>{});
+    return result;
+  }
+  const result=seriesProgressQueue.then(work,work);
+  seriesProgressQueue=result.catch(()=>{});
+  return result;
+}
+chrome.runtime.onMessage.addListener((message,sender,respond)=>{
+  if(message?.action!=='kinoConfirmCoveredPlayback')return false;
+  confirmCoveredPlayback(message.key,sender)
+    .then(respond).catch(error=>respond({ok:false,error:error.message}));
+  return true;
+});
+
+// Alarm-driven profile sync, isolated from the movie playback logic.
+importScripts('stats-account.js','stats-import-worker.js','watchlist-sync-worker.js','profile-minute-sync-worker.js');

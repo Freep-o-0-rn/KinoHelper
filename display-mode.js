@@ -16,7 +16,8 @@
   async function loadMode() {
     try {
       const data = await chrome.storage.local.get(STORAGE_KEY);
-      input.checked = data[STORAGE_KEY] === 'sidepanel';
+      // No saved choice means the Side Panel default, not popup.
+      input.checked = data[STORAGE_KEY] !== 'popup';
     } catch (error) {
       console.warn('[KinoHelper] Не удалось получить режим интерфейса:', error);
       setStatus('Не удалось прочитать настройку режима', true);
@@ -51,7 +52,7 @@
   // Актуализируем настройку, когда она меняется из другого окна расширения.
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'local' || !changes[STORAGE_KEY] || input.disabled) return;
-    input.checked = changes[STORAGE_KEY].newValue === 'sidepanel';
+    input.checked = changes[STORAGE_KEY].newValue !== 'popup';
   });
 
   void loadMode();

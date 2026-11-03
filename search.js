@@ -341,6 +341,9 @@
         if (!title || !meta) return;
         title.textContent = movie.title;
         title.title = movie.title;
+        if (movie._bookmarkNode) {
+            window.KinoWatchlist?.syncSearchButton(movie._bookmarkNode, movie);
+        }
         const typeName = movie.type === 'series' ? 'Сериал' : 'Фильм';
         meta.textContent = typeName + (movie.year ? ' · ' + movie.year : '');
         if (movie.rating != null) {
@@ -348,6 +351,13 @@
             rating.className = 'title-search-rating';
             rating.textContent = '★ ' + Number(movie.rating).toFixed(1);
             meta.append(' · ', rating);
+        }
+        if (window.KinoWatchlist?.contains(movie)) {
+            window.KinoWatchlist.updateMetadata(movie, {
+                title: movie.title, year: movie.year, genres: movie.genres,
+                posterUrl: movie.poster || movie.posterFallback
+            });
+            if (movie.posterDataUrl) window.KinoWatchlist.adoptPoster(movie, movie.posterDataUrl);
         }
         if (movie._genresNode) {
             const genres = Array.isArray(movie.genres) ? movie.genres : [];
@@ -378,6 +388,11 @@
             makeAction('▶ Смотреть', 'watch', movie, true),
             makeAction('Кинопоиск', 'kinopoisk', movie, false)
         );
+        const bookmark = window.KinoWatchlist?.createSearchButton(movie);
+        if (bookmark) {
+            movie._bookmarkNode = bookmark;
+            actions.appendChild(bookmark);
+        }
         details.append(title, meta, genres);
         if (typeof window.historyContains === 'function' &&
             window.historyContains(movie.watchUrl)) {
@@ -536,6 +551,7 @@
                         continue;
                     }
                     movie.posterDataUrl = response.dataUrl;
+                    window.KinoWatchlist?.adoptPoster(movie, response.dataUrl);
                     const image = document.createElement('img');
                     image.alt = '';
                     image.loading = 'lazy';

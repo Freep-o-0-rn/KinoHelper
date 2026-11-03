@@ -6,6 +6,7 @@
   <title>КиноПомощник</title>
   <link rel="stylesheet" href="popup.css">
   <link rel="stylesheet" href="filters.css">
+  <link rel="stylesheet" href="stats.css">
 </head>
 <body>
   <div class="app-shell">
@@ -14,6 +15,16 @@
         <span class="brand-icon" aria-hidden="true">🎬</span>
         <h1>КиноПомощник</h1>
       </div>
+
+      <button class="header-button header-stats" id="statsButton" type="button"
+              data-tooltip="Статистика" aria-label="Статистика" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+             aria-hidden="true">
+          <path d="M12 3a9 9 0 1 0 9 9h-9z"/>
+          <path d="M15 3v6h6A9 9 0 0 0 15 3z"/>
+        </svg>
+      </button>
       <button class="header-button" id="settingsButton" type="button" data-tooltip="Открыть настройки" aria-label="Открыть настройки" aria-pressed="false">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="3" />
@@ -26,8 +37,60 @@
       <section class="screen main-screen" id="mainScreen" aria-label="Главный экран">
         <div class="screen-scroll">
           <main class="main-content">
+            <section class="discovery-carousel" id="kinoDiscovery"
+                     aria-label="Рекомендации и новинки" aria-roledescription="карусель" hidden>
+              <img class="discovery-backdrop" id="discoveryBackdrop" alt="" hidden>
+              <a class="discovery-open" id="discoveryOpen" target="_blank" rel="noopener noreferrer">
+                <div class="discovery-poster-frame">
+                  <img class="discovery-poster" id="discoveryPoster" alt="" hidden>
+                  <span id="discoveryPosterEmpty" class="discovery-poster-empty" aria-hidden="true">🎬</span>
+                </div>
+                <div class="discovery-content">
+                  <div class="discovery-topline">
+                    <span class="discovery-kind" id="discoveryKind">Что посмотреть</span>
+                    <span class="discovery-counter" id="discoveryCounter">1 / 10</span>
+                  </div>
+                  <strong class="discovery-title" id="discoveryTitle">Подбираем фильмы…</strong>
+                  <div class="discovery-meta">
+                    <span id="discoveryYear" hidden></span>
+                    <span id="discoveryGenres" hidden></span>
+                  </div>
+                  <div class="discovery-rating" id="discoveryRating" hidden></div>
+                  <p class="discovery-description" id="discoveryDescription" hidden></p>
+                </div>
+              </a>
+              <button class="discovery-hide" id="discoveryHide" type="button"
+                      aria-label="Скрыть фильм из рекомендаций" title="Не рекомендовать этот фильм">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+                     stroke-linejoin="round" aria-hidden="true">
+                  <path d="M10.6 5.1A10.9 10.9 0 0 1 12 5c5.3 0 9 4.4 10 7a14.9 14.9 0 0 1-4.3 5.3"/>
+                  <path d="M6.5 6.5A15.7 15.7 0 0 0 2 12c1 2.6 4.7 7 10 7 1.7 0 3.3-.4 4.7-1.1"/>
+                  <path d="M10 10a2.8 2.8 0 0 0 4 4"/>
+                  <path d="M3 3l18 18"/>
+                </svg>
+              </button>
+              <button class="discovery-arrow discovery-prev" id="discoveryPrevious"
+                      type="button" aria-label="Предыдущий фильм">‹</button>
+              <button class="discovery-arrow discovery-next" id="discoveryNext"
+                      type="button" aria-label="Следующий фильм">›</button>
+              <div class="discovery-dots" id="discoveryDots" aria-label="Выбор слайда"></div>
+            </section>
+
             <section class="context-card info" id="contextCard" aria-label="Текущий фильм или состояние">
               <div id="message" class="info" aria-live="polite">Выберите фильтры и нажмите «Случайный»</div>
+              <div class="current-watch-progress" id="currentWatchProgress"
+                   aria-label="Прогресс текущего просмотра" hidden>
+                <div class="history-progress-track" id="currentWatchProgressTrack"
+                     role="progressbar" aria-label="Прогресс текущего просмотра"
+                     aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                  <div class="resume-progress-fill"></div>
+                </div>
+                <div class="history-progress-label" id="currentWatchProgressLabel"></div>
+                <div class="history-coverage-label" id="currentWatchCoverage" hidden></div>
+              </div>
+              <div class="current-episode-info" id="currentEpisodeInfo" role="status" aria-live="polite" hidden></div>
+              <button class="watchlist-current-action" id="watchlistCurrentAction" type="button" hidden aria-pressed="false">☆ В «Буду смотреть»</button>
 
               <section class="movie-details" id="movieDetails" aria-label="Информация о фильме" hidden>
                 <div class="movie-genres" id="movieGenres" hidden></div>
@@ -48,6 +111,23 @@
                 <div class="rating-scale" id="ratingScale" role="group" aria-label="Поставить оценку от 1 до 10"></div>
                 <div class="rating-status" id="ratingStatus" aria-live="polite"></div>
               </section>
+            </section>
+
+            <section class="resume-last" id="resumeLast" aria-label="Последний просмотр" hidden>
+              <div class="resume-last-heading">
+                <span class="resume-last-heading-title">↻ Последний просмотр</span>
+                <button class="resume-last-close" id="resumeLastClose" type="button"
+                        aria-label="Скрыть последний просмотр" title="Скрыть карточку">×</button>
+              </div>
+              <div class="resume-last-body">
+                <div class="resume-last-details">
+                  <div class="resume-last-title" id="resumeLastTitle"></div>
+                  <div class="resume-last-meta" id="resumeLastMeta"></div>
+                  <div class="resume-last-progress" id="resumeLastProgress" hidden></div>
+                </div>
+                <button class="resume-last-open" id="resumeLastOpen" type="button"
+                        title="Открыть фильм или сериал">▶ Открыть</button>
+              </div>
             </section>
 
             <section class="title-search-section" aria-label="Поиск по названию">
@@ -94,10 +174,33 @@
 
             <div class="main-buttons">
               <button class="btn-secondary" id="randomFilm" type="button"><span class="icon">🎲</span> Случайный</button>
-              <button class="btn-convert" id="convert" type="button"><span class="icon">▶</span> Смотреть</button>
+              <div class="convert-tooltip-wrap" id="convertTooltipWrap">
+                <button class="btn-convert" id="convert" type="button"><span class="icon">▶</span> Смотреть</button>
+                <span class="convert-tooltip" role="tooltip">Откройте страницу фильма на Кинопоиске</span>
+              </div>
               <button class="btn-accent" id="openOnKinopoisk" type="button" style="display: none;"><span class="icon">🎭</span> На Кинопоиск</button>
             </div>
 
+
+            <section class="watchlist" id="watchlist" aria-label="Буду смотреть">
+              <div class="watchlist-header">
+                <div class="watchlist-title">☆ Буду смотреть <span class="watchlist-count" id="watchlistCount">0</span></div>
+                <button class="watchlist-sync" id="watchlistSync" type="button" title="Обновить список с Кинопоиска" aria-label="Синхронизировать «Буду смотреть»">↻</button>
+                <button class="watchlist-toggle" id="watchlistToggle" type="button" aria-expanded="true">▼ Скрыть</button>
+              </div>
+              <div class="watchlist-body" id="watchlistBody">
+                <div class="watchlist-sort-row">
+                  <label for="watchlistSort">По дате добавления</label>
+                  <select id="watchlistSort" class="watchlist-sort" title="Для импортированных записей используется дата первого обнаружения КиноПомощником, если Кинопоиск не сообщил исходную дату">
+                    <option value="newest">Сначала новые</option>
+                    <option value="oldest">Сначала старые</option>
+                  </select>
+                </div>
+                <div class="watchlist-empty" id="watchlistEmpty">Найденные фильмы можно сохранить на потом кнопкой ☆.</div>
+                <div class="watchlist-status" id="watchlistStatus" role="status" aria-live="polite" hidden></div>
+                <div class="watchlist-items" id="watchlistItems"></div>
+              </div>
+            </section>
 
             <div class="history" id="history">
               <div class="history-header">
@@ -111,7 +214,78 @@
               <div class="author-name">FreeP0rn</div>
               <div class="author-email">vadim.reizer@ya.ru</div>
             </div>
+            <div class="app-version" id="appVersion" aria-label="Версия расширения"></div>
           </main>
+        </div>
+      </section>
+
+
+      <section class="screen statistics-screen" id="statisticsScreen" aria-label="Статистика">
+        <div class="screen-scroll">
+          <div class="statistics-content">
+            <button class="stats-back" id="statsBack" type="button">← Статистика</button>
+            <div class="stats-subheading">Личная статистика · за всё время</div>
+            <div class="stats-section-title">ПРОСМОТРЕНО</div>
+            <div class="stats-pair">
+              <article class="stats-tile">
+                <div class="stats-tile-title">🎬 Фильмы</div>
+                <div class="stats-compact-chart" id="statsFilmChart"></div>
+                <div class="stats-legend" id="statsFilmLegend"></div>
+              </article>
+              <article class="stats-tile">
+                <div class="stats-tile-title">📺 Сериалы</div>
+                <div class="stats-compact-chart" id="statsSeriesChart"></div>
+                <div class="stats-legend" id="statsSeriesLegend"></div>
+                <div class="stats-episodes-inline">
+                  <span>Серий просмотрено</span>
+                  <strong id="statsEpisodesCount">—</strong>
+                </div>
+              </article>
+            </div>
+
+
+            <div class="stats-section-title">ВРЕМЯ ПРОСМОТРА</div>
+            <article class="stats-tile stats-time-tile">
+              <div id="statsTimeChart" class="stats-wide-chart"></div>
+              <div class="stats-legend" id="statsTimeLegend"></div>
+            </article>
+            <div class="stats-fineprint" id="statsTimeNote"></div>
+
+            <div class="stats-section-title">ПРЕДПОЧТЕНИЯ</div>
+            <div class="stats-pair">
+              <article class="stats-tile">
+                <div class="stats-tile-title">Любимые жанры</div>
+                <div class="stats-compact-chart" id="statsGenresChart"></div>
+                <div class="stats-legend stats-genre-legend" id="statsGenresLegend"
+                     role="region" tabindex="0" aria-label="Все жанры по популярности"></div>
+              </article>
+              <article class="stats-tile">
+                <div class="stats-tile-title">Мои оценки</div>
+                <div class="stats-compact-chart" id="statsRatingsChart"></div>
+                <div class="stats-legend stats-rating-legend" id="statsRatingsLegend" aria-label="Количество оценок от 1 до 10"></div>
+              </article>
+            </div>
+            <div class="stats-fineprint" id="statsGenresNote"></div>
+            <div class="stats-fineprint" id="statsRatingsNote"></div>
+            <div class="stats-section-title">ПРОФИЛЬ КИНОПОИСКА</div>
+            <article class="stats-tile stats-profile-tile">
+              <div class="stats-account-row">
+                <div id="statsAccountStatus" class="stats-account-status" role="status" aria-live="polite">Проверяем вход на Кинопоиск…</div>
+                <button id="statsAccountRefresh" class="stats-account-refresh" type="button" title="Повторно проверить авторизацию" aria-label="Проверить авторизацию">↻</button>
+              </div>
+              <div class="stats-import-header">
+                <span>Автоматическая загрузка оценок и просмотров</span>
+                <strong id="statsImportCount">—</strong>
+              </div>
+              <progress id="statsImportProgress" class="stats-import-progress" max="100" value="0"
+                        aria-label="Прогресс импорта оценок"></progress>
+              <div id="statsImportStatus" class="stats-profile-status" role="status" aria-live="polite">Ожидаем проверку профиля…</div>
+              <a id="statsProfileLink" href="https://www.kinopoisk.ru/"
+                 target="_blank" rel="noopener noreferrer" hidden>Оценки и просмотры на Кинопоиске ↗</a>
+              <p class="stats-fineprint">Оценки загружаются автоматически. Можно закрыть панель.</p>
+              <div id="statsStatus" class="stats-profile-status" role="status"></div>
+            </article>
+          </div>
         </div>
       </section>
 
@@ -178,6 +352,12 @@
 
             <section class="settings-section">
               <div class="settings-section-title">ДАННЫЕ</div>
+              <div class="backup-actions">
+                <button class="backup-action" id="backupImport" type="button">↑ Импорт</button>
+                <button class="backup-action primary" id="backupExport" type="button">↓ Экспорт</button>
+              </div>
+              <input id="backupFile" type="file" accept=".json,application/json" hidden>
+              <div class="backup-status" id="backupStatus" role="status" aria-live="polite"></div>
               <button class="danger-button" id="clearHistoryBtn" type="button">Очистить историю</button>
 
               <div class="clear-confirm" id="clearHistoryConfirm">
@@ -196,11 +376,20 @@
     </div>
   </div>
 
+  <script src="discovery-core.js"></script>
   <script src="movie-details.js"></script>
+  <script src="watchlist.js"></script>
+  <script src="resume-ui.js"></script>
+  <script src="episode-ui.js"></script>
   <script src="popup.js"></script>
+  <script src="stats-core.js"></script>
+  <script src="stats-account.js"></script>
+  <script src="stats.js"></script>
   <script src="search.js"></script>
   <script src="filters.js"></script>
   <script src="filters-ui.js"></script>
   <script src="display-mode.js"></script>
+  <script src="data-backup.js"></script>
+  <script src="discovery.js"></script>
 </body>
 </html>

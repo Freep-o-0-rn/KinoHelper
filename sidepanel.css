@@ -193,3 +193,11 @@ body.side-panel-host,
     transform: none;
   }
 }
+
+
+/* Боковая панель: больше места для сохранённых фильмов. */
+.side-panel-host .watchlist-items {
+  max-height: min(44dvh, 340px);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-hover) transparent;
+}

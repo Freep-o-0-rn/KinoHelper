@@ -1,0 +1,402 @@
+/* KinoHelper 1.558 — compact statistics dashboard in all themes. */
+.header-button.header-stats { right: 49px; }
+.statistics-screen {
+  transform: translateX(100%);
+  opacity: 0;
+  pointer-events: none;
+}
+.stats-open .main-screen,
+.stats-open .settings-screen {
+  transform: translateX(-28%);
+  opacity: 0;
+  pointer-events: none;
+}
+.stats-open .statistics-screen {
+  transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+.statistics-content {
+  padding: 12px 10px 18px;
+  color: var(--text);
+}
+.stats-back {
+  width: 100%;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 750;
+  padding: 8px 2px;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  cursor: pointer;
+}
+.stats-back:hover { color: var(--primary); }
+.stats-subheading {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin: 0 2px 12px;
+}
+.stats-section-title {
+  margin: 15px 2px 8px;
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: .055em;
+}
+.stats-pair {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) minmax(0,1fr);
+  gap: 8px;
+  align-items: stretch;
+}
+.stats-tile {
+  position: relative;
+  min-width: 0;
+  padding: 10px 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.stats-tile-title {
+  font-size: 11px;
+  font-weight: 750;
+  text-align: center;
+  margin: 0 0 8px;
+}
+.stats-compact-chart,
+.stats-wide-chart {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 101px;
+}
+.stats-donut {
+  position: relative;
+  width: 92px;
+  height: 92px;
+  flex: 0 0 auto;
+  isolation: isolate;
+}
+.stats-donut-large { width: 108px; height: 108px; }
+.stats-donut svg { width: 100%;height: 100%; display: block; overflow: visible; }
+.stats-donut-piece {
+  cursor: help;
+  transition: stroke-width .14s ease, opacity .14s ease;
+}
+.stats-donut-piece:hover,
+.stats-donut-piece:focus-visible {
+  stroke-width: 16px;
+  opacity: .88;
+  outline: none;
+}
+.stats-donut-center {
+  position: absolute;
+  inset: 25%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  pointer-events: none;
+  text-align: center;
+  white-space: nowrap;
+}
+.stats-donut-center strong {
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.stats-donut-large .stats-donut-center strong { font-size: 17px; }
+.stats-donut-center small {
+  display: block;
+  font-size: 8px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stats-chart-tip {
+  display: none;
+  position: absolute;
+  z-index: 20;
+  bottom: calc(100% - 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--tooltip-bg);
+  color: #fff;
+  font-size: 10px;
+  line-height: 1.35;
+  font-weight: 650;
+  padding: 6px 9px;
+  border-radius: 6px;
+  width: max-content;
+  max-width: min(235px,80vw);
+  white-space: normal;
+  text-align: center;
+  box-shadow: 0 4px 14px #0003;
+  pointer-events: none;
+}
+.stats-tip-visible .stats-chart-tip { display: block; }
+.stats-legend { display:flex; flex-direction:column; gap:6px; margin-top:8px; }
+.stats-legend-row {
+  display:flex;align-items:center;min-width:0;gap:5px;
+  color:var(--text-muted);font-size:9px;line-height:1.25;
+}
+.stats-legend-dot {
+  width:7px;height:7px;flex:0 0 7px;border-radius:2px;
+}
+.stats-legend-row > span:nth-child(2) {
+  flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.stats-legend-row b {
+  font-size:9px;
+  font-weight:750;
+  color:var(--text);
+  font-variant-numeric:tabular-nums;
+}
+.stats-episodes-inline {
+  display:flex;justify-content:space-between;align-items:center;
+  gap:4px;margin-top:9px;padding-top:8px;
+  border-top:1px solid var(--border);
+  font-size:9px;color:var(--text-muted);
+}
+.stats-episodes-inline strong {
+  color:#8a6aea;font-size:15px;font-weight:800;
+}
+.stats-time-tile {
+  display:flex;align-items:center;justify-content:center;gap:20px;
+  min-height:126px;
+}
+.stats-time-tile .stats-legend { width:125px;min-width:0;margin:0; }
+.stats-fineprint {
+  font-size:9px;
+  line-height:1.55;
+  color:var(--text-muted);
+  margin:7px 2px 0;
+}
+.stats-profile-tile label {
+  display:block;font-size:10px;color:var(--text);font-weight:700;
+  margin-bottom:8px;
+}
+.stats-profile-row { display:flex;gap:6px;min-width:0; }
+.stats-profile-row input {
+  min-width:0;flex:1;padding:8px;border-radius:6px;
+  border:1px solid var(--border);background:var(--bg);
+  color:var(--text);font-size:10px;
+}
+.stats-profile-row button {
+  padding:7px;border:0;border-radius:6px;
+  color:var(--on-secondary);background:var(--secondary);
+  cursor:pointer;font-size:10px;
+}
+.stats-profile-row button:hover { background:var(--secondary-hover); }
+#statsProfileLink { display:block;margin:10px 0 0;font-size:10px;color:var(--secondary); }
+#statsProfileLink[hidden] { display:none!important; }
+.stats-profile-status { margin-top:8px;font-size:10px;color:var(--text-muted);line-height:1.4; }
+.stats-profile-status:empty { display:none; }
+.side-panel-host .statistics-screen { width:100%; }
+@media(min-width:420px) {
+  .side-panel-host .statistics-content { padding:17px 19px 23px; }
+  .side-panel-host .stats-donut { width:108px;height:108px; }
+  .side-panel-host .stats-donut-large { width:122px;height:122px; }
+}
+@media(prefers-reduced-motion:reduce) {
+  .stats-donut-piece {transition:none;}
+}
+
+
+.stats-sync-ratings {
+  width: 100%;
+  display: block;
+  margin-top: 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text);
+  padding: 8px;
+  font-size: 10px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.stats-sync-ratings:hover { border-color: var(--border-hover); background: var(--bg); }
+.stats-sync-ratings:disabled { cursor: wait; opacity: .65; }
+
+
+/* Two controls at 320px: reserve room instead of covering the title. */
+.app-header .app-brand { gap: 6px; transform: translateX(-8px); }
+.app-header .brand-icon { font-size: 19px; }
+.app-header h1 { font-size: 15px; }
+@media(min-width:420px) {
+  .side-panel-host .app-header .app-brand { transform: none; }
+  .side-panel-host .app-header h1 { font-size: 17px; }
+  .side-panel-host .app-header .brand-icon { font-size: 21px; }
+}
+
+
+/* v1.560 account auto-detection replaces manual profile input. */
+.stats-account-row {
+  display:flex;
+  gap:8px;
+  align-items:center;
+  padding:7px 8px;
+  border:1px solid var(--border);
+  border-radius:7px;
+  background:var(--bg-secondary);
+}
+.stats-account-status {
+  flex:1;
+  min-width:0;
+  font-size:10px;
+  line-height:1.4;
+  color:var(--text);
+}
+.stats-account-refresh {
+  flex:0 0 29px;
+  width:29px;
+  height:29px;
+  display:grid;
+  place-items:center;
+  border-radius:6px;
+  padding:0;
+  background:var(--bg-elevated);
+  border:1px solid var(--border);
+  color:var(--text);
+  cursor:pointer;
+  font-size:17px;
+}
+.stats-account-refresh:hover { background:var(--bg);border-color:var(--border-hover); }
+.stats-account-refresh:disabled { opacity:.5;cursor:wait; }
+
+
+/* Automatic full-profile import status: fits the existing 360px side panel. */
+.stats-import-header {
+  display:flex;justify-content:space-between;align-items:center;gap:8px;
+  margin:10px 1px 5px;font-size:10px;color:var(--text);
+  font-weight:650;
+}
+.stats-import-header strong {
+  font-size:10px;color:var(--secondary);font-variant-numeric:tabular-nums;
+  text-align:right;
+}
+.stats-import-progress {
+  display:block;width:100%;height:7px;appearance:none;
+  border:0;border-radius:20px;overflow:hidden;
+  background:var(--bg-secondary);accent-color:var(--secondary);
+}
+.stats-import-progress::-webkit-progress-bar {background:var(--bg-secondary);}
+.stats-import-progress::-webkit-progress-value {
+  background:var(--secondary);border-radius:20px;transition:width .25s ease;
+}
+.stats-import-progress::-moz-progress-bar {
+  background:var(--secondary);border-radius:20px;
+}
+
+
+/* Individual personal grades 1–10 in a compact two-column legend. */
+.stats-rating-legend {
+  display:grid;
+  grid-template-columns: repeat(2, minmax(0,1fr));
+  column-gap:8px;
+  row-gap:7px;
+  margin-top:10px;
+}
+.stats-rating-legend .stats-legend-row {
+  min-width:0;
+  font-size:10px;
+  gap:4px;
+}
+.stats-rating-legend .stats-legend-dot {
+  width:8px;height:8px;flex-basis:8px;
+}
+.stats-rating-legend .stats-legend-row b {
+  font-variant-numeric:tabular-nums;
+  font-size:10px;
+}
+/* Main screen only: nonintrusive version from the actual manifest. */
+.app-version {
+  text-align:center;
+  padding:5px 0 2px;
+  margin:2px 0 0;
+  font-size:10px;
+  letter-spacing:.02em;
+  color:var(--text-muted);
+  opacity:.65;
+  font-variant-numeric:tabular-nums;
+}
+
+
+/* v1.567: all genres remain accessible without stretching the paired tiles. */
+.stats-genre-legend {
+  max-height: 188px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 2px 4px 2px 0;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-hover) transparent;
+}
+.stats-genre-legend::-webkit-scrollbar { width: 5px; }
+.stats-genre-legend::-webkit-scrollbar-thumb {
+  border-radius: 8px;
+  background: var(--border-hover);
+}
+.stats-genre-legend .stats-legend-row {
+  min-height: 15px;
+  gap: 5px;
+}
+.stats-genre-legend .stats-legend-row b {
+  flex: 0 0 auto;
+}
+.stats-genre-legend:focus-visible {
+  outline: 2px solid var(--secondary);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+
+/* v1.571: all 24+ genres remain separate, but narrow donut slices
+   can be selected by a comfortable, keyboard-accessible legend row. */
+.stats-genre-legend {
+  max-height: 220px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 2px 5px 2px 0;
+}
+.stats-genre-legend .stats-legend-row {
+  min-height: 25px;
+  padding: 4px 5px;
+  margin: 0;
+  border-radius: 5px;
+  font-size: 11px;
+  gap: 7px;
+}
+.stats-genre-legend .stats-legend-row b {
+  font-size: 11px;
+  font-weight: 750;
+}
+.stats-genre-legend .stats-legend-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+}
+.stats-genre-selectable {
+  cursor: pointer;
+  transition: background-color .14s ease;
+}
+.stats-genre-selectable:hover,
+.stats-genre-selectable:focus-visible {
+  background: var(--bg-secondary);
+  color: var(--text);
+}
+.stats-genre-selectable:focus-visible {
+  outline: 2px solid var(--secondary);
+  outline-offset: -2px;
+}
+.stats-donut-piece {
+  transition: stroke-width .12s ease, opacity .12s ease;
+}

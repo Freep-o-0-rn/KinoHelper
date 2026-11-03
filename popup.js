@@ -199,28 +199,57 @@ async function endWatchSession(tabId) {
     });
 }
 
-async function openTrackedWatchTab(watchUrl, returnUrl = null, title = '') {
-    const resolvedReturnUrl = returnUrl || buildKinopoiskUrl(watchUrl);
+async function openTrackedWatchTab(watchUrl, returnUrl = null, title = '',
+    { resume = false, resumeTarget = null } = {}) {
+    const urlMedia = parseMediaUrl(watchUrl);
+    const seriesTarget = resumeTarget?.kind === 'series' &&
+        urlMedia && String(urlMedia.id) === String(resumeTarget.id) &&
+        Number.isInteger(resumeTarget.season) && Number.isInteger(resumeTarget.episode);
+    const resolvedReturnUrl = seriesTarget
+        ? `${KINOPOISK_BASE}/series/${urlMedia.id}/`
+        : returnUrl || buildKinopoiskUrl(watchUrl);
 
     if (!resolvedReturnUrl) {
         return chrome.tabs.create({ url: watchUrl });
     }
 
     const tab = await chrome.tabs.create({ url: 'about:blank', active: false });
-    await startWatchSessionForTab(tab.id, resolvedReturnUrl, watchUrl, title);
+    const started = await startWatchSessionForTab(tab.id, resolvedReturnUrl, watchUrl, title);
+    if (resume && started) {
+        if (seriesTarget) {
+            const armed = await sendBackgroundMessage({
+                action: 'kinoSeriesResumeArm', tabId: tab.id,
+                seriesId: String(urlMedia.id),
+                season: resumeTarget.season, episode: resumeTarget.episode
+            });
+            if (!armed?.ok) {
+                debugLog('Серия откроется без перемотки:', armed?.reason || 'нет контрольной точки');
+            }
+        } else if (urlMedia?.type === 'film' && resumeTarget?.kind !== 'series') {
+            const armed = await sendBackgroundMessage({
+                action: 'kinoResumeArm', tabId: tab.id, filmId: urlMedia.id
+            });
+            if (!armed?.ok) {
+                debugLog('Продолжение без перемотки:', armed?.reason || 'нет сохранённой позиции');
+            }
+        }
+    }
     await chrome.tabs.update(tab.id, { url: watchUrl, active: true });
     // Панель остаётся открытой: обновляем её сразу после выбора из истории.
     scheduleCurrentMovieRefresh(80, { force: true });
     return tab;
 }
 
-async function openHistoryUrl(url, title = '') {
+async function openHistoryUrl(url, title = '', { resume = false, resumeTarget = null } = {}) {
     if (parseMediaUrl(url)) {
-        await openTrackedWatchTab(url, buildKinopoiskUrl(url), title);
+        await openTrackedWatchTab(url, buildKinopoiskUrl(url), title,
+            { resume, resumeTarget });
         return;
     }
     await chrome.tabs.create({ url });
 }
+// Expose only the existing trusted navigation helper to the resume UI.
+window.openHistoryUrl = openHistoryUrl;
 
 function hideMovieDetails() {
     movieDetailsLoadSequence += 1;
@@ -325,6 +354,10 @@ async function submitRating(rating) {
         context.rating = rating;
         applyCurrentRating(rating);
         setRatingStatus(`Оценка ${rating} сохранена`, 'success');
+        // Only a server-confirmed vote is eligible for statistics.
+        void window.KinoStats?.recordConfirmedRating({
+            type: context.type, id: context.id, rating
+        }).catch(error => debugLog('Статистика оценки:', error));
     } else {
         applyCurrentRating(previousRating);
         const message = response?.authRequired
@@ -390,6 +423,12 @@ async function showRatingCard(media) {
 
     context.rating = Number.isInteger(Number(response.rating)) ? Number(response.rating) : null;
     applyCurrentRating(context.rating);
+    // A verified vote returned by the currently authorized account.
+    if (context.rating >= 1 && context.rating <= 10) {
+        void window.KinoStats?.recordConfirmedRating({
+            type: context.type, id: context.id, rating: context.rating
+        }).catch(error => debugLog('Статистика оценки:', error));
+    }
     setRatingStatus(context.rating ? 'Нажмите число, чтобы изменить оценку' : 'Нажмите число, чтобы поставить оценку', 'info');
     setRatingButtonsDisabled(false);
     return response;
@@ -400,6 +439,11 @@ function setConvertButtonMode(mode, returnUrl = '') {
     button.dataset.mode = mode;
     button.dataset.returnUrl = returnUrl || '';
 
+    const wrap = document.getElementById('convertTooltipWrap');
+    if (wrap) {
+        wrap.classList.toggle('is-disabled', mode === 'unavailable');
+        wrap.tabIndex = mode === 'unavailable' ? 0 : -1;
+    }
     if (mode === 'return') {
         button.innerHTML = '<span class="icon">←</span> На Кинопоиск';
         button.disabled = false;
@@ -509,7 +553,13 @@ function historyContains(url) {
 
 function addToHistory(title, url) {
     let history = getHistory();
-    history = history.filter(item => item.url !== url);
+    const media = parseMediaUrl(url);
+    // Keep a single history entry per Kinopoisk title (not per provider URL
+    // variant), while episode checkpoints remain separate in chrome.storage.
+    history = history.filter(item => {
+        const previous = parseMediaUrl(item.url);
+        return media && previous ? previous.id !== media.id : item.url !== url;
+    });
     history.unshift({ title, url, timestamp: Date.now() });
     history = pruneHistory(history);
     saveHistory(history);
@@ -517,7 +567,11 @@ function addToHistory(title, url) {
 }
 
 function removeFromHistory(url) {
-    const history = getHistory().filter(item => item.url !== url);
+    const target = parseMediaUrl(url);
+    const history = getHistory().filter(item => {
+        const media = parseMediaUrl(item.url);
+        return target && media ? media.id !== target.id : item.url !== url;
+    });
     saveHistory(history);
     updateHistoryView();
 }
@@ -539,26 +593,45 @@ function setHistoryCollapsed(collapsed) {
 
 function updateHistoryView() {
     const history = getHistory();
+    // One row per Kinopoisk title, including providers that use both
+    // /film/<id> and /series/<id>. Raw imported history remains untouched.
+    const seen = new Set();
+    const displayed = history.filter(item => {
+        const media = parseMediaUrl(item.url);
+        const key = media ? 'media:' + media.id : 'url:' + item.url;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
 
-    if (!history.length) {
+    if (!displayed.length) {
         historySection.style.display = 'none';
         historyItems.innerHTML = '';
+        window.KinoResumeUI?.updateHistory(displayed);
         return;
     }
 
     historySection.style.display = 'block';
     historyItems.innerHTML = '';
 
-    history.forEach(item => {
+    displayed.forEach(item => {
         const historyItem = document.createElement('div');
         historyItem.className = 'history-item';
+        const media = parseMediaUrl(item.url);
+        if (media) historyItem.dataset.kinoMediaKey = media.type + ':' + media.id;
+
+        const main = document.createElement('div');
+        main.className = 'history-item-main';
 
         const title = document.createElement('div');
         title.className = 'history-item-title';
         title.textContent = item.title || 'Неизвестно';
         title.title = item.title || 'Неизвестно';
         title.addEventListener('click', () => {
-            void openHistoryUrl(item.url, item.title);
+            const target = window.KinoResumeUI?.resumeTargetFor(item) || null;
+            void openHistoryUrl(item.url, item.title, {
+                resume: Boolean(target), resumeTarget: target
+            });
         });
 
         const actions = document.createElement('div');
@@ -570,7 +643,10 @@ function updateHistoryView() {
         openButton.textContent = '▶';
         openButton.title = 'Открыть';
         openButton.addEventListener('click', () => {
-            void openHistoryUrl(item.url, item.title);
+            const target = window.KinoResumeUI?.resumeTargetFor(item) || null;
+            void openHistoryUrl(item.url, item.title, {
+                resume: Boolean(target), resumeTarget: target
+            });
         });
 
         const removeButton = document.createElement('button');
@@ -581,18 +657,26 @@ function updateHistoryView() {
         removeButton.addEventListener('click', () => removeFromHistory(item.url));
 
         actions.append(openButton, removeButton);
-        historyItem.append(title, actions);
+        main.appendChild(title);
+        historyItem.append(main, actions);
         historyItems.appendChild(historyItem);
     });
+    window.KinoResumeUI?.updateHistory(displayed);
 }
 
 function showMessage(text, type = 'info') {
     messageBox.textContent = text;
     messageBox.className = type;
     contextCard.className = `context-card ${type}`;
+    // The cinematic discovery carousel replaces only the old passive
+    // no-movie notice. Active film, errors, and progress remain visible.
+    contextCard.hidden = type === 'info' &&
+      (text === 'Откройте страницу фильма на Кинопоиске' ||
+       text === "Выберите фильтры и нажмите 'Случайный'");
 }
 
 function openSettings() {
+    window.KinoStats?.close();
     document.body.classList.add('settings-open');
     settingsButton.classList.add('active');
     settingsButton.dataset.tooltip = 'Вернуться в главное меню';
@@ -840,11 +924,13 @@ async function showCurrentMovie({ force = false } = {}) {
         const tabSignature = getTabSignature(tab);
         if (!force && tabSignature === lastRenderedTabSignature) return;
         hideMovieDetails();
+        window.KinoWatchlist?.setCurrent(null);
 
         const legacyOpenButton = document.getElementById('openOnKinopoisk');
         if (legacyOpenButton) legacyOpenButton.style.display = 'none';
 
         if (!tab?.url) {
+            window.KinoResumeUI?.setCurrentMedia(null);
             lastRenderedTabSignature = tabSignature;
             hideRatingCard();
             setConvertButtonMode('unavailable');
@@ -857,12 +943,15 @@ async function showCurrentMovie({ force = false } = {}) {
         const isKinopoiskMedia = url.startsWith(KINOPOISK_BASE) && Boolean(media);
 
         if (isKinopoiskMedia) {
+            // A Kinopoisk detail page is not an active player session.
+            window.KinoResumeUI?.setCurrentMedia(null);
             setConvertButtonMode('watch');
             const type = media.type === 'series' ? 'сериал' : 'фильм';
             const title = await getKinopoiskMovieTitle(tab);
             if (!isCurrentViewRefresh(refreshSequence)) return;
 
             lastRenderedTabSignature = tabSignature;
+            window.KinoWatchlist?.setCurrent({ ...media, title });
             showMessage(`Текущий ${type}: «${title || 'Страница Кинопоиска'}»`, 'success');
             void showMovieDetails(media);
             await showRatingCard(media);
@@ -873,10 +962,12 @@ async function showCurrentMovie({ force = false } = {}) {
         if (!isCurrentViewRefresh(refreshSequence)) return;
 
         if (session?.returnUrl) {
+            window.KinoResumeUI?.setCurrentMedia(session);
             lastRenderedTabSignature = tabSignature;
             setConvertButtonMode('return', session.returnUrl);
 
             const fallbackTitle = normalizePlayerTitle(tab.title, session.title);
+            window.KinoWatchlist?.setCurrent({ type: session.type, id: session.id, title: fallbackTitle || session.title });
             showMessage(fallbackTitle ? `Сейчас смотрите: «${fallbackTitle}»` : 'Сейчас идёт просмотр', 'success');
             void showMovieDetails({ type: session.type, id: session.id });
 
@@ -886,16 +977,19 @@ async function showCurrentMovie({ force = false } = {}) {
             const kinopoiskTitle = normalizeKinopoiskTitle(ratingResponse?.movieTitle);
             if (kinopoiskTitle && kinopoiskTitle !== fallbackTitle) {
                 showMessage(`Сейчас смотрите: «${kinopoiskTitle}»`, 'success');
+                window.KinoWatchlist?.setCurrent({ type: session.type, id: session.id, title: kinopoiskTitle });
             }
             return;
         }
 
         const directPlayerMedia = getDirectPlayerMedia(url);
         if (directPlayerMedia) {
+            window.KinoResumeUI?.setCurrentMedia(directPlayerMedia);
             lastRenderedTabSignature = tabSignature;
             setConvertButtonMode('return', `${KINOPOISK_BASE}/${directPlayerMedia.type}/${directPlayerMedia.id}/`);
 
             const fallbackTitle = normalizePlayerTitle(tab.title);
+            window.KinoWatchlist?.setCurrent({ ...directPlayerMedia, title: fallbackTitle });
             showMessage(fallbackTitle ? `Сейчас смотрите: «${fallbackTitle}»` : 'Сейчас идёт просмотр', 'success');
 
             void showMovieDetails(directPlayerMedia);
@@ -905,10 +999,12 @@ async function showCurrentMovie({ force = false } = {}) {
             const kinopoiskTitle = normalizeKinopoiskTitle(ratingResponse?.movieTitle);
             if (kinopoiskTitle && kinopoiskTitle !== fallbackTitle) {
                 showMessage(`Сейчас смотрите: «${kinopoiskTitle}»`, 'success');
+                window.KinoWatchlist?.setCurrent({ ...directPlayerMedia, title: kinopoiskTitle });
             }
             return;
         }
 
+        window.KinoResumeUI?.setCurrentMedia(null);
         lastRenderedTabSignature = tabSignature;
         hideRatingCard();
         setConvertButtonMode('unavailable');
@@ -918,6 +1014,7 @@ async function showCurrentMovie({ force = false } = {}) {
         if (!isCurrentViewRefresh(refreshSequence)) return;
 
         lastRenderedTabSignature = '';
+        window.KinoResumeUI?.setCurrentMedia(null);
         hideRatingCard();
         setConvertButtonMode('unavailable');
         showMessage("Выберите фильтры и нажмите 'Случайный'", 'info');

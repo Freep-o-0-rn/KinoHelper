@@ -117,10 +117,27 @@ window.KinoMovieDetails = (() => {
         return parsePage(html);
     }
 
+    let genreStatsQueue = Promise.resolve();
+    function rememberGenres(target, details) {
+        if (!details?.genres?.length) return;
+        // Several search cards may load simultaneously. Serialize their
+        // read-modify-write operations to avoid losing genre records.
+        genreStatsQueue = genreStatsQueue.catch(() => {}).then(async () => {
+            const data = await chrome.storage.local.get('kinoStatsGenresV1');
+            const previous = data.kinoStatsGenresV1 || {};
+            if (JSON.stringify(previous[target.key]?.genres) ===
+                JSON.stringify(details.genres)) return;
+            await chrome.storage.local.set({ kinoStatsGenresV1: {
+                ...previous, [target.key]: { genres: details.genres, updatedAt: Date.now() }
+            } });
+        }).catch(() => {});
+    }
+
     async function get(media) {
         const target = validate(media);
         const existing = memory.get(target.key);
         if (existing && Date.now() - existing.savedAt < CACHE_TTL) {
+            rememberGenres(target, existing.details);
             return existing.details;
         }
         if (pending.has(target.key)) return pending.get(target.key);
@@ -148,7 +165,9 @@ window.KinoMovieDetails = (() => {
 
         pending.set(target.key, promise);
         try {
-            return await promise;
+            const details = await promise;
+            rememberGenres(target, details);
+            return details;
         } finally {
             pending.delete(target.key);
         }
