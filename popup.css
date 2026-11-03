@@ -709,6 +709,48 @@ button.btn-convert:active:not(:disabled) {
 .context-card.error { border-left-color: var(--error); }
 .context-card.warning { border-left-color: var(--warning); }
 
+.current-view-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  min-width: 0;
+}
+.current-view-heading #message {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.watchlist-current-action {
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
+  padding: 5px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color .15s ease, background-color .15s ease, border-color .15s ease;
+}
+.watchlist-current-action[hidden] {
+  display: none !important;
+}
+.watchlist-current-action:hover,
+.watchlist-current-action:focus-visible {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: var(--bg-secondary);
+}
+.watchlist-current-action.saved {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: var(--bg-secondary);
+}
+.watchlist-current-action.saved svg { fill: currentColor; }
+.watchlist-current-action.busy { opacity: .5; cursor: wait; }
+.watchlist-current-action:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
 #message {
   min-height: 22px;
   display: flex;
