@@ -13,6 +13,11 @@
   const lastProgress = document.getElementById('resumeLastProgress');
   const lastOpen = document.getElementById('resumeLastOpen');
   const closeLast = document.getElementById('resumeLastClose');
+  // The current-view bar uses the same saved playback snapshot as History.
+  const currentProgress = document.getElementById('currentWatchProgress');
+  const currentTrack = document.getElementById('currentWatchProgressTrack');
+  const currentLabel = document.getElementById('currentWatchProgressLabel');
+  const currentCoverage = document.getElementById('currentWatchCoverage');
   if (!panel || !lastTitle || !lastMeta || !lastProgress || !lastOpen ||
       !closeLast) return;
 
@@ -22,6 +27,7 @@
   let history = [];
   let currentKey = '';
   let activeWatchPage = false;
+  let currentViewingMedia = null;
   // Hide the card until the first active-tab check completes. A storage
   // response must not briefly reveal it while a player tab is loading.
   let checkingActiveTab = true;
@@ -279,6 +285,44 @@
     }
   }
 
+  function renderCurrentProgress() {
+    if(!currentProgress||!currentTrack||!currentLabel||
+       !currentCoverage)return;
+    const media=currentViewingMedia;
+    const key=media?.type+':'+media?.id;
+    const saved=media?.type==='film'?positionFor(key):
+      media?.type==='series'?latestSeriesEpisode(media.id):null;
+    // Never display an unrelated title's saved checkpoint or a fake 0% bar.
+    if(!saved || saved.position<2 || saved.duration<=0) {
+      currentProgress.hidden=true;
+      return;
+    }
+    currentProgress.hidden=false;
+    updateTrack(currentTrack,saved);
+    const progressKey=saved.type==='series'
+      ?'series:'+saved.id+':'+saved.season+':'+saved.episode
+      :'film:'+saved.id;
+    const prefix=saved.type==='series'?episodeLabel(saved)+' · ':'';
+    currentLabel.textContent=prefix+(saved.completed
+      ?'✓ Просмотрено · '+formatTime(saved.duration)
+      :formatTime(saved.position)+' / '+formatTime(saved.duration)+
+       ' · '+percentage(saved)+'%');
+    const observed=coveredPercent(progressKey,saved);
+    const hasCoverage=!saved.completed&&observed>0;
+    currentCoverage.hidden=!hasCoverage;
+    currentCoverage.textContent=hasCoverage
+      ?'Фактически просмотрено: '+Math.floor(observed)+'%':'';
+  }
+
+  function setCurrentMedia(media) {
+    const type=media?.type==='series'?'series':
+      media?.type==='film'?'film':null;
+    const id=String(media?.id||'');
+    currentViewingMedia=type&&/^[1-9]\\d{0,12}$/.test(id)
+      ?{type,id}:null;
+    renderCurrentProgress();
+  }
+
   function lastIdentity(candidate) {
     const media = candidate?.media;
     if (!media) return '';
@@ -373,6 +417,7 @@
   function render() {
     decorateHistory();
     renderLast();
+    renderCurrentProgress();
   }
 
   async function readStorage() {
@@ -513,7 +558,7 @@
   });
 
   window.KinoResumeUI = { updateHistory, readStorage, updateActive,
-    resumeTargetFor };
+    resumeTargetFor, setCurrentMedia };
   void readDismissal();
   void readStorage();
   void updateActive();
