@@ -278,7 +278,8 @@ async function showMovieDetails(media) {
         movieGenres.hidden = !genres.length;
         movieDescription.textContent = description;
         movieDescriptionToggle.hidden = !description;
-        movieDetails.hidden = !genres.length && !description;
+        // Genres now live outside the collapsible description block.
+        movieDetails.hidden = !description;
     } catch (error) {
         if (sequence !== movieDetailsLoadSequence) return;
         movieDetails.hidden = true;
