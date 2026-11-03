@@ -318,7 +318,7 @@
     const type=media?.type==='series'?'series':
       media?.type==='film'?'film':null;
     const id=String(media?.id||'');
-    currentViewingMedia=type&&/^[1-9]\\d{0,12}$/.test(id)
+    currentViewingMedia=type&&/^[1-9]\d{0,12}$/.test(id)
       ?{type,id}:null;
     renderCurrentProgress();
   }
