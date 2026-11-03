@@ -78,7 +78,18 @@
             </section>
 
             <section class="context-card info" id="contextCard" aria-label="Текущий фильм или состояние">
-              <div id="message" class="info" aria-live="polite">Выберите фильтры и нажмите «Случайный»</div>
+              <div class="current-view-heading">
+                <div id="message" class="info" aria-live="polite">Выберите фильтры и нажмите «Случайный»</div>
+                <button class="watchlist-current-action" id="watchlistCurrentAction"
+                        type="button" hidden aria-pressed="false"
+                        aria-label="Добавить в «Буду смотреть»" title="Добавить в «Буду смотреть»">
+                  <svg viewBox="0 0 24 24" width="15" height="15"
+                       fill="none" stroke="currentColor" stroke-width="1.8"
+                       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M6 4.5A1.5 1.5 0 0 1 7.5 3h9A1.5 1.5 0 0 1 18 4.5V21l-6-4-6 4V4.5Z"/>
+                  </svg>
+                </button>
+              </div>
               <div class="movie-genres" id="movieGenres" hidden></div>
               <div class="current-watch-progress" id="currentWatchProgress"
                    aria-label="Прогресс текущего просмотра" hidden>
