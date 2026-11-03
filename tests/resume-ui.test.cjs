@@ -40,8 +40,20 @@ async function setup({ data = {}, seriesData = {}, coverageData = {}, history = 
   const elements = {
     resumeLast: node('section'), resumeLastTitle: node(),
     resumeLastMeta: node(), resumeLastProgress: node(),
-    resumeLastOpen: node('button'), resumeLastClose: node('button')
+    resumeLastOpen: node('button'), resumeLastClose: node('button'),
+    currentWatchProgress: node('div','current-watch-progress'),
+    currentWatchProgressTrack: node('div','history-progress-track'),
+    currentWatchProgressLabel: node('div','history-progress-label'),
+    currentWatchCoverage: node('div','history-coverage-label')
   };
+  elements.currentWatchProgress.hidden=true;
+  elements.currentWatchCoverage.hidden=true;
+  elements.currentWatchProgressTrack.appendChild(node('div','resume-progress-fill'));
+  elements.currentWatchProgress.append(
+    elements.currentWatchProgressTrack,
+    elements.currentWatchProgressLabel,
+    elements.currentWatchCoverage
+  );
   let tabUrl = current;
   const gate = delayedTabQuery ? {} : null;
   const pendingTab = gate ? new Promise(resolve => { gate.release = resolve; }) : null;
@@ -67,6 +79,7 @@ async function setup({ data = {}, seriesData = {}, coverageData = {}, history = 
   const opened = [];
   const openedOptions = [];
   const actions = [];
+  let localReads=0;
   const context = {
     URL, console,
     document: doc,
@@ -91,6 +104,7 @@ async function setup({ data = {}, seriesData = {}, coverageData = {}, history = 
       },
       storage: {
         local: { get: async keys => {
+          localReads++;
           const values={
             kinoPlaybackProgressV1:data,
             kinoSeriesEpisodeProgressV1:seriesData,
@@ -129,6 +143,8 @@ async function setup({ data = {}, seriesData = {}, coverageData = {}, history = 
     setSession: value => { session = value; },
     updateHistory: context.window.KinoResumeUI.updateHistory,
     refresh: context.window.KinoResumeUI.readStorage,
+    setCurrentMedia: context.window.KinoResumeUI.setCurrentMedia,
+    get localReads(){return localReads;},
     setTab(url) { tabUrl = url; },
     setData(next) { data = next; },
     setSeriesData(next) { seriesData = next; } };
@@ -547,4 +563,86 @@ test('opening history requests safe reconciliation of older verified film comple
   assert.equal(reconcile.length,1,'only one reconciliation on UI startup');
   assert.ok(ui.rows[0].querySelector('.history-confirm-complete'),
     'manual recovery stays available until background confirmation arrives');
+});
+
+
+test('current film progress appears directly below Now Watching from already loaded history snapshot',async()=>{
+  const ui=await setup({
+    current:'https://www.kinokino.vip/film/447301/',
+    data:{'film:447301':{...movie,position:525,duration:600}},
+    coverageData:{'film:447301':{duration:600,ranges:[[0,480]]}}
+  });
+  const reads=ui.localReads;
+  const messages=ui.actions.length;
+  ui.setCurrentMedia({type:'film',id:'447301'});
+  assert.equal(ui.elements.currentWatchProgress.hidden,false);
+  assert.equal(ui.elements.currentWatchProgressTrack.attrs['aria-valuenow'],'88');
+  assert.equal(ui.elements.currentWatchProgressTrack.querySelector(
+    '.resume-progress-fill').style.width,'88%');
+  assert.equal(ui.elements.currentWatchProgressLabel.textContent,
+    '8:45 / 10:00 · 88%');
+  assert.equal(ui.elements.currentWatchCoverage.textContent,
+    'Фактически просмотрено: 80%');
+  assert.equal(ui.localReads,reads,'must reuse same in-memory snapshot, not query storage again');
+  assert.equal(ui.actions.length,messages,'no extra background or Kinopoisk requests');
+});
+
+test('the current film bar updates automatically on saved playback changes',async()=>{
+  const ui=await setup({data:{'film:447301':{...movie,position:150}}});
+  ui.setCurrentMedia({type:'film',id:'447301'});
+  assert.equal(ui.elements.currentWatchProgressLabel.textContent,'2:30 / 10:00 · 25%');
+  ui.setData({'film:447301':{...movie,position:450}});
+  ui.changes[0]({kinoPlaybackProgressV1:{newValue:true}},'local');
+  for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(ui.elements.currentWatchProgressLabel.textContent,'7:30 / 10:00 · 75%');
+  assert.equal(ui.elements.currentWatchProgressTrack.querySelector(
+    '.resume-progress-fill').style.width,'75%');
+});
+
+test('the bar never displays another film checkpoint, and disappears when playback ends',async()=>{
+  const ui=await setup({data:{'film:447301':movie}});
+  ui.setCurrentMedia({type:'film',id:'447301'});
+  assert.equal(ui.elements.currentWatchProgress.hidden,false);
+  ui.setCurrentMedia({type:'film',id:'123456'});
+  assert.equal(ui.elements.currentWatchProgress.hidden,true);
+  ui.setCurrentMedia(null);
+  assert.equal(ui.elements.currentWatchProgress.hidden,true);
+  ui.setCurrentMedia({type:'film',id:'incorrect'});
+  assert.equal(ui.elements.currentWatchProgress.hidden,true);
+});
+
+test('completed current film shows a green 100% progress track',async()=>{
+  const ui=await setup({data:{'film:447301':{...movie,completed:true,position:550}}});
+  ui.setCurrentMedia({type:'film',id:'447301'});
+  assert.equal(ui.elements.currentWatchProgress.hidden,false);
+  assert.equal(ui.elements.currentWatchProgressTrack.attrs['aria-valuenow'],'100');
+  assert.match(ui.elements.currentWatchProgressTrack.className,/\bcomplete\b/);
+  assert.equal(ui.elements.currentWatchProgressLabel.textContent,
+    '✓ Просмотрено · 10:00');
+  assert.equal(ui.elements.currentWatchCoverage.hidden,true);
+});
+
+test('current series can reuse latest verified episode checkpoint',async()=>{
+  const ui=await setup({
+    seriesData:{'series:404900:1:3':{...episode,position:500}},
+    data:{'film:447301':movie}
+  });
+  ui.setCurrentMedia({type:'series',id:'404900'});
+  assert.equal(ui.elements.currentWatchProgress.hidden,false);
+  assert.match(ui.elements.currentWatchProgressLabel.textContent,/Сезон 1 · Серия 3 · /);
+  ui.setCurrentMedia({type:'film',id:'404900'});
+  assert.equal(ui.elements.currentWatchProgress.hidden,true,
+    'episode timestamp must not be attributed to a film');
+});
+
+test('Now Watching progress uses same DOM hooks in popup and sidepanel',()=>{
+  const fs=require('node:fs'),path=require('node:path');
+  const files=['popup.html','sidepanel.html'];
+  for(const file of files){
+    const html=fs.readFileSync(path.join(__dirname,'..',file),'utf8');
+    assert.match(html,/id="message"[^>]*>[^<]*<\/div>\s*<div class="current-watch-progress"/);
+    for(const id of ['currentWatchProgress','currentWatchProgressTrack',
+      'currentWatchProgressLabel','currentWatchCoverage'])
+      assert.match(html,new RegExp('id="'+id+'"'));
+  }
 });
