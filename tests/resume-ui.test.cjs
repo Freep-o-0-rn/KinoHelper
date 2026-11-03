@@ -640,7 +640,7 @@ test('Now Watching progress uses same DOM hooks in popup and sidepanel',()=>{
   const files=['popup.html','sidepanel.html'];
   for(const file of files){
     const html=fs.readFileSync(path.join(__dirname,'..',file),'utf8');
-    assert.match(html,/id="message"[^>]*>[^<]*<\/div>\s*<div class="current-watch-progress"/);
+    assert.match(html,/id="message"[^>]*>[^<]*<\/div>\s*<div class="movie-genres" id="movieGenres" hidden><\/div>\s*<div class="current-watch-progress"/);
     for(const id of ['currentWatchProgress','currentWatchProgressTrack',
       'currentWatchProgressLabel','currentWatchCoverage'])
       assert.match(html,new RegExp('id="'+id+'"'));
@@ -659,4 +659,28 @@ test('Now Watching uses the existing identified session, not a second progress r
   assert.ok(start>=0&&stop>start);
   assert.equal(resume.slice(start,stop).includes('chrome.storage'),false);
   assert.equal(resume.slice(start,stop).includes('fetch('),false);
+});
+
+test('Now Watching layout excludes watchlist action but preserves independent bookmarks',()=>{
+  const fs=require('node:fs'),path=require('node:path');
+  for(const page of ['popup.html','sidepanel.html']){
+    const html=fs.readFileSync(path.join(__dirname,'..',page),'utf8');
+    const section=html.slice(html.indexOf('id="contextCard"'),
+      html.indexOf('id="resumeLast"'));
+    assert.equal(section.includes('id="watchlistCurrentAction"'),false);
+    assert.equal((section.match(/id="movieGenres"/g)||[]).length,1);
+    assert.ok(section.indexOf('id="movieGenres"') <
+      section.indexOf('id="currentWatchProgress"'));
+    assert.ok(section.indexOf('id="currentWatchProgress"') <
+      section.indexOf('id="movieDetails"'));
+    assert.ok(section.includes('id="movieDescriptionToggle"'));
+    assert.ok(section.includes('id="ratingCard"'));
+    assert.ok(html.includes('id="watchlistSort"'));
+  }
+});
+test('genre availability does not force an empty description panel open',()=>{
+  const fs=require('node:fs'),path=require('node:path');
+  const logic=fs.readFileSync(path.join(__dirname,'..','popup.js'),'utf8');
+  assert.match(logic,/movieDetails\.hidden = !description;/);
+  assert.equal(logic.includes('movieDetails.hidden = !genres.length && !description;'),false);
 });
