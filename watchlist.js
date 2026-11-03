@@ -719,7 +719,7 @@
         const currentButton = document.getElementById('watchlistCurrentAction');
         const syncButton = document.getElementById('watchlistSync');
         const sortSelect = document.getElementById('watchlistSort');
-        if (!section || !toggleButton || !itemsBox || !currentButton) return;
+        if (!section || !toggleButton || !itemsBox) return;
         if(sortSelect){
             sortSelect.value=sortOrder;
             sortSelect.addEventListener('change',()=>{
@@ -754,7 +754,9 @@
         setCollapsed(collapsed);
         toggleButton.addEventListener('click',
             () => setCollapsed(!section.classList.contains('collapsed')));
-        currentButton.addEventListener('click', () => {
+        // The Current Watching card no longer has a bookmark button.
+        // Keep the watchlist itself and its search-result bookmark actions.
+        currentButton?.addEventListener('click', () => {
             if (current) toggle(current);
         });
         syncButton?.addEventListener('click',async()=>{
