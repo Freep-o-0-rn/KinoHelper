@@ -640,7 +640,7 @@ test('Now Watching progress uses same DOM hooks in popup and sidepanel',()=>{
   const files=['popup.html','sidepanel.html'];
   for(const file of files){
     const html=fs.readFileSync(path.join(__dirname,'..',file),'utf8');
-    assert.match(html,/id="message"[^>]*>[^<]*<\/div>\s*<div class="movie-genres" id="movieGenres" hidden><\/div>\s*<div class="current-watch-progress"/);
+    assert.match(html,/class="current-view-heading"[\s\S]*?id="message"[\s\S]*?id="watchlistCurrentAction"[\s\S]*?<\/button>\s*<\/div>\s*<div class="movie-genres" id="movieGenres" hidden><\/div>\s*<div class="current-watch-progress"/);
     for(const id of ['currentWatchProgress','currentWatchProgressTrack',
       'currentWatchProgressLabel','currentWatchCoverage'])
       assert.match(html,new RegExp('id="'+id+'"'));
@@ -661,13 +661,17 @@ test('Now Watching uses the existing identified session, not a second progress r
   assert.equal(resume.slice(start,stop).includes('fetch('),false);
 });
 
-test('Now Watching layout excludes watchlist action but preserves independent bookmarks',()=>{
+test('Kinopoisk-only bookmark stays in the title row without cluttering playback',()=>{
   const fs=require('node:fs'),path=require('node:path');
   for(const page of ['popup.html','sidepanel.html']){
     const html=fs.readFileSync(path.join(__dirname,'..',page),'utf8');
     const section=html.slice(html.indexOf('id="contextCard"'),
       html.indexOf('id="resumeLast"'));
-    assert.equal(section.includes('id="watchlistCurrentAction"'),false);
+    assert.equal((section.match(/id="watchlistCurrentAction"/g)||[]).length,1);
+    assert.match(section,/class="current-view-heading"/);
+    assert.match(section,/id="watchlistCurrentAction"[\s\S]*?hidden[\s\S]*?aria-pressed="false"/);
+    assert.ok(section.indexOf('id="watchlistCurrentAction"') <
+      section.indexOf('id="movieGenres"'));
     assert.equal((section.match(/id="movieGenres"/g)||[]).length,1);
     assert.ok(section.indexOf('id="movieGenres"') <
       section.indexOf('id="currentWatchProgress"'));
@@ -683,4 +687,25 @@ test('genre availability does not force an empty description panel open',()=>{
   const logic=fs.readFileSync(path.join(__dirname,'..','popup.js'),'utf8');
   assert.match(logic,/movieDetails\.hidden = !description;/);
   assert.equal(logic.includes('movieDetails.hidden = !genres.length && !description;'),false);
+});
+
+test('bookmark receives a movie only on Kinopoisk detail pages, never during playback',()=>{
+  const fs=require('node:fs'),path=require('node:path');
+  const popup=fs.readFileSync(path.join(__dirname,'..','popup.js'),'utf8');
+  const kp=popup.slice(popup.indexOf('if (isKinopoiskMedia) {'),
+    popup.indexOf('const session = await getWatchSession'));
+  assert.match(kp,/KinoWatchlist\?\.setCurrent\(\{ \.\.\.media, title \}\)/);
+  const play=popup.slice(popup.indexOf('if (session?.returnUrl) {'),
+    popup.indexOf('window.KinoResumeUI?.setCurrentMedia(null);',popup.indexOf('if (directPlayerMedia) {')));
+  assert.equal(play.includes('KinoWatchlist?.setCurrent({'),false);
+  assert.match(popup,/KinoWatchlist\?\.setCurrent\(null\)/);
+  const bookmark=fs.readFileSync(path.join(__dirname,'..','watchlist.js'),'utf8');
+  const start=bookmark.indexOf('    function setCurrent(movie) {');
+  const end=bookmark.indexOf('    async function openWatch(',start);
+  const implementation=bookmark.slice(start,end);
+  assert.match(implementation,/button\.setAttribute\('aria-label', label\)/);
+  assert.equal(implementation.includes('button.textContent'),false,
+    'SVG markup should survive state changes');
+  const css=fs.readFileSync(path.join(__dirname,'..','popup.css'),'utf8');
+  assert.match(css,/\.watchlist-current-action\[hidden\]\s*\{\s*display:\s*none\s*!important;/);
 });
