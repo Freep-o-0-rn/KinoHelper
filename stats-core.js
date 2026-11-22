@@ -70,6 +70,15 @@
       if (/^series:[1-9]\d{0,12}$/.test(key) && entry?.watched === true)
         knownSeriesTypes.add(key);
     }
+    // Convert historical film-shaped checkpoints before taking the local
+    // series count. This keeps the tooltip and the chart in agreement.
+    for (const seriesKey of knownSeriesTypes) {
+      const filmKey = 'film:' + seriesKey.slice(7);
+      if (filmMap.has(filmKey)) {
+        seriesMap.set(seriesKey, true);
+        filmMap.delete(filmKey);
+      }
+    }
     const localFinishedKeys=new Set([...filmMap.entries()]
       .filter(([,entry])=>entry.completed).map(([key])=>key));
     const localSeriesCount=seriesMap.size;
