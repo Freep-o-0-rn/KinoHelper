@@ -301,3 +301,16 @@ test('background refuses film tabs and untrusted sender origins', async () => {
   // Without a selection, a film URL alone cannot create an episode identity.
   assert.equal(await t.api.getEpisodeIdentity(7, t.extension), null);
 });
+
+
+test('fullscreen hidden player buttons still identify the selected episode',async()=>{
+  const season = playerButton('Сезон 1');
+  const episode = playerButton('Серия 8');
+  for(const button of [season,episode]) {
+    button.hidden = true;
+    button.getBoundingClientRect = () => ({width:0,height:0});
+  }
+  const messages = await detect({playerButtons:[season,episode]});
+  assert.deepEqual(JSON.parse(JSON.stringify(messages[0]?.payload)),
+    {season:1,episode:8});
+});
