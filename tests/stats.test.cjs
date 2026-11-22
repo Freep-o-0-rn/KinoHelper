@@ -237,3 +237,19 @@ test('all genres remain individual: never collapse the tail into Другие',(
   assert.equal(new Set(model.genreRows.map(item=>item.color)).size,31);
   assert.equal(model.taggedTitles,30);
 });
+
+
+test('known series metadata repairs film-shaped playback time without invented episodes',()=>{
+  const model=core.summarize({
+    films:{'film:1343910':film(1343910,true)},
+    genres:{'series:1343910':{genres:['драма']}},
+    watched:{'film:1343910':{watched:true}},
+    watchTime:{'film:1343910':{seconds:28800}}
+  });
+  assert.equal(model.filmSeconds,0);
+  assert.equal(model.seriesSeconds,28800);
+  assert.equal(model.finishedFilms,0);
+  assert.equal(model.startedSeries,1);
+  assert.equal(model.completedSeries,1);
+  assert.equal(model.finishedEpisodes,0);
+});
