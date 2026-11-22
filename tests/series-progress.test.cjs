@@ -134,9 +134,10 @@ test('video observer never assigns old stream progress to newly selected episode
     addEventListener(name, callback) { (callbacks[name] ||= []).push(callback); }
   };
   const btn = text => ({
-    textContent: text, hidden: false,
-    getAttribute() { return null; },
-    getBoundingClientRect() { return { width: 120, height: 32 }; }
+    // The player hides the controls in fullscreen without unmounting them.
+    textContent: text, hidden: true,
+    getAttribute() { return 'true'; },
+    getBoundingClientRect() { return { width: 0, height: 0 }; }
   });
   const page = {
     documentElement: {}, hidden: false,
@@ -169,6 +170,8 @@ test('video observer never assigns old stream progress to newly selected episode
   const original = messages.length;
   assert.ok(original >= 2);
   assert.ok(messages.every(m=>m.payload.episode===3));
+  assert.ok(messages.some(m=>m.payload.watchedRanges.some(([a,b])=>b>a)),
+    'series checkpoints must include actual watched media intervals');
   selectorPresent = false;
   step(1);
   selectorPresent = true;
@@ -219,13 +222,13 @@ test('without explicit selected season and episode, video time is not recorded',
 
 
 
-test('85% unique episode coverage is eligible but not completed until the end',async()=>{
+test('85% unique episode coverage completes even without a player ended event',async()=>{
   const m=mock();
   m.local.kinoPlaybackCoverageV1={
     'series:404900:1:3':{duration:1800,ranges:[[0,1530]],updatedAt:Date.now()}
   };
   await m.save(1,3,1690,'playing',130);
-  assert.equal(m.local.kinoSeriesEpisodeProgressV1['series:404900:1:3'].completed,false);
+  assert.equal(m.local.kinoSeriesEpisodeProgressV1['series:404900:1:3'].completed,true);
   await m.save(1,3,1799,'ended',130);
   assert.equal(m.local.kinoSeriesEpisodeProgressV1['series:404900:1:3'].completed,true);
   m.select(1,4);
