@@ -89,15 +89,26 @@
   async function probe(fetcher=fetch) {
     let lastReason='Невозможно подтвердить профиль по личной странице.';
     let outcome='unknown';
+    // If an authenticated-profile request is redirected to Yandex SSO,
+    // the browser may reject the cross-origin response via CORS. Avoid
+    // following another redirect from the fallback route after that failure.
+    let redirectBlocked=false;
     for(const route of ['/mykp/','/mykp/folders/1/']) {
       try {
         const reply=await fetcher(ROOT+route,{
           credentials:'include',
           cache:'no-store',
-          redirect:'follow',
+          redirect:redirectBlocked?'manual':'follow',
           signal:AbortSignal.timeout(12000)
         });
-        if(!reply || typeof reply.url!=='string')continue;
+        if(!reply)continue;
+        if(reply.type==='opaqueredirect') {
+          // The destination is intentionally opaque; do not infer login
+          // state or attempt to read the redirect target's headers/body.
+          lastReason='Кинопоиск перенаправил запрос. Проверь вход на сайте.';
+          continue;
+        }
+        if(typeof reply.url!=='string')continue;
         const url=knownURL(reply.url);
         if(!url) {
           lastReason='Кинопоиск перенаправил на страницу входа или другой домен.';
@@ -120,6 +131,11 @@
           : 'В ответе нет подтверждённого ID аккаунта.';
       }catch(error){
         lastReason=String(error?.message||error).slice(0,160);
+        // Only the fallback uses manual redirect mode. This keeps a
+        // transient first-route network failure from creating a second
+        // cross-site SSO CORS error, while still permitting an HTTP 200
+        // account bootstrap to authenticate normally.
+        redirectBlocked=true;
       }
     }
     return {status:outcome==='logged-out'?'logged-out':'unavailable',id:'',
