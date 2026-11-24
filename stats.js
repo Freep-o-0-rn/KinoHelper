@@ -1,4 +1,5 @@
-// KinoHelper 1.558 — compact statistics dashboard, used by popup and side panel.
+// KinoHelper statistics dashboard (introduced in 1.558).
+// Displayed application version is always read from manifest.json.
 (() => {
   'use strict';
   const core = window.KinoStatsCore;
