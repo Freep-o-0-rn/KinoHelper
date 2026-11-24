@@ -74,7 +74,9 @@
   // Do NOT inspect div.active.textContent: it contains the whole episode list.
   function fromPlayerSelector() {
     const buttons = [...document.querySelectorAll('button.select__item')]
-      .slice(0, 20).filter(visible);
+      .slice(0, 20);
+    // The fullscreen overlay can hide buttons while the selected pair
+    // remains mounted. We accept only one unambiguous selected pair.
     if (!buttons.length) return { present: false };
 
     const seasons = new Set();

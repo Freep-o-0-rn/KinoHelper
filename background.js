@@ -1686,11 +1686,11 @@ async function resumeIdentifyFilm(tabId) {
   if (direct && direct.type !== 'film') return null;
   if (direct?.type === 'film' &&
       [resumeOrigin(WATCH_BASE), resumeOrigin(FALLBACK_WATCH_BASE),
-        'https://brogiro.cfd'].includes(origin)) {
+        'https://brogiro.cfd', 'https://brogiro.top'].includes(origin)) {
     const session = await getSession(tabId);
     // Series players sometimes use /film/<id>. A verified series session or
     // a still-valid player episode selection overrides that route.
-    if (session?.type === 'series' && session.currentUrl === tab.url)
+    if (session?.type === 'series' && String(session.id) === direct.id)
       return null;
     const evidence = (await chrome.storage.session.get(episodeKey(tabId)))
       [episodeKey(tabId)];
@@ -1881,7 +1881,8 @@ async function injectResumeIntoOpenTabs() {
         });
       }
       const episodeFrames = (frames || []).filter(frame =>
-        ['https://brogiro.cfd', 'https://theatre.stravers.live']
+        ['https://brogiro.cfd', 'https://brogiro.top',
+          'https://theatre.stravers.live']
           .includes(resumeOrigin(frame.url)))
         .map(frame => frame.frameId);
       if (episodeFrames.length) {
@@ -1984,14 +1985,15 @@ async function trustedSeriesTab(tabId, { playerConfirmed = false } = {}) {
   const tab = await chrome.tabs.get(tabId);
   if (!tab?.url) return null;
   const origin = resumeOrigin(tab.url);
-  if (!['https://brogiro.cfd', resumeOrigin(WATCH_BASE),
+  if (!['https://brogiro.cfd', 'https://brogiro.top', resumeOrigin(WATCH_BASE),
     resumeOrigin(FALLBACK_WATCH_BASE)].includes(origin)) return null;
   const direct = parseMedia(tab.url);
   const session = await getSession(tabId);
 
   if (direct?.type === 'series') {
-    if (session && (session.type !== 'series' ||
-        String(session.id) !== String(direct.id))) return null;
+    // A typed /series/ URL is stronger evidence than a stale /film/ session.
+    if (session && session.currentUrl === tab.url &&
+        String(session.id) !== String(direct.id)) return null;
     return { id: String(direct.id), title: session?.title || tab.title || '' };
   }
 
@@ -2033,7 +2035,8 @@ async function saveEpisodeObservation(payload, sender) {
   if (sender?.id !== chrome.runtime.id ||
       !Number.isInteger(sender.tab?.id) ||
       !Number.isInteger(sender.frameId) ||
-      !['https://brogiro.cfd', 'https://theatre.stravers.live']
+      !['https://brogiro.cfd', 'https://brogiro.top',
+        'https://theatre.stravers.live']
         .includes(originOfEpisodeSender(sender))) return { ok: false };
   const clearing = payload?.clear === true;
   const season = clearing ? null : Number(payload?.season);
@@ -2322,7 +2325,7 @@ function playbackCompletionStatus(item, previous, coverage, autoFilm=false) {
   // 85% of the distinct media timeline was observed being played.
   const verifiedFilm=autoFilm && observed &&
     item.position >= item.duration * 0.85;
-  // Keep prior verified player-ended behavior for series episodes.
+  // A verified end also qualifies; seeking to the credits is insufficient.
   const verifiedEnd=item.event==='ended' && observed &&
     item.position>=item.duration-5;
   return verifiedFilm || verifiedEnd || Boolean(previous?.completed &&
@@ -2391,7 +2394,9 @@ async function saveSeriesEpisodeProgress(payload, sender) {
       ? { ...data } : {};
     const older = entries[key];
     const coverage = await rememberPlaybackCoverage(key,item,payload);
-    const completed = playbackCompletionStatus(item, older, coverage);
+    // When the provider autoplays the next episode it may never emit 'ended'.
+    // Accept 85% genuinely observed coverage with a matching playhead.
+    const completed = playbackCompletionStatus(item, older, coverage, true);
     const cleanTitle = String(current.title || '').replace(/\s+/g, ' ').trim().slice(0, 150);
     entries[key] = {
       type: 'series', id: series.id,

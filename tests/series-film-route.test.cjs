@@ -63,7 +63,7 @@ function harness() {
       season:1,episode,currentTime:position,duration:3486,
       playedSeconds:35,event:'playing'
     },frame);
-  return { ...context.api, local,storage,frame,ext,checkpoint };
+  return { ...context.api, local,storage,frame,ext,checkpoint,tab,session };
 }
 
 test('film-shaped series URL requires actual iframe selection', async () => {
@@ -98,4 +98,33 @@ test('progress remains independent after switching verified episodes',async()=>{
   assert.equal(entries['series:404900:1:4'].position,20);
   assert.equal(api.local.kinoPlaybackProgressV1,undefined);
   assert.equal(JSON.stringify(api.local).includes('PRIVATE'),false);
+});
+
+
+test('brogiro.top /series/ route overrides stale film type and saves episode',async()=>{
+  const api=harness();
+  api.tab.url='https://brogiro.top/series/1343910/?socialAlias=PRIVATE';
+  api.session.currentUrl=api.tab.url;
+  api.session.id='1343910';
+  api.session.type='film'; // stale type from a previous browser session
+  const series=await api.trustedSeriesTab(7);
+  assert.equal(series.id,'1343910');
+  assert.equal(await api.resumeIdentifyFilm(7),null);
+  assert.equal((await api.saveEpisodeObservation({season:1,episode:8},api.frame)).ok,true);
+  const progress=await api.saveSeriesEpisodeProgress({
+    season:1,episode:8,currentTime:100,duration:3500,
+    playedSeconds:35,event:'playing'
+  },api.frame);
+  assert.equal(progress.ok,true);
+  assert.ok(api.local.kinoSeriesEpisodeProgressV1['series:1343910:1:8']);
+  assert.equal(api.local.kinoPlaybackProgressV1,undefined);
+  assert.equal(JSON.stringify(api.local).includes('PRIVATE'),false);
+});
+
+test('manifest permits the current brogiro.top series site',()=>{
+  const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,'..','manifest.json'),'utf8'));
+  assert.ok(manifest.host_permissions.includes('https://brogiro.top/*'));
+  assert.ok(manifest.content_scripts.some(entry=>
+    entry.matches.includes('https://brogiro.top/*') &&
+    entry.js.includes('episode-detector.js')));
 });

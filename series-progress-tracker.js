@@ -41,9 +41,8 @@
     const seasons = new Set();
     const episodes = new Set();
     for (const button of selected) {
-      if (button.hidden || button.getAttribute?.('aria-hidden') === 'true') continue;
-      const r = button.getBoundingClientRect?.();
-      if (r && (r.width <= 0 || r.height <= 0)) continue;
+      // Fullscreen controls may be hidden while their selected values
+      // remain mounted. Only an unambiguous season/episode pair is trusted.
       const label = String(button.textContent || '').replace(/\s+/g, ' ').trim();
       const s = label.match(/^(?:Сезон|Season)\s*№?\s*(\d{1,3})$/i);
       const e = label.match(/^(?:Серия|Episode)\s*№?\s*(\d{1,3})$/i);
@@ -153,6 +152,7 @@
     if (!latest || latest.key !== choice.key) return;
     // No URLs, iframe tokens, or video sources are included in messages.
     lastSent = Date.now();
+    const rangesToSend = pendingRanges.map(range => [...range]);
     pendingRanges = [];
     try {
       chrome.runtime.sendMessage({
@@ -163,7 +163,7 @@
           duration: Math.round(video.duration * 10)/10,
           playedSeconds: Math.floor(watchedSeconds),
           // Intervals are bound to the verified season and episode selection.
-          watchedRanges: pendingRanges.map(range => [...range]),
+          watchedRanges: rangesToSend,
           statsTrackingId,
           event: eventType
         }

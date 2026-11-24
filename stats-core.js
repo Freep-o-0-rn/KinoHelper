@@ -52,25 +52,59 @@
         if (record.completed) completedEpisodeKeys.add(key);
       }
     }
+    // A provider may label a verified series as /film/<id>. Prefer its
+    // known Kinopoisk series type without inventing watched episodes.
+    const knownSeriesTypes = new Set(seriesMap.keys());
+    for (const [key, entry] of Object.entries(valid(genres) ? genres : {})) {
+      if (/^series:[1-9]\d{0,12}$/.test(key) &&
+          Array.isArray(entry?.genres) && entry.genres.length)
+        knownSeriesTypes.add(key);
+    }
+    for (const [key, entry] of Object.entries(valid(ratings) ? ratings : {})) {
+      const grade = Number(entry?.rating);
+      if (/^series:[1-9]\d{0,12}$/.test(key) &&
+          Number.isInteger(grade) && grade >= 1 && grade <= 10)
+        knownSeriesTypes.add(key);
+    }
+    for (const [key, entry] of Object.entries(valid(watched) ? watched : {})) {
+      if (/^series:[1-9]\d{0,12}$/.test(key) && entry?.watched === true)
+        knownSeriesTypes.add(key);
+    }
+    // Convert historical film-shaped checkpoints before taking the local
+    // series count. This keeps the tooltip and the chart in agreement.
+    for (const seriesKey of knownSeriesTypes) {
+      const filmKey = 'film:' + seriesKey.slice(7);
+      if (filmMap.has(filmKey)) {
+        seriesMap.set(seriesKey, true);
+        filmMap.delete(filmKey);
+      }
+    }
     const localFinishedKeys=new Set([...filmMap.entries()]
       .filter(([,entry])=>entry.completed).map(([key])=>key));
     const localSeriesCount=seriesMap.size;
     const kpWatchedFilms=new Set(),kpWatchedSeries=new Set();
     for(const [key,entry] of Object.entries(valid(watched)?watched:{})) {
       if(!entry || entry.watched!==true || identity(key)!==key)continue;
-      if(key.startsWith('film:')) {
-        kpWatchedFilms.add(key);
-        const earlier=filmMap.get(key);
-        filmMap.set(key, {...(earlier||{}),completed:true});
+      const corrected = key.startsWith('film:') &&
+        knownSeriesTypes.has('series:' + key.slice(5))
+        ? 'series:' + key.slice(5) : key;
+      if(corrected.startsWith('film:')) {
+        kpWatchedFilms.add(corrected);
+        const earlier=filmMap.get(corrected);
+        filmMap.set(corrected, {...(earlier||{}),completed:true});
       } else {
-        kpWatchedSeries.add(key);
-        seriesMap.set(key,true);
+        kpWatchedSeries.add(corrected);
+        seriesMap.set(corrected,true);
       }
     }
     // A provider may expose a verified series under /film/<id>. If both
     // identities exist for the same Kinopoisk ID, series evidence wins.
-    for (const seriesKey of seriesMap.keys()) {
-      filmMap.delete('film:' + seriesKey.slice(7));
+    for (const seriesKey of new Set([...seriesMap.keys(), ...knownSeriesTypes])) {
+      const filmKey = 'film:' + seriesKey.slice(7);
+      // A verified film-shaped checkpoint may be a previously unrecognized
+      // series. Count the title as started, without fabricating any episodes.
+      if (filmMap.has(filmKey)) seriesMap.set(seriesKey, true);
+      filmMap.delete(filmKey);
     }
     // Deduplicate by Kinopoisk ID across both sources; a vote alone
     // never enters filmMap and cannot indicate a completed watch.
@@ -87,7 +121,9 @@
       if (!identity(key)) continue;
       const seconds = Math.min(num(entry?.seconds), 1e10);
       if (key.startsWith('series:') ||
-          (key.startsWith('film:') && seriesMap.has('series:' + key.slice(5))))
+          (key.startsWith('film:') &&
+            (seriesMap.has('series:' + key.slice(5)) ||
+              knownSeriesTypes.has('series:' + key.slice(5)))))
         seriesSeconds += seconds;
       else filmSeconds += seconds;
     }

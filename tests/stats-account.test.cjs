@@ -15,6 +15,7 @@ test('redirect from personal /mykp/ page determines current account',async()=>{
  assert.equal(seen.length,1);
  assert.equal(seen[0].opts.credentials,'include');
  assert.equal(seen[0].opts.cache,'no-store');
+ assert.equal(seen[0].opts.redirect,'follow');
 });
 test('HTML personal account bootstrap is accepted after fallback',async()=>{
  const result=await account.detect(async url=>{
@@ -53,4 +54,31 @@ test('personal Id parser requires a recognized Kinopoisk domain',()=>{
    'https://evil.example/user/1234567/',loggedHeader),'');
  assert.equal(account.identityFromResponse('/mykp/',
    'https://www.kinopoisk.ru/mykp/',loggedHeader),'1234567');
+});
+
+
+test('SSO CORS failure avoids following another redirect on fallback',async()=>{
+ const routes=[];
+ const result=await account.detect(async(url,opts)=>{
+   routes.push({url,redirect:opts.redirect});
+   if(routes.length===1)throw new TypeError('Failed to fetch');
+   return {type:'opaqueredirect',url:'',status:0,ok:false};
+ });
+ assert.equal(result.status,'unavailable');
+ assert.equal(result.id,'');
+ assert.equal(routes.length,2);
+ assert.equal(routes[0].redirect,'follow');
+ assert.equal(routes[1].redirect,'manual');
+});
+
+test('SSO CORS failure still allows trusted fallback HTML account identity',async()=>{
+ let attempts=0;
+ const result=await account.detect(async(url,opts)=>{
+   attempts++;
+   if(attempts===1)throw new TypeError('Failed to fetch');
+   assert.equal(opts.redirect,'manual');
+   return page(url,loggedHeader);
+ });
+ assert.equal(result.status,'logged-in');
+ assert.equal(result.id,'1234567');
 });
